@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bathhouse COGS Categorizer</title>
+
+  <!-- Excel Export Library -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f4f4f4;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 10px;
+    }
+
+    #progress {
+      text-align: center;
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 15px;
+    }
+
+    #card {
+      background: white;
+      padding: 30px 20px;
+      border-radius: 16px;
+      box-shadow: 0 6px 25px rgba(0,0,0,0.08);
+      font-size: 20px;
+      text-align: center;
+      margin-bottom: 20px;
+      min-height: 80px;
+    }
+
+    .category-container {
+      margin-bottom: 16px;
+    }
+
+    .category-btn {
+      width: 100%;
+      padding: 18px;
+      border-radius: 14px;
+      border: none;
+      font-size: 18px;
+      font-weight: bold;
+      color: white;
+      cursor: pointer;
+    }
+
+    .cogs { background: #2e7d32; }
+    .expense { background: #1565c0; }
+    .review { background: #8e24aa; }
+    .special { background: #c62828; }
+
+    .category-desc {
+      font-size: 13px;
+      color: #555;
+      margin-top: 6px;
+      padding: 0 8px;
+    }
+
+    input[type="file"] {
+      width: 100%;
+      margin-bottom: 15px;
+    }
+
+    #exportBtn, #backBtn {
+      width: 100%;
+      padding: 16px;
+      border-radius: 14px;
+      border: none;
+      font-size: 16px;
+      margin-top: 12px;
+      color: white;
+    }
+
+    #exportBtn { background: #4CAF50; }
+    #backBtn { background: #ff9800; }
+  </style>
+</head>
+
+<body>
+
+<h2>Bathhouse Categorizer</h2>
+
+<input type="file" id="csvFile" accept=".csv">
+
+<div id="progress"></div>
+
+<div id="card">Upload a CSV to begin</div>
+
+<button id="backBtn" onclick="goBack()">⬅ Back</button>
+
+<div id="categories"></div>
+
+<button id="exportBtn">Export to Excel</button>
+
+<script>
+let data = [];
+let currentIndex = 0;
+
+const categories = [
+  { name: "COGS – Ingredients", class: "cogs", desc: "Oils, butters, lye, fragrance, extracts." },
+  { name: "COGS – Packaging", class: "cogs", desc: "Jars, bottles, lids, shrink wrap, labels." },
+  { name: "COGS – Resale Inventory", class: "cogs", desc: "Items sold as-is (pumice stones)." },
+  { name: "COGS – Production Supplies", class: "cogs", desc: "Gloves, paper towels (production)." },
+  { name: "Advertising & Marketing", class: "expense", desc: "Facebook ads, promo items." },
+  { name: "Office / Admin", class: "expense", desc: "Shopify, TaxJar, office supplies." },
+  { name: "Equipment", class: "expense", desc: "Grinders, mixers, machinery." },
+  { name: "Utilities / Overhead", class: "expense", desc: "Electric, internet, trash." },
+  { name: "Did Not Receive", class: "special", desc: "Order placed but item never received." },
+  { name: "Need Steven’s Input", class: "review", desc: "Flag it for Steven to review." }
+];
+
+// FILE HANDLING
+document.getElementById('csvFile').addEventListener('change', handleFile);
+
+function handleFile(event) {
+  const file = event.target.files[0];
+  const reader = new FileReader();
+
+  reader.onload = function(e) {
+    parseCSV(e.target.result);
+    renderButtons();
+    showCard();
+    saveProgress();
+  };
+
+  reader.readAsText(file);
+}
+
+function parseCSV(text) {
+  const rows = text.split('\n').filter(r => r.trim() !== '');
+  const headers = rows[0].split(',');
+
+  data = rows.slice(1).map(row => {
+    const values = row.split(',');
+    let obj = {};
+    headers.forEach((header, index) => {
+      obj[header.trim()] = values[index] || "";
+    });
+    obj["Category"] = "";
+    return obj;
+  });
+
+  currentIndex = 0;
+}
+
+// DISPLAY
+function showCard() {
+  if (!data.length) return;
+
+  if (currentIndex < data.length) {
+    document.getElementById('card').innerText =
+      data[currentIndex]["Title"] || "No Title Column Found";
+
+    document.getElementById('progress').innerText =
+      `Item ${currentIndex + 1} of ${data.length}`;
+  } else {
+    document.getElementById('card').innerText = "All items categorized!";
+    document.getElementById('categories').innerHTML = "";
+    document.getElementById('progress').innerText = "";
+  }
+}
+
+function renderButtons() {
+  const container = document.getElementById('categories');
+  container.innerHTML = "";
+
+  categories.forEach(category => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "category-container";
+
+    const btn = document.createElement("button");
+    btn.innerText = category.name;
+    btn.className = `category-btn ${category.class}`;
+    btn.onclick = () => selectCategory(category.name);
+
+    const desc = document.createElement("div");
+    desc.className = "category-desc";
+    desc.innerText = category.desc;
+
+    wrapper.appendChild(btn);
+    wrapper.appendChild(desc);
+    container.appendChild(wrapper);
+  });
+}
+
+// CATEGORY SELECT
+function selectCategory(category) {
+  if (currentIndex >= data.length) return;
+  data[currentIndex]["Category"] = category;
+  currentIndex++;
+  saveProgress();
+  showCard();
+}
+
+// BACK BUTTON
+function goBack() {
+  if (currentIndex > 0) {
+    currentIndex--;
+    data[currentIndex]["Category"] = "";
+    saveProgress();
+    showCard();
+  }
+}
+
+// SAVE / LOAD
+function saveProgress() {
+  localStorage.setItem("cogsData", JSON.stringify(data));
+  localStorage.setItem("cogsIndex", currentIndex);
+}
+
+function loadProgress() {
+  const savedData = localStorage.getItem("cogsData");
+  const savedIndex = localStorage.getItem("cogsIndex");
+
+  if (savedData && savedIndex) {
+    data = JSON.parse(savedData);
+    currentIndex = parseInt(savedIndex);
+    renderButtons();
+    showCard();
+  }
+}
+
+window.onload = loadProgress;
+
+// EXPORT TO EXCEL
+document.getElementById('exportBtn').addEventListener('click', () => {
+  if (!data.length) return;
+
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Categorized");
+
+  XLSX.writeFile(workbook, "Bathhouse_Categorized.xlsx");
+});
+</script>
+
+</body>
+</html>
