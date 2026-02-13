@@ -1,4 +1,3 @@
-
 <html>
 <head>
 <meta charset="UTF-8" />
@@ -14,35 +13,34 @@ h2 { text-align:center; }
 
 .panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px; }
 
-.flex { display:flex; gap:20px; flex-wrap:wrap; }
-.col { flex:1; min-width:350px; }
-
 button { cursor:pointer; }
 
 .category-btn {
   width:100%;
-  padding:12px;
+  padding:16px;
   border:none;
-  border-radius:10px;
+  border-radius:12px;
   color:white;
   font-weight:600;
-  margin-bottom:4px;
+  margin-bottom:6px;
+  font-size:16px;
 }
 
-.category-desc {
-  font-size:12px;
-  color:#555;
-  margin-bottom:10px;
-}
+.cogs{background:#2e7d32;}
+.expense{background:#1565c0;}
+.special{background:#8e24aa;}
 
-.quick-btn {
-  padding:8px 12px;
+.nav-btn{
+  width:48%;
+  padding:12px;
   border:none;
-  border-radius:999px;
-  color:white;
-  font-size:13px;
-  margin:4px;
+  border-radius:12px;
+  margin-top:8px;
+  font-weight:600;
 }
+
+.back{background:#999;color:white;}
+.forward{background:#444;color:white;}
 
 .progress-bar-container {
   background:#eee;
@@ -58,20 +56,10 @@ button { cursor:pointer; }
   width:0%;
 }
 
-.cogs{background:#2e7d32;}
-.expense{background:#1565c0;}
-.special{background:#8e24aa;}
-
-.collapsible { cursor:pointer; font-weight:600; margin-top:10px; }
-.hidden { display:none; }
-
-.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
-
-#cardTitle { font-size:18px; font-weight:bold; margin-bottom:6px; }
 .small { font-size:13px; color:#555; }
+#cardTitle { font-size:18px; font-weight:bold; margin-bottom:6px; }
 
-.toggleBtn { padding:6px 12px; border-radius:999px; border:1px solid #ccc; margin-right:6px; }
-.toggleBtn.active { background:#111; color:white; }
+.hidden { display:none; }
 </style>
 </head>
 
@@ -80,8 +68,6 @@ button { cursor:pointer; }
 <h2>Bathhouse Categorizer</h2>
 
 <input type="file" id="csvFile" accept=".csv">
-
-<div id="mappingPanel" class="panel" style="display:none;"></div>
 
 <div id="app" style="display:none;">
 
@@ -92,29 +78,20 @@ button { cursor:pointer; }
 <div id="progressText" class="small"></div>
 </div>
 
-<div class="flex">
-
-<!-- LEFT -->
-<div class="col">
-
 <div class="panel">
+
 <div id="cardTitle">Upload CSV to begin</div>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
 
 <hr>
 
-<div><strong>Quick Select</strong></div>
-<div id="quickSelect"></div>
+<div id="categoryButtons"></div>
 
-<div class="collapsible" onclick="toggleSection('cogsSection')">🟢 COGS</div>
-<div id="cogsSection"></div>
-
-<div class="collapsible" onclick="toggleSection('expenseSection')">🔵 Operating Expenses</div>
-<div id="expenseSection" class="hidden"></div>
-
-<div class="collapsible" onclick="toggleSection('specialSection')">🟣 Special</div>
-<div id="specialSection" class="hidden"></div>
+<div style="display:flex; justify-content:space-between;">
+<button class="nav-btn back" onclick="goBack()">⬅ Back</button>
+<button class="nav-btn forward" onclick="goForward()">Forward ➡</button>
+</div>
 
 </div>
 
@@ -122,236 +99,145 @@ button { cursor:pointer; }
 
 </div>
 
-<!-- RIGHT -->
-<div class="col">
-
-<div class="panel">
-<div>
-<button class="toggleBtn active" onclick="setFilter('all',this)">All</button>
-<button class="toggleBtn" onclick="setFilter('uncategorized',this)">Uncategorized</button>
-<button class="toggleBtn" onclick="setFilter('review',this)">Needs Review</button>
-</div>
-
-<input type="text" id="searchInput" placeholder="Search..." style="width:100%;margin-top:8px;">
-</div>
-
-<div class="panel">
-<h4>Totals</h4>
-<div id="totals"></div>
-<hr>
-<h4>Custom Sum</h4>
-<div id="sumChecks"></div>
-<div id="selectedTotal" style="font-weight:bold;margin-top:8px;">Selected Total: $0.00</div>
-</div>
-
-</div>
-</div>
-</div>
-
 <script>
 
 let rawRows=[], data=[], headers=[];
-let viewIndices=[], viewPos=0;
-let activeFilter="all", searchQuery="";
+let currentIndex=0;
 
-const categoryGroups = {
-quick: ["COGS – Ingredients","COGS – Packaging","Merchant Processing Fees","Advertising & Marketing","Shipping to Customers","Needs Review"],
-cogs: [
-{name:"COGS – Ingredients",desc:"Oils, butters, lye, fragrance, wax, bases."},
-{name:"COGS – Packaging",desc:"Jars, bottles, lids, labels, boxes."},
-{name:"COGS – Resale Inventory",desc:"Finished goods bought for resale."},
-{name:"COGS – Production Supplies",desc:"Gloves, molds, paper towels (production)."},
-{name:"COGS – Shipping from Suppliers",desc:"Freight, UPS charges from vendors."}
-],
-expense:[
-{name:"Advertising & Marketing",desc:"Facebook ads, promo items."},
-{name:"Website & Software",desc:"Shopify, apps, domains."},
-{name:"Merchant Processing Fees",desc:"Stripe, Shopify Payments fees."},
-{name:"Shipping to Customers",desc:"Postage, shipping labels."},
-{name:"Equipment",desc:"Mixers, shelving, machinery."},
-{name:"Utilities",desc:"Electric, water, internet."},
-{name:"Rent / Storage",desc:"Studio or warehouse rent."},
-{name:"Professional Services",desc:"CPA, legal, bookkeeping."},
-{name:"Office / Admin",desc:"Office supplies, admin tools."},
-{name:"Taxes & Licenses",desc:"Business licenses and filing fees."}
-],
-special:[
-{name:"Did Not Receive",desc:"Ordered but never received."},
-{name:"Needs Review",desc:"Unclear transaction."}
-]
-};
+// ===== AUTO SAVE =====
+function saveProgress(){
+localStorage.setItem("bathhouseData",JSON.stringify(data));
+localStorage.setItem("bathhouseIndex",currentIndex);
+}
 
+function loadProgress(){
+const savedData=localStorage.getItem("bathhouseData");
+const savedIndex=localStorage.getItem("bathhouseIndex");
+
+if(savedData){
+data=JSON.parse(savedData);
+currentIndex=parseInt(savedIndex||0);
+document.getElementById("app").style.display="block";
+renderCategories();
+showCard();
+updateProgress();
+}
+}
+
+window.onload=loadProgress;
+
+// ===== CATEGORIES =====
+const categories=[
+{name:"COGS – Ingredients",class:"cogs"},
+{name:"COGS – Packaging",class:"cogs"},
+{name:"COGS – Resale Inventory",class:"cogs"},
+{name:"COGS – Production Supplies",class:"cogs"},
+{name:"COGS – Shipping from Suppliers",class:"cogs"},
+{name:"Advertising & Marketing",class:"expense"},
+{name:"Website & Software",class:"expense"},
+{name:"Merchant Processing Fees",class:"expense"},
+{name:"Shipping to Customers",class:"expense"},
+{name:"Equipment",class:"expense"},
+{name:"Utilities",class:"expense"},
+{name:"Rent / Storage",class:"expense"},
+{name:"Professional Services",class:"expense"},
+{name:"Office / Admin",class:"expense"},
+{name:"Taxes & Licenses",class:"expense"},
+{name:"Did Not Receive",class:"special"},
+{name:"Needs Review",class:"special"}
+];
+
+// ===== FILE LOAD =====
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
 if(!file)return;
+
 Papa.parse(file,{header:true,skipEmptyLines:true,complete:res=>{
 rawRows=res.data;
 headers=Object.keys(rawRows[0]||{});
-showMapping();
+data=rawRows.map(r=>({
+Title:r.Title||"",
+Amount:parseFloat(String(r.Amount||"0").replace(/[$,]/g,""))||0,
+Vendor:r.Vendor||"",
+Date:r.Date||"",
+Category:""
+}));
+
+currentIndex=0;
+document.getElementById("app").style.display="block";
+renderCategories();
+showCard();
+updateProgress();
+saveProgress();
 }});
 });
 
-function showMapping(){
-const panel=document.getElementById("mappingPanel");
-panel.style.display="block";
-panel.innerHTML=`
-<h4>Map Columns</h4>
-Title:<br>${dropdown("mapTitle")}<br><br>
-Amount:<br>${dropdown("mapAmount")}<br><br>
-Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
-Date (optional):<br>${dropdown("mapDate",true)}<br><br>
-<button onclick="confirmMapping()">Confirm</button>
-`;
-}
-
-function dropdown(id,allowEmpty=false){
-let html=`<select id="${id}">`;
-if(allowEmpty)html+=`<option value="">--None--</option>`;
-headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
-return html+="</select>";
-}
-
-function confirmMapping(){
-const t=document.getElementById("mapTitle").value;
-const a=document.getElementById("mapAmount").value;
-const v=document.getElementById("mapVendor").value;
-const d=document.getElementById("mapDate").value;
-if(!t||!a){alert("Title & Amount required");return;}
-data=rawRows.map(r=>({
-Title:r[t]||"",
-Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
-Vendor:v?r[v]||"":"",
-Date:d?r[d]||"":"",
-Category:""
-}));
-document.getElementById("mappingPanel").style.display="none";
-document.getElementById("app").style.display="block";
-renderCategories();
-renderSumChecks();
-rebuildView();
-}
-
-function rebuildView(){
-viewIndices=[];
-data.forEach((item,i)=>{
-if(activeFilter==="uncategorized"&&item.Category)return;
-if(activeFilter==="review"&&item.Category!=="Needs Review")return;
-if(searchQuery&&!((item.Title+" "+item.Vendor).toLowerCase().includes(searchQuery.toLowerCase())))return;
-viewIndices.push(i);
+// ===== RENDER CATEGORY BUTTONS =====
+function renderCategories(){
+const container=document.getElementById("categoryButtons");
+container.innerHTML="";
+categories.forEach(cat=>{
+const btn=document.createElement("button");
+btn.className=`category-btn ${cat.class}`;
+btn.innerText=cat.name;
+btn.onclick=()=>categorize(cat.name);
+container.appendChild(btn);
 });
-viewPos=0;
-showCard();
-renderTotals();
-updateProgress();
 }
 
+// ===== SHOW CARD =====
 function showCard(){
-if(!viewIndices.length){document.getElementById("cardTitle").innerText="No items.";return;}
-const item=data[viewIndices[viewPos]];
+if(!data.length){return;}
+
+if(currentIndex>=data.length){
+document.getElementById("cardTitle").innerText="All items categorized!";
+document.getElementById("cardMeta").innerText="";
+document.getElementById("currentCategory").innerText="";
+return;
+}
+
+const item=data[currentIndex];
 document.getElementById("cardTitle").innerText=item.Title;
 document.getElementById("cardMeta").innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
 `Amount: $${item.Amount.toFixed(2)}`;
-document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
+
+document.getElementById("currentCategory").innerText=
+"Current: "+(item.Category||"—");
 }
 
+// ===== CATEGORY SELECT =====
 function categorize(name){
-if(!viewIndices.length)return;
-data[viewIndices[viewPos]].Category=name;
-if(viewPos<viewIndices.length-1){viewPos++;}
-else{rebuildView();}
+if(currentIndex>=data.length)return;
+
+data[currentIndex].Category=name;
+currentIndex++;
+saveProgress();
 showCard();
-renderTotals();
 updateProgress();
 }
 
-function renderCategories(){
-renderQuick();
-renderGroup("cogsSection",categoryGroups.cogs,"cogs");
-renderGroup("expenseSection",categoryGroups.expense,"expense");
-renderGroup("specialSection",categoryGroups.special,"special");
+// ===== NAVIGATION =====
+function goBack(){
+if(currentIndex>0){
+currentIndex--;
+showCard();
+updateProgress();
+saveProgress();
+}
 }
 
-function renderQuick(){
-const div=document.getElementById("quickSelect");
-div.innerHTML="";
-categoryGroups.quick.forEach(name=>{
-const btn=document.createElement("button");
-btn.className="quick-btn cogs";
-btn.innerText=name;
-btn.onclick=()=>categorize(name);
-div.appendChild(btn);
-});
+function goForward(){
+if(currentIndex<data.length-1){
+currentIndex++;
+showCard();
+updateProgress();
+saveProgress();
+}
 }
 
-function renderGroup(id,list,className){
-const div=document.getElementById(id);
-div.innerHTML="";
-list.forEach(c=>{
-const btn=document.createElement("button");
-btn.className=`category-btn ${className}`;
-btn.innerText=c.name;
-btn.onclick=()=>categorize(c.name);
-const desc=document.createElement("div");
-desc.className="category-desc";
-desc.innerText=c.desc;
-div.appendChild(btn);
-div.appendChild(desc);
-});
-}
-
-function toggleSection(id){
-document.getElementById(id).classList.toggle("hidden");
-}
-
-function setFilter(type,btn){
-activeFilter=type;
-document.querySelectorAll(".toggleBtn").forEach(b=>b.classList.remove("active"));
-btn.classList.add("active");
-rebuildView();
-}
-
-document.getElementById("searchInput").addEventListener("input",e=>{
-searchQuery=e.target.value;
-rebuildView();
-});
-
-function renderTotals(){
-let totals={};
-Object.values(categoryGroups).flat().forEach(c=>{if(c.name)totals[c.name]=0;});
-data.forEach(d=>{if(d.Category)totals[d.Category]+=d.Amount;});
-const div=document.getElementById("totals");
-div.innerHTML="";
-Object.keys(totals).forEach(k=>{
-div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
-});
-updateSelectedTotal();
-}
-
-function renderSumChecks(){
-const div=document.getElementById("sumChecks");
-div.innerHTML="";
-Object.values(categoryGroups).flat().forEach(c=>{
-if(!c.name)return;
-const cb=document.createElement("input");
-cb.type="checkbox";
-cb.value=c.name;
-cb.onchange=updateSelectedTotal;
-div.appendChild(cb);
-div.appendChild(document.createTextNode(" "+c.name));
-div.appendChild(document.createElement("br"));
-});
-}
-
-function updateSelectedTotal(){
-let selected=[];
-document.querySelectorAll("#sumChecks input:checked").forEach(cb=>selected.push(cb.value));
-let total=0;
-data.forEach(d=>{if(selected.includes(d.Category))total+=d.Amount;});
-document.getElementById("selectedTotal").innerText="Selected Total: $"+total.toFixed(2);
-}
-
+// ===== PROGRESS BAR =====
 function updateProgress(){
 const total=data.length;
 const done=data.filter(d=>d.Category).length;
@@ -361,6 +247,7 @@ document.getElementById("progressText").innerText=
 `${done} of ${total} categorized (${percent}%)`;
 }
 
+// ===== EXPORT =====
 function exportExcel(){
 const ws=XLSX.utils.json_to_sheet(data);
 const wb=XLSX.utils.book_new();
