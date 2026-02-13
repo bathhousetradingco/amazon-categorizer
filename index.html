@@ -10,45 +10,68 @@
 
 <style>
 body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; margin:0; padding:20px; background:#f4f4f4; }
-h2 { text-align:center; margin-bottom:10px; }
+h2 { text-align:center; }
 
 .panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px; }
 
-select,input,button {
-  padding:10px;
-  border-radius:10px;
-  border:1px solid #ddd;
-  font-size:14px;
-}
+.flex { display:flex; gap:20px; flex-wrap:wrap; }
+.col { flex:1; min-width:350px; }
 
 button { cursor:pointer; }
 
-.flex { display:flex; gap:10px; flex-wrap:wrap; }
-.col { flex:1; min-width:320px; }
-
 .category-btn {
-  width:100%; padding:14px; border:none; color:white;
-  font-weight:bold; border-radius:12px; margin-bottom:8px;
+  width:100%;
+  padding:12px;
+  border:none;
+  border-radius:10px;
+  color:white;
+  font-weight:600;
+  margin-bottom:4px;
+}
+
+.category-desc {
+  font-size:12px;
+  color:#555;
+  margin-bottom:10px;
+}
+
+.quick-btn {
+  padding:8px 12px;
+  border:none;
+  border-radius:999px;
+  color:white;
+  font-size:13px;
+  margin:4px;
+}
+
+.progress-bar-container {
+  background:#eee;
+  border-radius:999px;
+  overflow:hidden;
+  height:16px;
+  margin-bottom:8px;
+}
+
+.progress-bar {
+  height:100%;
+  background:#2e7d32;
+  width:0%;
 }
 
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
-.review{background:#8e24aa;}
-.special{background:#c62828;}
+.special{background:#8e24aa;}
 
-.navBtns{display:flex;gap:8px;margin:10px 0;}
-.navBtns button{flex:1;}
+.collapsible { cursor:pointer; font-weight:600; margin-top:10px; }
+.hidden { display:none; }
 
-.toggleBtn{padding:8px 12px;border-radius:999px;border:1px solid #ccc;background:white;}
-.toggleBtn.active{background:#111;color:white;}
+.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
 
-.resultItem{padding:8px;border-bottom:1px solid #eee;cursor:pointer;}
-.resultItem:hover{background:#f7f7f7;}
+#cardTitle { font-size:18px; font-weight:bold; margin-bottom:6px; }
+.small { font-size:13px; color:#555; }
 
-.totalRow{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;}
-
-#cardTitle{font-weight:bold;font-size:18px;margin-bottom:6px;}
-.small{font-size:13px;color:#555;}
+.toggleBtn { padding:6px 12px; border-radius:999px; border:1px solid #ccc; margin-right:6px; }
+.toggleBtn.active { background:#111; color:white; }
 </style>
 </head>
 
@@ -61,54 +84,64 @@ button { cursor:pointer; }
 <div id="mappingPanel" class="panel" style="display:none;"></div>
 
 <div id="app" style="display:none;">
+
+<div class="panel">
+<div class="progress-bar-container">
+<div id="progressBar" class="progress-bar"></div>
+</div>
+<div id="progressText" class="small"></div>
+</div>
+
 <div class="flex">
 
-<!-- LEFT SIDE -->
+<!-- LEFT -->
 <div class="col">
 
 <div class="panel">
 <div id="cardTitle">Upload CSV to begin</div>
 <div id="cardMeta" class="small"></div>
-<div id="currentCategory" class="small"></div>
+<div id="currentCategory" class="small" style="margin-top:6px;"></div>
 
-<div class="navBtns">
-<button onclick="goBack()">⬅ Back</button>
-<button onclick="goForward()">➡ Forward</button>
-</div>
+<hr>
 
-<div id="categories"></div>
+<div><strong>Quick Select</strong></div>
+<div id="quickSelect"></div>
+
+<div class="collapsible" onclick="toggleSection('cogsSection')">🟢 COGS</div>
+<div id="cogsSection"></div>
+
+<div class="collapsible" onclick="toggleSection('expenseSection')">🔵 Operating Expenses</div>
+<div id="expenseSection" class="hidden"></div>
+
+<div class="collapsible" onclick="toggleSection('specialSection')">🟣 Special</div>
+<div id="specialSection" class="hidden"></div>
+
 </div>
 
 <button onclick="exportExcel()">Export to Excel</button>
 
 </div>
 
-<!-- RIGHT SIDE -->
+<!-- RIGHT -->
 <div class="col">
 
 <div class="panel">
-
-<div class="flex" style="margin-bottom:8px;">
+<div>
 <button class="toggleBtn active" onclick="setFilter('all',this)">All</button>
 <button class="toggleBtn" onclick="setFilter('uncategorized',this)">Uncategorized</button>
-<button class="toggleBtn" onclick="setFilter('review',this)">Need Review</button>
+<button class="toggleBtn" onclick="setFilter('review',this)">Needs Review</button>
 </div>
 
-<input type="text" id="searchInput" placeholder="Search title/vendor..." style="width:100%;margin-bottom:8px;">
-<div id="searchResults" style="max-height:200px;overflow:auto;"></div>
-
+<input type="text" id="searchInput" placeholder="Search..." style="width:100%;margin-top:8px;">
 </div>
 
 <div class="panel">
-<h4>Category Totals</h4>
+<h4>Totals</h4>
 <div id="totals"></div>
-
 <hr>
-
 <h4>Custom Sum</h4>
 <div id="sumChecks"></div>
 <div id="selectedTotal" style="font-weight:bold;margin-top:8px;">Selected Total: $0.00</div>
-
 </div>
 
 </div>
@@ -117,62 +150,65 @@ button { cursor:pointer; }
 
 <script>
 
-let rawRows=[];
-let data=[];
-let headers=[];
-let viewIndices=[];
-let viewPos=0;
-let activeFilter="all";
-let searchQuery="";
+let rawRows=[], data=[], headers=[];
+let viewIndices=[], viewPos=0;
+let activeFilter="all", searchQuery="";
 
-const categories=[
-{name:"COGS – Ingredients",class:"cogs"},
-{name:"COGS – Packaging",class:"cogs"},
-{name:"COGS – Resale Inventory",class:"cogs"},
-{name:"COGS – Production Supplies",class:"cogs"},
-{name:"Advertising & Marketing",class:"expense"},
-{name:"Office / Admin",class:"expense"},
-{name:"Equipment",class:"expense"},
-{name:"Utilities / Overhead",class:"expense"},
-{name:"Did Not Receive",class:"special"},
-{name:"Need Steven’s Input",class:"review"}
-];
+const categoryGroups = {
+quick: ["COGS – Ingredients","COGS – Packaging","Merchant Processing Fees","Advertising & Marketing","Shipping to Customers","Needs Review"],
+cogs: [
+{name:"COGS – Ingredients",desc:"Oils, butters, lye, fragrance, wax, bases."},
+{name:"COGS – Packaging",desc:"Jars, bottles, lids, labels, boxes."},
+{name:"COGS – Resale Inventory",desc:"Finished goods bought for resale."},
+{name:"COGS – Production Supplies",desc:"Gloves, molds, paper towels (production)."},
+{name:"COGS – Shipping from Suppliers",desc:"Freight, UPS charges from vendors."}
+],
+expense:[
+{name:"Advertising & Marketing",desc:"Facebook ads, promo items."},
+{name:"Website & Software",desc:"Shopify, apps, domains."},
+{name:"Merchant Processing Fees",desc:"Stripe, Shopify Payments fees."},
+{name:"Shipping to Customers",desc:"Postage, shipping labels."},
+{name:"Equipment",desc:"Mixers, shelving, machinery."},
+{name:"Utilities",desc:"Electric, water, internet."},
+{name:"Rent / Storage",desc:"Studio or warehouse rent."},
+{name:"Professional Services",desc:"CPA, legal, bookkeeping."},
+{name:"Office / Admin",desc:"Office supplies, admin tools."},
+{name:"Taxes & Licenses",desc:"Business licenses and filing fees."}
+],
+special:[
+{name:"Did Not Receive",desc:"Ordered but never received."},
+{name:"Needs Review",desc:"Unclear transaction."}
+]
+};
 
-// ================= CSV Upload =================
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
 if(!file)return;
-Papa.parse(file,{
-header:true,
-skipEmptyLines:true,
-complete:res=>{
+Papa.parse(file,{header:true,skipEmptyLines:true,complete:res=>{
 rawRows=res.data;
 headers=Object.keys(rawRows[0]||{});
-showMappingUI();
-}
-});
+showMapping();
+}});
 });
 
-// ================= Column Mapping =================
-function showMappingUI(){
+function showMapping(){
 const panel=document.getElementById("mappingPanel");
 panel.style.display="block";
 panel.innerHTML=`
-<h4>Map Your Columns</h4>
-<label>Title (Required)</label><br>${dropdown("mapTitle")}<br><br>
-<label>Amount (Required)</label><br>${dropdown("mapAmount")}<br><br>
-<label>Vendor (Optional)</label><br>${dropdown("mapVendor",true)}<br><br>
-<label>Date (Optional)</label><br>${dropdown("mapDate",true)}<br><br>
-<button onclick="confirmMapping()">Confirm Mapping</button>
+<h4>Map Columns</h4>
+Title:<br>${dropdown("mapTitle")}<br><br>
+Amount:<br>${dropdown("mapAmount")}<br><br>
+Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
+Date (optional):<br>${dropdown("mapDate",true)}<br><br>
+<button onclick="confirmMapping()">Confirm</button>
 `;
 }
 
 function dropdown(id,allowEmpty=false){
 let html=`<select id="${id}">`;
-if(allowEmpty)html+=`<option value="">-- None --</option>`;
+if(allowEmpty)html+=`<option value="">--None--</option>`;
 headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
-html+="</select>";
-return html;
+return html+="</select>";
 }
 
 function confirmMapping(){
@@ -180,9 +216,7 @@ const t=document.getElementById("mapTitle").value;
 const a=document.getElementById("mapAmount").value;
 const v=document.getElementById("mapVendor").value;
 const d=document.getElementById("mapDate").value;
-
-if(!t||!a){alert("Title and Amount required.");return;}
-
+if(!t||!a){alert("Title & Amount required");return;}
 data=rawRows.map(r=>({
 Title:r[t]||"",
 Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
@@ -190,28 +224,85 @@ Vendor:v?r[v]||"":"",
 Date:d?r[d]||"":"",
 Category:""
 }));
-
 document.getElementById("mappingPanel").style.display="none";
 document.getElementById("app").style.display="block";
-
 renderCategories();
 renderSumChecks();
 rebuildView();
 }
 
-// ================= View / Filter =================
 function rebuildView(){
 viewIndices=[];
 data.forEach((item,i)=>{
-if(activeFilter==="uncategorized" && item.Category) return;
-if(activeFilter==="review" && item.Category!=="Need Steven’s Input" && item.Category!=="Did Not Receive") return;
-if(searchQuery && !(item.Title+" "+item.Vendor).toLowerCase().includes(searchQuery.toLowerCase())) return;
+if(activeFilter==="uncategorized"&&item.Category)return;
+if(activeFilter==="review"&&item.Category!=="Needs Review")return;
+if(searchQuery&&!((item.Title+" "+item.Vendor).toLowerCase().includes(searchQuery.toLowerCase())))return;
 viewIndices.push(i);
 });
 viewPos=0;
 showCard();
-renderSearchResults();
 renderTotals();
+updateProgress();
+}
+
+function showCard(){
+if(!viewIndices.length){document.getElementById("cardTitle").innerText="No items.";return;}
+const item=data[viewIndices[viewPos]];
+document.getElementById("cardTitle").innerText=item.Title;
+document.getElementById("cardMeta").innerHTML=
+(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+(item.Date?`Date: ${item.Date}<br>`:"")+
+`Amount: $${item.Amount.toFixed(2)}`;
+document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
+}
+
+function categorize(name){
+if(!viewIndices.length)return;
+data[viewIndices[viewPos]].Category=name;
+if(viewPos<viewIndices.length-1){viewPos++;}
+else{rebuildView();}
+showCard();
+renderTotals();
+updateProgress();
+}
+
+function renderCategories(){
+renderQuick();
+renderGroup("cogsSection",categoryGroups.cogs,"cogs");
+renderGroup("expenseSection",categoryGroups.expense,"expense");
+renderGroup("specialSection",categoryGroups.special,"special");
+}
+
+function renderQuick(){
+const div=document.getElementById("quickSelect");
+div.innerHTML="";
+categoryGroups.quick.forEach(name=>{
+const btn=document.createElement("button");
+btn.className="quick-btn cogs";
+btn.innerText=name;
+btn.onclick=()=>categorize(name);
+div.appendChild(btn);
+});
+}
+
+function renderGroup(id,list,className){
+const div=document.getElementById(id);
+div.innerHTML="";
+list.forEach(c=>{
+const btn=document.createElement("button");
+btn.className=`category-btn ${className}`;
+btn.innerText=c.name;
+btn.onclick=()=>categorize(c.name);
+const desc=document.createElement("div");
+desc.className="category-desc";
+desc.innerText=c.desc;
+div.appendChild(btn);
+div.appendChild(desc);
+});
+}
+
+function toggleSection(id){
+document.getElementById(id).classList.toggle("hidden");
 }
 
 function setFilter(type,btn){
@@ -221,63 +312,14 @@ btn.classList.add("active");
 rebuildView();
 }
 
-// ================= Display =================
-function showCard(){
-if(!viewIndices.length){document.getElementById("cardTitle").innerText="No matching items.";return;}
-const item=data[viewIndices[viewPos]];
-document.getElementById("cardTitle").innerText=item.Title;
-document.getElementById("cardMeta").innerHTML=
-(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-(item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}`;
-document.getElementById("currentCategory").innerText="Current Category: "+(item.Category||"—");
-}
-
-// ================= Navigation =================
-function goBack(){if(viewPos>0){viewPos--;showCard();}}
-function goForward(){if(viewPos<viewIndices.length-1){viewPos++;showCard();}}
-
-// ================= Categories =================
-function renderCategories(){
-const container=document.getElementById("categories");
-container.innerHTML="";
-categories.forEach(c=>{
-const btn=document.createElement("button");
-btn.className=`category-btn ${c.class}`;
-btn.innerText=c.name;
-btn.onclick=()=>{
-data[viewIndices[viewPos]].Category=c.name;
-rebuildView();
-};
-container.appendChild(btn);
-});
-}
-
-// ================= Search =================
 document.getElementById("searchInput").addEventListener("input",e=>{
 searchQuery=e.target.value;
 rebuildView();
 });
 
-function renderSearchResults(){
-const box=document.getElementById("searchResults");
-box.innerHTML="";
-if(!searchQuery)return;
-data.forEach((item,i)=>{
-if((item.Title+" "+item.Vendor).toLowerCase().includes(searchQuery.toLowerCase())){
-const div=document.createElement("div");
-div.className="resultItem";
-div.innerText=`${item.Title} — $${item.Amount.toFixed(2)} — ${item.Category||"—"}`;
-div.onclick=()=>{viewPos=viewIndices.indexOf(i);showCard();};
-box.appendChild(div);
-}
-});
-}
-
-// ================= Totals =================
 function renderTotals(){
-const totals={};
-categories.forEach(c=>totals[c.name]=0);
+let totals={};
+Object.values(categoryGroups).flat().forEach(c=>{if(c.name)totals[c.name]=0;});
 data.forEach(d=>{if(d.Category)totals[d.Category]+=d.Amount;});
 const div=document.getElementById("totals");
 div.innerHTML="";
@@ -287,18 +329,18 @@ div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2
 updateSelectedTotal();
 }
 
-// ================= Custom Sum =================
 function renderSumChecks(){
-const container=document.getElementById("sumChecks");
-container.innerHTML="";
-categories.forEach(c=>{
+const div=document.getElementById("sumChecks");
+div.innerHTML="";
+Object.values(categoryGroups).flat().forEach(c=>{
+if(!c.name)return;
 const cb=document.createElement("input");
 cb.type="checkbox";
 cb.value=c.name;
 cb.onchange=updateSelectedTotal;
-container.appendChild(cb);
-container.appendChild(document.createTextNode(" "+c.name));
-container.appendChild(document.createElement("br"));
+div.appendChild(cb);
+div.appendChild(document.createTextNode(" "+c.name));
+div.appendChild(document.createElement("br"));
 });
 }
 
@@ -310,7 +352,15 @@ data.forEach(d=>{if(selected.includes(d.Category))total+=d.Amount;});
 document.getElementById("selectedTotal").innerText="Selected Total: $"+total.toFixed(2);
 }
 
-// ================= Export =================
+function updateProgress(){
+const total=data.length;
+const done=data.filter(d=>d.Category).length;
+const percent=total?Math.round((done/total)*100):0;
+document.getElementById("progressBar").style.width=percent+"%";
+document.getElementById("progressText").innerText=
+`${done} of ${total} categorized (${percent}%)`;
+}
+
 function exportExcel(){
 const ws=XLSX.utils.json_to_sheet(data);
 const wb=XLSX.utils.book_new();
