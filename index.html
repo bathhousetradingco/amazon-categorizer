@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8" />
@@ -13,34 +14,26 @@ h2 { text-align:center; }
 
 .panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px; }
 
+.flex { display:flex; gap:20px; flex-wrap:wrap; }
+.col { flex:1; min-width:350px; }
+
 button { cursor:pointer; }
 
 .category-btn {
   width:100%;
-  padding:16px;
+  padding:14px;
   border:none;
-  border-radius:12px;
+  border-radius:10px;
   color:white;
   font-weight:600;
   margin-bottom:6px;
-  font-size:16px;
 }
 
-.cogs{background:#2e7d32;}
-.expense{background:#1565c0;}
-.special{background:#8e24aa;}
-
-.nav-btn{
-  width:48%;
-  padding:12px;
-  border:none;
-  border-radius:12px;
-  margin-top:8px;
-  font-weight:600;
+.category-desc {
+  font-size:12px;
+  color:#555;
+  margin-bottom:10px;
 }
-
-.back{background:#999;color:white;}
-.forward{background:#444;color:white;}
 
 .progress-bar-container {
   background:#eee;
@@ -56,10 +49,31 @@ button { cursor:pointer; }
   width:0%;
 }
 
-.small { font-size:13px; color:#555; }
-#cardTitle { font-size:18px; font-weight:bold; margin-bottom:6px; }
+.nav-buttons {
+  display:flex;
+  gap:10px;
+  margin-bottom:10px;
+}
 
-.hidden { display:none; }
+.nav-buttons button {
+  flex:1;
+  padding:10px;
+  border-radius:8px;
+  border:none;
+  font-weight:600;
+}
+
+.cogs{background:#2e7d32;}
+.expense{background:#1565c0;}
+.special{background:#8e24aa;}
+
+.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
+
+#cardTitle { font-size:18px; font-weight:bold; margin-bottom:6px; }
+.small { font-size:13px; color:#555; }
+
+.toggleBtn { padding:6px 12px; border-radius:999px; border:1px solid #ccc; margin-right:6px; }
+.toggleBtn.active { background:#111; color:white; }
 </style>
 </head>
 
@@ -68,6 +82,8 @@ button { cursor:pointer; }
 <h2>Bathhouse Categorizer</h2>
 
 <input type="file" id="csvFile" accept=".csv">
+
+<div id="mappingPanel" class="panel" style="display:none;"></div>
 
 <div id="app" style="display:none;">
 
@@ -78,6 +94,10 @@ button { cursor:pointer; }
 <div id="progressText" class="small"></div>
 </div>
 
+<div class="flex">
+
+<div class="col">
+
 <div class="panel">
 
 <div id="cardTitle">Upload CSV to begin</div>
@@ -86,12 +106,19 @@ button { cursor:pointer; }
 
 <hr>
 
-<div id="categoryButtons"></div>
-
-<div style="display:flex; justify-content:space-between;">
-<button class="nav-btn back" onclick="goBack()">⬅ Back</button>
-<button class="nav-btn forward" onclick="goForward()">Forward ➡</button>
+<div class="nav-buttons">
+<button onclick="goBack()">⬅ Back</button>
+<button onclick="goForward()">Next ➡</button>
 </div>
+
+<h4>COGS</h4>
+<div id="cogsSection"></div>
+
+<h4>Operating Expenses</h4>
+<div id="expenseSection"></div>
+
+<h4>Special</h4>
+<div id="specialSection"></div>
 
 </div>
 
@@ -99,161 +126,238 @@ button { cursor:pointer; }
 
 </div>
 
+<div class="col">
+
+<div class="panel">
+<div>
+<button class="toggleBtn active" onclick="setFilter('all',this)">All</button>
+<button class="toggleBtn" onclick="setFilter('uncategorized',this)">Uncategorized</button>
+<button class="toggleBtn" onclick="setFilter('review',this)">Needs Review</button>
+</div>
+
+<input type="text" id="searchInput" placeholder="Search..." style="width:100%;margin-top:8px;">
+</div>
+
+<div class="panel">
+<h4>Totals</h4>
+<div id="totals"></div>
+<hr>
+<h4>Custom Sum</h4>
+<div id="sumChecks"></div>
+<div id="selectedTotal" style="font-weight:bold;margin-top:8px;">Selected Total: $0.00</div>
+</div>
+
+</div>
+</div>
+</div>
+
 <script>
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
+let activeFilter="all", searchQuery="";
 
-// ===== AUTO SAVE =====
-function saveProgress(){
-localStorage.setItem("bathhouseData",JSON.stringify(data));
-localStorage.setItem("bathhouseIndex",currentIndex);
-}
+const STORAGE_KEY="bathhouse_categorizer_v3";
 
-function loadProgress(){
-const savedData=localStorage.getItem("bathhouseData");
-const savedIndex=localStorage.getItem("bathhouseIndex");
+const categoryGroups = {
+cogs:[
+{name:"COGS – Ingredients",desc:"Oils, butters, lye, fragrance, wax."},
+{name:"COGS – Packaging",desc:"Jars, bottles, lids, labels."},
+{name:"COGS – Resale Inventory",desc:"Finished goods bought for resale."},
+{name:"COGS – Production Supplies",desc:"Gloves, molds, paper towels."},
+{name:"COGS – Shipping from Suppliers",desc:"Freight, UPS charges."}
+],
+expense:[
+{name:"Advertising & Marketing",desc:"Ads, promo items."},
+{name:"Website & Software",desc:"Shopify, apps."},
+{name:"Merchant Processing Fees",desc:"Stripe, payment fees."},
+{name:"Shipping to Customers",desc:"Postage."},
+{name:"Equipment",desc:"Machinery, tools."},
+{name:"Insurance",desc:"Business insurance."},
+{name:"Utilities",desc:"Electric, water, internet."},
+{name:"Rent / Storage",desc:"Studio rent."},
+{name:"Professional Services",desc:"CPA, legal."},
+{name:"Office / Admin",desc:"Office supplies."},
+{name:"Taxes & Licenses",desc:"Business licenses."}
+],
+special:[
+{name:"Did Not Receive",desc:"Ordered but never received."},
+{name:"Needs Review",desc:"Unclear transaction."}
+]
+};
 
-if(savedData){
-data=JSON.parse(savedData);
-currentIndex=parseInt(savedIndex||0);
-document.getElementById("app").style.display="block";
-renderCategories();
-showCard();
-updateProgress();
-}
-}
-
-window.onload=loadProgress;
-
-// ===== CATEGORIES =====
-const categories=[
-{name:"COGS – Ingredients",class:"cogs"},
-{name:"COGS – Packaging",class:"cogs"},
-{name:"COGS – Resale Inventory",class:"cogs"},
-{name:"COGS – Production Supplies",class:"cogs"},
-{name:"COGS – Shipping from Suppliers",class:"cogs"},
-{name:"Advertising & Marketing",class:"expense"},
-{name:"Website & Software",class:"expense"},
-{name:"Merchant Processing Fees",class:"expense"},
-{name:"Shipping to Customers",class:"expense"},
-{name:"Equipment",class:"expense"},
-{name:"Utilities",class:"expense"},
-{name:"Rent / Storage",class:"expense"},
-{name:"Professional Services",class:"expense"},
-{name:"Office / Admin",class:"expense"},
-{name:"Taxes & Licenses",class:"expense"},
-{name:"Did Not Receive",class:"special"},
-{name:"Needs Review",class:"special"}
-];
-
-// ===== FILE LOAD =====
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
 if(!file)return;
-
 Papa.parse(file,{header:true,skipEmptyLines:true,complete:res=>{
 rawRows=res.data;
 headers=Object.keys(rawRows[0]||{});
-data=rawRows.map(r=>({
-Title:r.Title||"",
-Amount:parseFloat(String(r.Amount||"0").replace(/[$,]/g,""))||0,
-Vendor:r.Vendor||"",
-Date:r.Date||"",
-Category:""
-}));
-
-currentIndex=0;
-document.getElementById("app").style.display="block";
-renderCategories();
-showCard();
-updateProgress();
-saveProgress();
+showMapping();
 }});
 });
 
-// ===== RENDER CATEGORY BUTTONS =====
-function renderCategories(){
-const container=document.getElementById("categoryButtons");
-container.innerHTML="";
-categories.forEach(cat=>{
-const btn=document.createElement("button");
-btn.className=`category-btn ${cat.class}`;
-btn.innerText=cat.name;
-btn.onclick=()=>categorize(cat.name);
-container.appendChild(btn);
-});
+function showMapping(){
+const panel=document.getElementById("mappingPanel");
+panel.style.display="block";
+panel.innerHTML=`
+<h4>Map Columns</h4>
+Title:<br>${dropdown("mapTitle")}<br><br>
+Amount:<br>${dropdown("mapAmount")}<br><br>
+Vendor:<br>${dropdown("mapVendor",true)}<br><br>
+Date:<br>${dropdown("mapDate",true)}<br><br>
+<button onclick="confirmMapping()">Confirm</button>
+`;
 }
 
-// ===== SHOW CARD =====
+function dropdown(id,allowEmpty=false){
+let html=`<select id="${id}">`;
+if(allowEmpty)html+=`<option value="">--None--</option>`;
+headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+return html+="</select>";
+}
+
+function confirmMapping(){
+const t=document.getElementById("mapTitle").value;
+const a=document.getElementById("mapAmount").value;
+const v=document.getElementById("mapVendor").value;
+const d=document.getElementById("mapDate").value;
+if(!t||!a){alert("Title & Amount required");return;}
+data=rawRows.map(r=>({
+Title:r[t]||"",
+Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
+Vendor:v?r[v]||"":"",
+Date:d?r[d]||"",
+Category:""
+}));
+document.getElementById("mappingPanel").style.display="none";
+document.getElementById("app").style.display="block";
+renderCategories();
+renderSumChecks();
+showCard();
+renderTotals();
+saveProgress();
+}
+
 function showCard(){
-if(!data.length){return;}
-
-if(currentIndex>=data.length){
-document.getElementById("cardTitle").innerText="All items categorized!";
-document.getElementById("cardMeta").innerText="";
-document.getElementById("currentCategory").innerText="";
-return;
-}
-
+if(!data.length)return;
 const item=data[currentIndex];
 document.getElementById("cardTitle").innerText=item.Title;
 document.getElementById("cardMeta").innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
 `Amount: $${item.Amount.toFixed(2)}`;
-
-document.getElementById("currentCategory").innerText=
-"Current: "+(item.Category||"—");
+document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
+updateProgress();
 }
 
-// ===== CATEGORY SELECT =====
 function categorize(name){
-if(currentIndex>=data.length)return;
-
 data[currentIndex].Category=name;
-currentIndex++;
-saveProgress();
+if(currentIndex<data.length-1)currentIndex++;
 showCard();
-updateProgress();
+renderTotals();
+saveProgress();
 }
 
-// ===== NAVIGATION =====
 function goBack(){
-if(currentIndex>0){
-currentIndex--;
+if(currentIndex>0)currentIndex--;
 showCard();
-updateProgress();
-saveProgress();
-}
 }
 
 function goForward(){
-if(currentIndex<data.length-1){
-currentIndex++;
+if(currentIndex<data.length-1)currentIndex++;
 showCard();
-updateProgress();
-saveProgress();
-}
 }
 
-// ===== PROGRESS BAR =====
+function renderCategories(){
+renderGroup("cogsSection",categoryGroups.cogs,"cogs");
+renderGroup("expenseSection",categoryGroups.expense,"expense");
+renderGroup("specialSection",categoryGroups.special,"special");
+}
+
+function renderGroup(id,list,className){
+const div=document.getElementById(id);
+div.innerHTML="";
+list.forEach(c=>{
+const btn=document.createElement("button");
+btn.className=`category-btn ${className}`;
+btn.innerText=c.name;
+btn.onclick=()=>categorize(c.name);
+const desc=document.createElement("div");
+desc.className="category-desc";
+desc.innerText=c.desc;
+div.appendChild(btn);
+div.appendChild(desc);
+});
+}
+
+function renderTotals(){
+let totals={};
+Object.values(categoryGroups).flat().forEach(c=>totals[c.name]=0);
+data.forEach(d=>{if(d.Category)totals[d.Category]+=d.Amount;});
+const div=document.getElementById("totals");
+div.innerHTML="";
+Object.keys(totals).forEach(k=>{
+div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+});
+}
+
+function renderSumChecks(){
+const div=document.getElementById("sumChecks");
+div.innerHTML="";
+Object.values(categoryGroups).flat().forEach(c=>{
+const cb=document.createElement("input");
+cb.type="checkbox";
+cb.value=c.name;
+cb.onchange=updateSelectedTotal;
+div.appendChild(cb);
+div.appendChild(document.createTextNode(" "+c.name));
+div.appendChild(document.createElement("br"));
+});
+}
+
+function updateSelectedTotal(){
+let selected=[];
+document.querySelectorAll("#sumChecks input:checked").forEach(cb=>selected.push(cb.value));
+let total=0;
+data.forEach(d=>{if(selected.includes(d.Category))total+=d.Amount;});
+document.getElementById("selectedTotal").innerText="Selected Total: $"+total.toFixed(2);
+}
+
 function updateProgress(){
-const total=data.length;
 const done=data.filter(d=>d.Category).length;
-const percent=total?Math.round((done/total)*100):0;
+const percent=data.length?Math.round((done/data.length)*100):0;
 document.getElementById("progressBar").style.width=percent+"%";
 document.getElementById("progressText").innerText=
-`${done} of ${total} categorized (${percent}%)`;
+`${done} of ${data.length} categorized (${percent}%)`;
 }
 
-// ===== EXPORT =====
 function exportExcel(){
 const ws=XLSX.utils.json_to_sheet(data);
 const wb=XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb,ws,"Categorized");
 XLSX.writeFile(wb,"Categorized.xlsx");
 }
+
+function saveProgress(){
+localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
+}
+
+function loadProgress(){
+const saved=localStorage.getItem(STORAGE_KEY);
+if(!saved)return;
+const parsed=JSON.parse(saved);
+data=parsed.data||[];
+currentIndex=parsed.currentIndex||0;
+if(data.length){
+document.getElementById("app").style.display="block";
+renderCategories();
+renderSumChecks();
+showCard();
+renderTotals();
+}
+}
+
+window.onload=loadProgress;
 
 </script>
 </body>
