@@ -9,18 +9,47 @@
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <style>
-body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; margin:0; padding:20px; background:#f4f4f4; }
+body {
+  font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+  margin:0;
+  padding:20px;
+  background:#f4f4f4;
+}
+
 h2 { text-align:center; }
 
-.panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px; }
+.panel {
+  background:white;
+  padding:16px;
+  border-radius:14px;
+  box-shadow:0 6px 25px rgba(0,0,0,.08);
+  margin-bottom:15px;
+}
 
-button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-weight:600; }
+button {
+  cursor:pointer;
+  border:none;
+  border-radius:10px;
+  padding:12px;
+  font-weight:600;
+}
 
-.navBtn { width:48%; background:#444; color:white; }
+.navBtn {
+  width:48%;
+  background:#444;
+  color:white;
+}
 
-.category-row { display:flex; align-items:center; margin-bottom:6px; }
+.category-row {
+  display:flex;
+  align-items:center;
+  margin-bottom:6px;
+}
 
-.category-btn { flex:1; color:white; }
+.category-btn {
+  flex:1;
+  color:white;
+}
 
 .info-btn {
   width:40px;
@@ -33,12 +62,28 @@ button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-wei
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
 
-.progress-bar-container { background:#eee; border-radius:999px; overflow:hidden; height:16px; margin-bottom:8px; }
-.progress-bar { height:100%; background:#2e7d32; width:0%; }
+.progress-bar-container {
+  background:#eee;
+  border-radius:999px;
+  overflow:hidden;
+  height:16px;
+  margin-bottom:8px;
+}
+
+.progress-bar {
+  height:100%;
+  background:#2e7d32;
+  width:0%;
+}
 
 .small { font-size:13px; color:#555; }
 
-.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
+.totalRow {
+  display:flex;
+  justify-content:space-between;
+  font-size:13px;
+  padding:4px 0;
+}
 
 /* Modal */
 .modal {
@@ -87,8 +132,8 @@ button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-wei
 <hr>
 
 <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
-<button class="navBtn" id="backBtn">⬅ Back</button>
-<button class="navBtn" id="nextBtn">Next ➡</button>
+<button class="navBtn" onclick="goBack()">⬅ Back</button>
+<button class="navBtn" onclick="goNext()">Next ➡</button>
 </div>
 
 <div id="categoryButtons"></div>
@@ -105,99 +150,258 @@ button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-wei
 
 </div>
 
+<!-- INFO MODAL -->
 <div id="infoModal" class="modal">
   <div class="modal-content">
     <h3 id="modalTitle"></h3>
     <div id="modalBody"></div>
-    <button id="closeModalBtn" style="margin-top:15px;background:#444;color:white;width:100%;">Close</button>
+    <button onclick="closeModal()" style="margin-top:15px;background:#444;color:white;width:100%;">Close</button>
   </div>
 </div>
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v5";
+const STORAGE_KEY = "bathhouse_categorizer_v6";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
 
 const categories = [
-{ name:"COGS – Ingredients", class:"cogs", info:"Oils, butters, lye, fragrance, wax, colorants, extracts."},
-{ name:"COGS – Packaging", class:"cogs", info:"Soap boxes, lotion jars, labels, tissue paper, shipping boxes."},
-{ name:"COGS – Resale Inventory", class:"cogs", info:"Finished goods bought and resold."},
-{ name:"COGS – Production Supplies", class:"cogs", info:"Gloves, mold liners, disposable production supplies."},
-{ name:"COGS – Shipping from Suppliers", class:"cogs", info:"UPS or freight from vendors."},
-{ name:"Equipment", class:"expense", info:"Molds, mixers, shelving, machinery."},
-{ name:"Advertising & Marketing", class:"expense", info:"Facebook ads, event banners, promo items."},
-{ name:"Website & Software", class:"expense", info:"Shopify, TaxJar, Canva, domains."},
-{ name:"Merchant Processing Fees", class:"expense", info:"Stripe or Shopify payment fees."},
-{ name:"Insurance", class:"expense", info:"Product liability, general liability."},
-{ name:"Utilities", class:"expense", info:"Electric, water, internet."},
-{ name:"Professional Services", class:"expense", info:"CPA, bookkeeping, legal."},
-{ name:"Needs Review", class:"special", info:"Flag for Steven review."}
+{
+name:"COGS – Ingredients",
+class:"cogs",
+info:`This includes all raw materials that physically go into your products.
+
+Examples for Bathhouse Trading Co:
+• Oils (olive, coconut, castor)
+• Butters (shea, mango)
+• Lye
+• Fragrance oils
+• Essential oils
+• Colorants, mica, oxides
+• Extracts (green tea, birch, chamomile)
+• Wax for melts
+• Preservatives
+
+If it becomes part of the product itself, it belongs here.`
+},
+{
+name:"COGS – Packaging",
+class:"cogs",
+info:`This includes packaging that goes WITH the product or is used to ship customer orders.
+
+Examples:
+• Soap boxes
+• Lotion bottles & jars
+• Lids, pumps, droppers
+• Product labels
+• Tissue paper in orders
+• Shipping boxes
+• Mailers
+• Thank-you cards inside orders
+
+If it’s used to package or ship finished goods, it belongs here.`
+},
+{
+name:"COGS – Resale Inventory",
+class:"cogs",
+info:`Finished goods purchased and resold without modifying.
+
+Examples:
+• Retail accessories bought wholesale
+• Items purchased to resell at events
+• Merchandise not manufactured by you`
+},
+{
+name:"COGS – Production Supplies",
+class:"cogs",
+info:`Items used in production but not part of the final product.
+
+Examples:
+• Gloves
+• Paper towels in production
+• Mold liners
+• Disposable tools
+• Alcohol for sanitizing equipment`
+},
+{
+name:"COGS – Shipping from Suppliers",
+class:"cogs",
+info:`Freight or shipping costs paid to vendors.
+
+Examples:
+• UPS charges from Bramble Berry
+• Freight for pallet deliveries
+• Shipping added to ingredient invoices`
+},
+{
+name:"Equipment",
+class:"expense",
+info:`Large or durable items used for business operations.
+
+Examples:
+• Soap molds
+• Mixers
+• Shelving
+• Display racks
+• Label printers
+• Production tables
+
+These are NOT COGS — they are business equipment.`
+},
+{
+name:"Advertising & Marketing",
+class:"expense",
+info:`Money spent to promote Bathhouse Trading Co.
+
+Examples:
+• Facebook ads
+• Event banners
+• Printed flyers
+• Promo giveaways
+• Booth fees for markets`
+},
+{
+name:"Website & Software",
+class:"expense",
+info:`Digital tools and subscriptions.
+
+Examples:
+• Shopify
+• TaxJar
+• Canva
+• QuickBooks
+• Email marketing software`
+},
+{
+name:"Merchant Processing Fees",
+class:"expense",
+info:`Payment processing fees.
+
+Examples:
+• Shopify Payments fees
+• Stripe fees
+• Square fees`
+},
+{
+name:"Insurance",
+class:"expense",
+info:`Business insurance policies.
+
+Examples:
+• Product liability insurance
+• General liability
+• Property insurance`
+},
+{
+name:"Utilities",
+class:"expense",
+info:`Operational utilities.
+
+Examples:
+• Electricity
+• Water
+• Internet`
+},
+{
+name:"Professional Services",
+class:"expense",
+info:`Professional help.
+
+Examples:
+• CPA
+• Bookkeeper
+• Legal services`
+},
+{
+name:"Needs Review",
+class:"special",
+info:`Unclear transactions.
+
+Use when:
+• You’re unsure
+• You want Steven’s input
+• Something looks suspicious`
+}
 ];
 
 document.getElementById("csvFile").addEventListener("change",function(e){
 localStorage.removeItem(STORAGE_KEY);
 const file=e.target.files[0];
 if(!file)return;
-Papa.parse(file,{header:true,skipEmptyLines:true,complete:function(res){
+
+Papa.parse(file,{
+header:true,
+skipEmptyLines:true,
+complete:function(res){
 rawRows=res.data;
 headers=Object.keys(rawRows[0]||{});
 showMapping();
-}});
+}
+});
 });
 
 function showMapping(){
 const panel=document.getElementById("mappingPanel");
 panel.style.display="block";
-panel.innerHTML="<h4>Map Columns</h4>"+
-"Title:<br>"+dropdown("mapTitle")+"<br><br>"+
-"Amount:<br>"+dropdown("mapAmount")+"<br><br>"+
-"<button onclick='confirmMapping()'>Confirm</button>";
+
+panel.innerHTML=`
+<h4>Map Columns</h4>
+Title:<br>${dropdown("mapTitle")}<br><br>
+Amount:<br>${dropdown("mapAmount")}<br><br>
+Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
+Date (optional):<br>${dropdown("mapDate",true)}<br><br>
+<button onclick="confirmMapping()">Confirm</button>
+`;
 }
 
-function dropdown(id){
-let html="<select id='"+id+"'>";
-headers.forEach(function(h){ html+="<option value='"+h+"'>"+h+"</option>";});
-return html+"</select>";
+function dropdown(id,allowEmpty=false){
+let html=`<select id="${id}">`;
+if(allowEmpty) html+=`<option value="">--None--</option>`;
+headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+return html+="</select>";
 }
 
 function confirmMapping(){
 const t=document.getElementById("mapTitle").value;
 const a=document.getElementById("mapAmount").value;
+const v=document.getElementById("mapVendor").value;
+const d=document.getElementById("mapDate").value;
 
-data=rawRows.map(function(r){
-return {
+data=rawRows.map(r=>({
 Title:r[t]||"",
 Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
+Vendor:v?r[v]||"":"",
+Date:d?r[d]||"":"",
 Category:""
-};
-});
+}));
 
 document.getElementById("mappingPanel").style.display="none";
 document.getElementById("app").style.display="block";
 
 renderCategories();
 showCard();
+updateTotals();
+updateProgress();
 saveProgress();
 }
 
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
 div.innerHTML="";
-categories.forEach(function(c){
+categories.forEach(c=>{
 const row=document.createElement("div");
 row.className="category-row";
 
 const btn=document.createElement("button");
 btn.className="category-btn "+c.class;
 btn.innerText=c.name;
-btn.onclick=function(){categorize(c.name);};
+btn.onclick=()=>categorize(c.name);
 
 const info=document.createElement("button");
 info.className="info-btn";
 info.innerText="ⓘ";
-info.onclick=function(){showInfo(c);};
+info.onclick=()=>showInfo(c);
 
 row.appendChild(btn);
 row.appendChild(info);
@@ -211,39 +415,73 @@ document.getElementById("modalBody").innerText=cat.info;
 document.getElementById("infoModal").style.display="block";
 }
 
-document.getElementById("closeModalBtn").addEventListener("click",function(){
+function closeModal(){
 document.getElementById("infoModal").style.display="none";
-});
-
-document.getElementById("infoModal").addEventListener("click",function(){
-document.getElementById("infoModal").style.display="none";
-});
+}
 
 function categorize(name){
 data[currentIndex].Category=name;
 if(currentIndex<data.length-1) currentIndex++;
 showCard();
+updateTotals();
+updateProgress();
 saveProgress();
 }
 
-document.getElementById("backBtn").onclick=function(){
-if(currentIndex>0){currentIndex--;showCard();saveProgress();}
-};
+function goBack(){
+if(currentIndex>0){
+currentIndex--;
+showCard();
+saveProgress();
+}
+}
 
-document.getElementById("nextBtn").onclick=function(){
-if(currentIndex<data.length-1){currentIndex++;showCard();saveProgress();}
-};
+function goNext(){
+if(currentIndex<data.length-1){
+currentIndex++;
+showCard();
+saveProgress();
+}
+}
 
 function showCard(){
 if(!data.length)return;
 const item=data[currentIndex];
+
 document.getElementById("cardTitle").innerText=item.Title;
-document.getElementById("cardMeta").innerText="Amount: $"+item.Amount.toFixed(2);
+document.getElementById("cardMeta").innerHTML=
+(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+(item.Date?`Date: ${item.Date}<br>`:"")+
+`Amount: $${item.Amount.toFixed(2)}`;
+
 document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
 }
 
+function updateTotals(){
+let totals={};
+categories.forEach(c=>totals[c.name]=0);
+data.forEach(d=>{
+if(d.Category) totals[d.Category]+=d.Amount;
+});
+
+const div=document.getElementById("totals");
+div.innerHTML="";
+Object.keys(totals).forEach(k=>{
+div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+});
+}
+
+function updateProgress(){
+const total=data.length;
+const done=data.filter(d=>d.Category).length;
+const percent=total?Math.round((done/total)*100):0;
+document.getElementById("progressBar").style.width=percent+"%";
+document.getElementById("progressText").innerText=
+`${done} of ${total} categorized (${percent}%)`;
+}
+
 function saveProgress(){
-localStorage.setItem(STORAGE_KEY,JSON.stringify({data:data,currentIndex:currentIndex}));
+localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
 }
 
 function loadProgress(){
@@ -256,6 +494,8 @@ if(data.length){
 document.getElementById("app").style.display="block";
 renderCategories();
 showCard();
+updateTotals();
+updateProgress();
 }
 }
 
