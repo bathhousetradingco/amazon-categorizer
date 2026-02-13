@@ -18,16 +18,9 @@ button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-wei
 
 .navBtn { width:48%; background:#444; color:white; }
 
-.category-row {
-  display:flex;
-  align-items:center;
-  margin-bottom:6px;
-}
+.category-row { display:flex; align-items:center; margin-bottom:6px; }
 
-.category-btn {
-  flex:1;
-  color:white;
-}
+.category-btn { flex:1; color:white; }
 
 .info-btn {
   width:40px;
@@ -59,7 +52,7 @@ button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-wei
 
 .modal-content {
   background:white;
-  margin:10% auto;
+  margin:15% auto;
   padding:20px;
   width:90%;
   max-width:500px;
@@ -94,8 +87,8 @@ button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-wei
 <hr>
 
 <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
-<button class="navBtn" onclick="goBack()">⬅ Back</button>
-<button class="navBtn" onclick="goForward()">Next ➡</button>
+<button class="navBtn" id="backBtn">⬅ Back</button>
+<button class="navBtn" id="nextBtn">Next ➡</button>
 </div>
 
 <div id="categoryButtons"></div>
@@ -112,239 +105,99 @@ button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-wei
 
 </div>
 
-<!-- MODAL -->
-<div id="infoModal" class="modal" onclick="closeModal()">
-  <div class="modal-content" onclick="event.stopPropagation()">
+<div id="infoModal" class="modal">
+  <div class="modal-content">
     <h3 id="modalTitle"></h3>
     <div id="modalBody"></div>
-    <button onclick="closeModal()" style="margin-top:15px;background:#444;color:white;width:100%;">Close</button>
+    <button id="closeModalBtn" style="margin-top:15px;background:#444;color:white;width:100%;">Close</button>
   </div>
 </div>
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v4";
+const STORAGE_KEY = "bathhouse_categorizer_v5";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
 
-// =========================
-// CATEGORY DEFINITIONS
-// =========================
-
 const categories = [
-{
-name:"COGS – Ingredients",
-class:"cogs",
-info:`Raw materials used in products.
-Examples:
-• Oils (olive, coconut, castor)
-• Butters (shea, mango)
-• Lye
-• Fragrance oils
-• Essential oils
-• Wax
-• Colorants
-• Extracts`
-},
-{
-name:"COGS – Packaging",
-class:"cogs",
-info:`Packaging that goes WITH products.
-Examples:
-• Soap boxes
-• Lotion jars
-• Dropper bottles
-• Shrink wrap
-• Product labels
-• Tissue paper inside shipped orders
-• Shipping boxes used for customer orders`
-},
-{
-name:"COGS – Resale Inventory",
-class:"cogs",
-info:`Items bought finished and resold.
-Examples:
-• Pumice stones
-• Accessories bought wholesale to resell`
-},
-{
-name:"COGS – Production Supplies",
-class:"cogs",
-info:`Consumables used during making products.
-Examples:
-• Gloves
-• Paper towels (production use)
-• Mold liners
-• Disposable tools`
-},
-{
-name:"COGS – Shipping from Suppliers",
-class:"cogs",
-info:`Freight to receive inventory.
-Examples:
-• UPS charges from Bramble Berry
-• Freight from packaging supplier`
-},
-{
-name:"Equipment",
-class:"expense",
-info:`Long-term tools.
-Examples:
-• Soap molds (large silicone molds)
-• Mixers
-• Shelving
-• Grinder
-• Filling machine`
-},
-{
-name:"Advertising & Marketing",
-class:"expense",
-info:`Promotion costs.
-Examples:
-• Facebook ads
-• Boosted posts
-• Event banners
-• Promo giveaways`
-},
-{
-name:"Website & Software",
-class:"expense",
-info:`Online systems.
-Examples:
-• Shopify
-• TaxJar
-• Email software
-• Canva`
-},
-{
-name:"Merchant Processing Fees",
-class:"expense",
-info:`Payment processing.
-Examples:
-• Shopify Payments fees
-• Stripe fees`
-},
-{
-name:"Insurance",
-class:"expense",
-info:`Business insurance.
-Examples:
-• Product liability insurance
-• General liability
-• Farm insurance`
-},
-{
-name:"Utilities",
-class:"expense",
-info:`Ongoing overhead.
-Examples:
-• Electric
-• Water
-• Internet`
-},
-{
-name:"Professional Services",
-class:"expense",
-info:`Professional help.
-Examples:
-• CPA
-• Bookkeeper
-• Legal services`
-},
-{
-name:"Needs Review",
-class:"special",
-info:`Unclear transactions.
-Mark for Steven review.`
-}
+{ name:"COGS – Ingredients", class:"cogs", info:"Oils, butters, lye, fragrance, wax, colorants, extracts."},
+{ name:"COGS – Packaging", class:"cogs", info:"Soap boxes, lotion jars, labels, tissue paper, shipping boxes."},
+{ name:"COGS – Resale Inventory", class:"cogs", info:"Finished goods bought and resold."},
+{ name:"COGS – Production Supplies", class:"cogs", info:"Gloves, mold liners, disposable production supplies."},
+{ name:"COGS – Shipping from Suppliers", class:"cogs", info:"UPS or freight from vendors."},
+{ name:"Equipment", class:"expense", info:"Molds, mixers, shelving, machinery."},
+{ name:"Advertising & Marketing", class:"expense", info:"Facebook ads, event banners, promo items."},
+{ name:"Website & Software", class:"expense", info:"Shopify, TaxJar, Canva, domains."},
+{ name:"Merchant Processing Fees", class:"expense", info:"Stripe or Shopify payment fees."},
+{ name:"Insurance", class:"expense", info:"Product liability, general liability."},
+{ name:"Utilities", class:"expense", info:"Electric, water, internet."},
+{ name:"Professional Services", class:"expense", info:"CPA, bookkeeping, legal."},
+{ name:"Needs Review", class:"special", info:"Flag for Steven review."}
 ];
 
-// =========================
-// FILE UPLOAD
-// =========================
-
-document.getElementById("csvFile").addEventListener("change",e=>{
+document.getElementById("csvFile").addEventListener("change",function(e){
 localStorage.removeItem(STORAGE_KEY);
 const file=e.target.files[0];
 if(!file)return;
-Papa.parse(file,{header:true,skipEmptyLines:true,complete:res=>{
+Papa.parse(file,{header:true,skipEmptyLines:true,complete:function(res){
 rawRows=res.data;
 headers=Object.keys(rawRows[0]||{});
 showMapping();
 }});
 });
 
-// =========================
-// COLUMN MAPPING
-// =========================
-
 function showMapping(){
 const panel=document.getElementById("mappingPanel");
 panel.style.display="block";
-panel.innerHTML=`
-<h4>Map Columns</h4>
-Title:<br>${dropdown("mapTitle")}<br><br>
-Amount:<br>${dropdown("mapAmount")}<br><br>
-Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
-Date (optional):<br>${dropdown("mapDate",true)}<br><br>
-<button onclick="confirmMapping()">Confirm</button>
-`;
+panel.innerHTML="<h4>Map Columns</h4>"+
+"Title:<br>"+dropdown("mapTitle")+"<br><br>"+
+"Amount:<br>"+dropdown("mapAmount")+"<br><br>"+
+"<button onclick='confirmMapping()'>Confirm</button>";
 }
 
-function dropdown(id,allowEmpty=false){
-let html=`<select id="${id}">`;
-if(allowEmpty)html+=`<option value="">--None--</option>`;
-headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
-return html+="</select>";
+function dropdown(id){
+let html="<select id='"+id+"'>";
+headers.forEach(function(h){ html+="<option value='"+h+"'>"+h+"</option>";});
+return html+"</select>";
 }
 
 function confirmMapping(){
 const t=document.getElementById("mapTitle").value;
 const a=document.getElementById("mapAmount").value;
-const v=document.getElementById("mapVendor").value;
-const d=document.getElementById("mapDate").value;
-if(!t||!a){alert("Title & Amount required");return;}
 
-data=rawRows.map(r=>({
+data=rawRows.map(function(r){
+return {
 Title:r[t]||"",
 Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
-Vendor:v?r[v]||"":"",
-Date:d?r[d]||"",
 Category:""
-}));
-
-currentIndex=0;
+};
+});
 
 document.getElementById("mappingPanel").style.display="none";
 document.getElementById("app").style.display="block";
 
 renderCategories();
-renderTotals();
 showCard();
 saveProgress();
 }
 
-// =========================
-// RENDER CATEGORIES
-// =========================
-
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
 div.innerHTML="";
-categories.forEach(c=>{
+categories.forEach(function(c){
 const row=document.createElement("div");
 row.className="category-row";
 
 const btn=document.createElement("button");
-btn.className=`category-btn ${c.class}`;
+btn.className="category-btn "+c.class;
 btn.innerText=c.name;
-btn.onclick=()=>categorize(c.name);
+btn.onclick=function(){categorize(c.name);};
 
 const info=document.createElement("button");
 info.className="info-btn";
 info.innerText="ⓘ";
-info.onclick=()=>showInfo(c);
+info.onclick=function(){showInfo(c);};
 
 row.appendChild(btn);
 row.appendChild(info);
@@ -358,105 +211,50 @@ document.getElementById("modalBody").innerText=cat.info;
 document.getElementById("infoModal").style.display="block";
 }
 
-function closeModal(){
+document.getElementById("closeModalBtn").addEventListener("click",function(){
 document.getElementById("infoModal").style.display="none";
-}
+});
 
-// =========================
-// NAVIGATION
-// =========================
+document.getElementById("infoModal").addEventListener("click",function(){
+document.getElementById("infoModal").style.display="none";
+});
 
 function categorize(name){
-if(!data.length)return;
 data[currentIndex].Category=name;
-if(currentIndex<data.length-1){
-currentIndex++;
-}
-showCard();
-renderTotals();
-updateProgress();
-saveProgress();
-}
-
-function goBack(){
-if(currentIndex>0){
-currentIndex--;
+if(currentIndex<data.length-1) currentIndex++;
 showCard();
 saveProgress();
 }
-}
 
-function goForward(){
-if(currentIndex<data.length-1){
-currentIndex++;
-showCard();
-saveProgress();
-}
-}
+document.getElementById("backBtn").onclick=function(){
+if(currentIndex>0){currentIndex--;showCard();saveProgress();}
+};
 
-// =========================
-// DISPLAY
-// =========================
+document.getElementById("nextBtn").onclick=function(){
+if(currentIndex<data.length-1){currentIndex++;showCard();saveProgress();}
+};
 
 function showCard(){
 if(!data.length)return;
 const item=data[currentIndex];
 document.getElementById("cardTitle").innerText=item.Title;
-document.getElementById("cardMeta").innerHTML=
-(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-(item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}`;
+document.getElementById("cardMeta").innerText="Amount: $"+item.Amount.toFixed(2);
 document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
-updateProgress();
 }
-
-function updateProgress(){
-const total=data.length;
-const done=data.filter(d=>d.Category).length;
-const percent=total?Math.round((done/total)*100):0;
-document.getElementById("progressBar").style.width=percent+"%";
-document.getElementById("progressText").innerText=
-`${done} of ${total} categorized (${percent}%)`;
-}
-
-// =========================
-// TOTALS
-// =========================
-
-function renderTotals(){
-let totals={};
-categories.forEach(c=>totals[c.name]=0);
-data.forEach(d=>{
-if(d.Category)totals[d.Category]+=d.Amount;
-});
-const div=document.getElementById("totals");
-div.innerHTML="";
-Object.keys(totals).forEach(k=>{
-div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
-});
-}
-
-// =========================
-// SAVE / LOAD
-// =========================
 
 function saveProgress(){
-localStorage.setItem(STORAGE_KEY, JSON.stringify({
-data:data,
-currentIndex:currentIndex
-}));
+localStorage.setItem(STORAGE_KEY,JSON.stringify({data:data,currentIndex:currentIndex}));
 }
 
 function loadProgress(){
 const saved=localStorage.getItem(STORAGE_KEY);
 if(!saved)return;
 const parsed=JSON.parse(saved);
-if(parsed.data){
-data=parsed.data;
+data=parsed.data||[];
 currentIndex=parsed.currentIndex||0;
+if(data.length){
 document.getElementById("app").style.display="block";
 renderCategories();
-renderTotals();
 showCard();
 }
 }
@@ -466,19 +264,14 @@ localStorage.removeItem(STORAGE_KEY);
 location.reload();
 }
 
-// =========================
-// EXPORT
-// =========================
-
 function exportExcel(){
-if(!data.length)return;
 const ws=XLSX.utils.json_to_sheet(data);
 const wb=XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb,ws,"Categorized");
 XLSX.writeFile(wb,"Categorized.xlsx");
 }
 
-window.onload = loadProgress;
+window.onload=loadProgress;
 
 </script>
 </body>
