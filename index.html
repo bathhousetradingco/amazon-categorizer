@@ -1,89 +1,55 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bathhouse COGS Categorizer</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bathhouse Categorizer</title>
 
-  <!-- Excel Export Library -->
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      margin: 0;
-      padding: 20px;
-      background: #f4f4f4;
-    }
+<style>
+body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; margin:0; padding:20px; background:#f4f4f4; }
+h2 { text-align:center; margin-bottom:10px; }
 
-    h2 {
-      text-align: center;
-      margin-bottom: 10px;
-    }
+.panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px; }
 
-    #progress {
-      text-align: center;
-      font-size: 14px;
-      color: #666;
-      margin-bottom: 15px;
-    }
+select,input,button {
+  padding:10px;
+  border-radius:10px;
+  border:1px solid #ddd;
+  font-size:14px;
+}
 
-    #card {
-      background: white;
-      padding: 30px 20px;
-      border-radius: 16px;
-      box-shadow: 0 6px 25px rgba(0,0,0,0.08);
-      font-size: 20px;
-      text-align: center;
-      margin-bottom: 20px;
-      min-height: 80px;
-    }
+button { cursor:pointer; }
 
-    .category-container {
-      margin-bottom: 16px;
-    }
+.flex { display:flex; gap:10px; flex-wrap:wrap; }
+.col { flex:1; min-width:320px; }
 
-    .category-btn {
-      width: 100%;
-      padding: 18px;
-      border-radius: 14px;
-      border: none;
-      font-size: 18px;
-      font-weight: bold;
-      color: white;
-      cursor: pointer;
-    }
+.category-btn {
+  width:100%; padding:14px; border:none; color:white;
+  font-weight:bold; border-radius:12px; margin-bottom:8px;
+}
 
-    .cogs { background: #2e7d32; }
-    .expense { background: #1565c0; }
-    .review { background: #8e24aa; }
-    .special { background: #c62828; }
+.cogs{background:#2e7d32;}
+.expense{background:#1565c0;}
+.review{background:#8e24aa;}
+.special{background:#c62828;}
 
-    .category-desc {
-      font-size: 13px;
-      color: #555;
-      margin-top: 6px;
-      padding: 0 8px;
-    }
+.navBtns{display:flex;gap:8px;margin:10px 0;}
+.navBtns button{flex:1;}
 
-    input[type="file"] {
-      width: 100%;
-      margin-bottom: 15px;
-    }
+.toggleBtn{padding:8px 12px;border-radius:999px;border:1px solid #ccc;background:white;}
+.toggleBtn.active{background:#111;color:white;}
 
-    #exportBtn, #backBtn {
-      width: 100%;
-      padding: 16px;
-      border-radius: 14px;
-      border: none;
-      font-size: 16px;
-      margin-top: 12px;
-      color: white;
-    }
+.resultItem{padding:8px;border-bottom:1px solid #eee;cursor:pointer;}
+.resultItem:hover{background:#f7f7f7;}
 
-    #exportBtn { background: #4CAF50; }
-    #backBtn { background: #ff9800; }
-  </style>
+.totalRow{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;}
+
+#cardTitle{font-weight:bold;font-size:18px;margin-bottom:6px;}
+.small{font-size:13px;color:#555;}
+</style>
 </head>
 
 <body>
@@ -92,157 +58,266 @@
 
 <input type="file" id="csvFile" accept=".csv">
 
-<div id="progress"></div>
+<div id="mappingPanel" class="panel" style="display:none;"></div>
 
-<div id="card">Upload a CSV to begin</div>
+<div id="app" style="display:none;">
+<div class="flex">
 
-<button id="backBtn" onclick="goBack()">⬅ Back</button>
+<!-- LEFT SIDE -->
+<div class="col">
+
+<div class="panel">
+<div id="cardTitle">Upload CSV to begin</div>
+<div id="cardMeta" class="small"></div>
+<div id="currentCategory" class="small"></div>
+
+<div class="navBtns">
+<button onclick="goBack()">⬅ Back</button>
+<button onclick="goForward()">➡ Forward</button>
+</div>
 
 <div id="categories"></div>
+</div>
 
-<button id="exportBtn">Export to Excel</button>
+<button onclick="exportExcel()">Export to Excel</button>
+
+</div>
+
+<!-- RIGHT SIDE -->
+<div class="col">
+
+<div class="panel">
+
+<div class="flex" style="margin-bottom:8px;">
+<button class="toggleBtn active" onclick="setFilter('all',this)">All</button>
+<button class="toggleBtn" onclick="setFilter('uncategorized',this)">Uncategorized</button>
+<button class="toggleBtn" onclick="setFilter('review',this)">Need Review</button>
+</div>
+
+<input type="text" id="searchInput" placeholder="Search title/vendor..." style="width:100%;margin-bottom:8px;">
+<div id="searchResults" style="max-height:200px;overflow:auto;"></div>
+
+</div>
+
+<div class="panel">
+<h4>Category Totals</h4>
+<div id="totals"></div>
+
+<hr>
+
+<h4>Custom Sum</h4>
+<div id="sumChecks"></div>
+<div id="selectedTotal" style="font-weight:bold;margin-top:8px;">Selected Total: $0.00</div>
+
+</div>
+
+</div>
+</div>
+</div>
 
 <script>
-let data = [];
-let currentIndex = 0;
 
-const categories = [
-  { name: "COGS – Ingredients", class: "cogs", desc: "Oils, butters, lye, fragrance, extracts." },
-  { name: "COGS – Packaging", class: "cogs", desc: "Jars, bottles, lids, shrink wrap, labels." },
-  { name: "COGS – Resale Inventory", class: "cogs", desc: "Items sold as-is (pumice stones)." },
-  { name: "COGS – Production Supplies", class: "cogs", desc: "Gloves, paper towels (production)." },
-  { name: "Advertising & Marketing", class: "expense", desc: "Facebook ads, promo items." },
-  { name: "Office / Admin", class: "expense", desc: "Shopify, TaxJar, office supplies." },
-  { name: "Equipment", class: "expense", desc: "Grinders, mixers, machinery." },
-  { name: "Utilities / Overhead", class: "expense", desc: "Electric, internet, trash." },
-  { name: "Did Not Receive", class: "special", desc: "Order placed but item never received." },
-  { name: "Need Steven’s Input", class: "review", desc: "Flag it for Steven to review." }
+let rawRows=[];
+let data=[];
+let headers=[];
+let viewIndices=[];
+let viewPos=0;
+let activeFilter="all";
+let searchQuery="";
+
+const categories=[
+{name:"COGS – Ingredients",class:"cogs"},
+{name:"COGS – Packaging",class:"cogs"},
+{name:"COGS – Resale Inventory",class:"cogs"},
+{name:"COGS – Production Supplies",class:"cogs"},
+{name:"Advertising & Marketing",class:"expense"},
+{name:"Office / Admin",class:"expense"},
+{name:"Equipment",class:"expense"},
+{name:"Utilities / Overhead",class:"expense"},
+{name:"Did Not Receive",class:"special"},
+{name:"Need Steven’s Input",class:"review"}
 ];
 
-// FILE HANDLING
-document.getElementById('csvFile').addEventListener('change', handleFile);
-
-function handleFile(event) {
-  const file = event.target.files[0];
-  const reader = new FileReader();
-
-  reader.onload = function(e) {
-    parseCSV(e.target.result);
-    renderButtons();
-    showCard();
-    saveProgress();
-  };
-
-  reader.readAsText(file);
+// ================= CSV Upload =================
+document.getElementById("csvFile").addEventListener("change",e=>{
+const file=e.target.files[0];
+if(!file)return;
+Papa.parse(file,{
+header:true,
+skipEmptyLines:true,
+complete:res=>{
+rawRows=res.data;
+headers=Object.keys(rawRows[0]||{});
+showMappingUI();
 }
-
-function parseCSV(text) {
-  const rows = text.split('\n').filter(r => r.trim() !== '');
-  const headers = rows[0].split(',');
-
-  data = rows.slice(1).map(row => {
-    const values = row.split(',');
-    let obj = {};
-    headers.forEach((header, index) => {
-      obj[header.trim()] = values[index] || "";
-    });
-    obj["Category"] = "";
-    return obj;
-  });
-
-  currentIndex = 0;
-}
-
-// DISPLAY
-function showCard() {
-  if (!data.length) return;
-
-  if (currentIndex < data.length) {
-    document.getElementById('card').innerText =
-      data[currentIndex]["Title"] || "No Title Column Found";
-
-    document.getElementById('progress').innerText =
-      `Item ${currentIndex + 1} of ${data.length}`;
-  } else {
-    document.getElementById('card').innerText = "All items categorized!";
-    document.getElementById('categories').innerHTML = "";
-    document.getElementById('progress').innerText = "";
-  }
-}
-
-function renderButtons() {
-  const container = document.getElementById('categories');
-  container.innerHTML = "";
-
-  categories.forEach(category => {
-    const wrapper = document.createElement("div");
-    wrapper.className = "category-container";
-
-    const btn = document.createElement("button");
-    btn.innerText = category.name;
-    btn.className = `category-btn ${category.class}`;
-    btn.onclick = () => selectCategory(category.name);
-
-    const desc = document.createElement("div");
-    desc.className = "category-desc";
-    desc.innerText = category.desc;
-
-    wrapper.appendChild(btn);
-    wrapper.appendChild(desc);
-    container.appendChild(wrapper);
-  });
-}
-
-// CATEGORY SELECT
-function selectCategory(category) {
-  if (currentIndex >= data.length) return;
-  data[currentIndex]["Category"] = category;
-  currentIndex++;
-  saveProgress();
-  showCard();
-}
-
-// BACK BUTTON
-function goBack() {
-  if (currentIndex > 0) {
-    currentIndex--;
-    data[currentIndex]["Category"] = "";
-    saveProgress();
-    showCard();
-  }
-}
-
-// SAVE / LOAD
-function saveProgress() {
-  localStorage.setItem("cogsData", JSON.stringify(data));
-  localStorage.setItem("cogsIndex", currentIndex);
-}
-
-function loadProgress() {
-  const savedData = localStorage.getItem("cogsData");
-  const savedIndex = localStorage.getItem("cogsIndex");
-
-  if (savedData !== null && savedIndex !== null) {
-    data = JSON.parse(savedData);
-    currentIndex = parseInt(savedIndex);
-    renderButtons();
-    showCard();
-  }
-}
-
-window.onload = loadProgress;
-
-// EXPORT TO EXCEL
-document.getElementById('exportBtn').addEventListener('click', () => {
-  if (!data.length) return;
-
-  const worksheet = XLSX.utils.json_to_sheet(data);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Categorized");
-
-  XLSX.writeFile(workbook, "Bathhouse_Categorized.xlsx");
 });
-</script>
+});
 
+// ================= Column Mapping =================
+function showMappingUI(){
+const panel=document.getElementById("mappingPanel");
+panel.style.display="block";
+panel.innerHTML=`
+<h4>Map Your Columns</h4>
+<label>Title (Required)</label><br>${dropdown("mapTitle")}<br><br>
+<label>Amount (Required)</label><br>${dropdown("mapAmount")}<br><br>
+<label>Vendor (Optional)</label><br>${dropdown("mapVendor",true)}<br><br>
+<label>Date (Optional)</label><br>${dropdown("mapDate",true)}<br><br>
+<button onclick="confirmMapping()">Confirm Mapping</button>
+`;
+}
+
+function dropdown(id,allowEmpty=false){
+let html=`<select id="${id}">`;
+if(allowEmpty)html+=`<option value="">-- None --</option>`;
+headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+html+="</select>";
+return html;
+}
+
+function confirmMapping(){
+const t=document.getElementById("mapTitle").value;
+const a=document.getElementById("mapAmount").value;
+const v=document.getElementById("mapVendor").value;
+const d=document.getElementById("mapDate").value;
+
+if(!t||!a){alert("Title and Amount required.");return;}
+
+data=rawRows.map(r=>({
+Title:r[t]||"",
+Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
+Vendor:v?r[v]||"":"",
+Date:d?r[d]||"":"",
+Category:""
+}));
+
+document.getElementById("mappingPanel").style.display="none";
+document.getElementById("app").style.display="block";
+
+renderCategories();
+renderSumChecks();
+rebuildView();
+}
+
+// ================= View / Filter =================
+function rebuildView(){
+viewIndices=[];
+data.forEach((item,i)=>{
+if(activeFilter==="uncategorized" && item.Category) return;
+if(activeFilter==="review" && item.Category!=="Need Steven’s Input" && item.Category!=="Did Not Receive") return;
+if(searchQuery && !(item.Title+" "+item.Vendor).toLowerCase().includes(searchQuery.toLowerCase())) return;
+viewIndices.push(i);
+});
+viewPos=0;
+showCard();
+renderSearchResults();
+renderTotals();
+}
+
+function setFilter(type,btn){
+activeFilter=type;
+document.querySelectorAll(".toggleBtn").forEach(b=>b.classList.remove("active"));
+btn.classList.add("active");
+rebuildView();
+}
+
+// ================= Display =================
+function showCard(){
+if(!viewIndices.length){document.getElementById("cardTitle").innerText="No matching items.";return;}
+const item=data[viewIndices[viewPos]];
+document.getElementById("cardTitle").innerText=item.Title;
+document.getElementById("cardMeta").innerHTML=
+(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+(item.Date?`Date: ${item.Date}<br>`:"")+
+`Amount: $${item.Amount.toFixed(2)}`;
+document.getElementById("currentCategory").innerText="Current Category: "+(item.Category||"—");
+}
+
+// ================= Navigation =================
+function goBack(){if(viewPos>0){viewPos--;showCard();}}
+function goForward(){if(viewPos<viewIndices.length-1){viewPos++;showCard();}}
+
+// ================= Categories =================
+function renderCategories(){
+const container=document.getElementById("categories");
+container.innerHTML="";
+categories.forEach(c=>{
+const btn=document.createElement("button");
+btn.className=`category-btn ${c.class}`;
+btn.innerText=c.name;
+btn.onclick=()=>{
+data[viewIndices[viewPos]].Category=c.name;
+rebuildView();
+};
+container.appendChild(btn);
+});
+}
+
+// ================= Search =================
+document.getElementById("searchInput").addEventListener("input",e=>{
+searchQuery=e.target.value;
+rebuildView();
+});
+
+function renderSearchResults(){
+const box=document.getElementById("searchResults");
+box.innerHTML="";
+if(!searchQuery)return;
+data.forEach((item,i)=>{
+if((item.Title+" "+item.Vendor).toLowerCase().includes(searchQuery.toLowerCase())){
+const div=document.createElement("div");
+div.className="resultItem";
+div.innerText=`${item.Title} — $${item.Amount.toFixed(2)} — ${item.Category||"—"}`;
+div.onclick=()=>{viewPos=viewIndices.indexOf(i);showCard();};
+box.appendChild(div);
+}
+});
+}
+
+// ================= Totals =================
+function renderTotals(){
+const totals={};
+categories.forEach(c=>totals[c.name]=0);
+data.forEach(d=>{if(d.Category)totals[d.Category]+=d.Amount;});
+const div=document.getElementById("totals");
+div.innerHTML="";
+Object.keys(totals).forEach(k=>{
+div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+});
+updateSelectedTotal();
+}
+
+// ================= Custom Sum =================
+function renderSumChecks(){
+const container=document.getElementById("sumChecks");
+container.innerHTML="";
+categories.forEach(c=>{
+const cb=document.createElement("input");
+cb.type="checkbox";
+cb.value=c.name;
+cb.onchange=updateSelectedTotal;
+container.appendChild(cb);
+container.appendChild(document.createTextNode(" "+c.name));
+container.appendChild(document.createElement("br"));
+});
+}
+
+function updateSelectedTotal(){
+let selected=[];
+document.querySelectorAll("#sumChecks input:checked").forEach(cb=>selected.push(cb.value));
+let total=0;
+data.forEach(d=>{if(selected.includes(d.Category))total+=d.Amount;});
+document.getElementById("selectedTotal").innerText="Selected Total: $"+total.toFixed(2);
+}
+
+// ================= Export =================
+function exportExcel(){
+const ws=XLSX.utils.json_to_sheet(data);
+const wb=XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb,ws,"Categorized");
+XLSX.writeFile(wb,"Categorized.xlsx");
+}
+
+</script>
 </body>
 </html>
