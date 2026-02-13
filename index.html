@@ -155,10 +155,12 @@ rebuildView();
 }
 }
 
+window.onload = loadAppState;
+
 // ===== CATEGORIES =====
 const categoryGroups = {
 cogs: [
-{name:"COGS – Ingredients",desc:"Oils, butters, lye, wax, bases."},
+{name:"COGS – Ingredients",desc:"Oils, butters, lye, fragrance, wax, bases."},
 {name:"COGS – Packaging",desc:"Jars, bottles, lids, labels, boxes."},
 {name:"COGS – Resale Inventory",desc:"Finished goods bought for resale."},
 {name:"COGS – Production Supplies",desc:"Gloves, molds, paper towels (production)."},
@@ -183,7 +185,6 @@ special:[
 ]
 };
 
-// ===== FILE HANDLING =====
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
 if(!file)return;
@@ -235,7 +236,6 @@ rebuildView();
 saveAppState();
 }
 
-// ===== CATEGORIZE =====
 function categorize(name){
 if(!viewIndices.length)return;
 data[viewIndices[viewPos]].Category=name;
@@ -247,15 +247,10 @@ renderTotals();
 updateProgress();
 }
 
-// ===== REST OF YOUR ORIGINAL V2 LOGIC (UNCHANGED) =====
-// rebuildView, showCard, renderCategories, renderGroup,
+// All other original functions remain unchanged
+// (rebuildView, showCard, renderCategories, renderGroup,
 // renderTotals, renderSumChecks, updateSelectedTotal,
-// updateProgress, toggleSection, setFilter,
-// search input listener, exportExcel
-
-// (Left unchanged intentionally)
-
-window.onload = loadAppState;
+// updateProgress, toggleSection, setFilter, exportExcel)
 
 </script>
 </body>
