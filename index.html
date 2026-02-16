@@ -1,3 +1,6 @@
+This is the last working version 
+
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -85,6 +88,7 @@ button {
   padding:4px 0;
 }
 
+/* Modal */
 .modal {
   display:none;
   position:fixed;
@@ -128,6 +132,7 @@ button {
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
 
+<!-- ✅ ADDED: suggestion box -->
 <div id="suggestionBox" class="small" style="margin-top:10px;"></div>
 
 <hr>
@@ -151,6 +156,7 @@ button {
 
 </div>
 
+<!-- INFO MODAL -->
 <div id="infoModal" class="modal">
   <div class="modal-content">
     <h3 id="modalTitle"></h3>
@@ -166,169 +172,260 @@ const STORAGE_KEY = "bathhouse_categorizer_v6";
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
 
+const categories = [
+{
+name:"COGS – Ingredients",
+class:"cogs",
+info:`This includes all raw materials that physically go into your products.
+
+Examples for Bathhouse Trading Co:
+• Oils (olive, coconut, castor)
+• Butters (shea, mango)
+• Lye
+• Fragrance oils
+• Essential oils
+• Colorants, mica, oxides
+• Extracts (green tea, birch, chamomile)
+• Wax for melts
+• Preservatives
+
+If it becomes part of the product itself, it belongs here.`
+},
+{
+name:"COGS – Packaging",
+class:"cogs",
+info:`This includes packaging that goes WITH the product or is used to ship customer orders.
+
+Examples:
+• Soap boxes
+• Lotion bottles & jars
+• Lids, pumps, droppers
+• Product labels
+• Tissue paper in orders
+• Shipping boxes
+• Mailers
+• Thank-you cards inside orders
+
+If it’s used to package or ship finished goods, it belongs here.`
+},
+{
+name:"COGS – Resale Inventory",
+class:"cogs",
+info:`Finished goods purchased and resold without modifying.
+
+Examples:
+• Retail accessories bought wholesale
+• Items purchased to resell at events
+• Merchandise not manufactured by you`
+},
+{
+name:"COGS – Production Supplies",
+class:"cogs",
+info:`Items used in production but not part of the final product.
+
+Examples:
+• Gloves
+• Paper towels in production
+• Mold liners
+• Disposable tools
+• Alcohol for sanitizing equipment`
+},
+{
+name:"COGS – Shipping from Suppliers",
+class:"cogs",
+info:`Freight or shipping costs paid to vendors.
+
+Examples:
+• UPS charges from Bramble Berry
+• Freight for pallet deliveries
+• Shipping added to ingredient invoices`
+},
+{
+name:"Equipment",
+class:"expense",
+info:`Large or durable items used for business operations.
+
+Examples:
+• Soap molds
+• Mixers
+• Shelving
+• Display racks
+• Label printers
+• Production tables
+
+These are NOT COGS — they are business equipment.`
+},
+{
+name:"Advertising & Marketing",
+class:"expense",
+info:`Money spent to promote Bathhouse Trading Co.
+
+Examples:
+• Facebook ads
+• Event banners
+• Printed flyers
+• Promo giveaways
+• Booth fees for markets`
+},
+{
+name:"Website & Software",
+class:"expense",
+info:`Digital tools and subscriptions.
+
+Examples:
+• Shopify
+• TaxJar
+• Canva
+• QuickBooks
+• Email marketing software`
+},
+{
+name:"Merchant Processing Fees",
+class:"expense",
+info:`Payment processing fees.
+
+Examples:
+• Shopify Payments fees
+• Stripe fees
+• Square fees`
+},
+{
+name:"Insurance",
+class:"expense",
+info:`Business insurance policies.
+
+Examples:
+• Product liability insurance
+• General liability
+• Property insurance`
+},
+{
+name:"Utilities",
+class:"expense",
+info:`Operational utilities.
+
+Examples:
+• Electricity
+• Water
+• Internet`
+},
+{
+name:"Professional Services",
+class:"expense",
+info:`Professional help.
+
+Examples:
+• CPA
+• Bookkeeper
+• Legal services`
+},
+{
+name:"Needs Review",
+class:"special",
+info:`Unclear transactions.
+
+Use when:
+• You’re unsure
+• You want Steven’s input
+• Something looks suspicious`
+}
+];
+
+/* =========================================================
+   ✅ ADDED: Suggestion logic (LAZY: runs per-card only)
+========================================================= */
+
 function normalize(text){
   return String(text||"").toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
 }
 
-/* ===============================
-   FULL CATEGORY REASONING ENGINE
-================================ */
-
 function generateSuggestion(title, vendor){
-
   const text = normalize(title + " " + vendor);
 
   const rules = [
     {cat:"COGS – Ingredients", words:["oil","butter","lye","fragrance","essential","mica","oxide","colorant","extract","wax","preservative","shea","mango","coconut","olive","castor"]},
-    {cat:"COGS – Packaging", words:["box","jar","bottle","label","mailer","tissue","lid","pump","dropper","shrink","wrap","bag"]},
-    {cat:"COGS – Production Supplies", words:["gloves","alcohol","paper towel","sanitizer","liner","disposable","mask","face shield","apron"]},
+    {cat:"COGS – Packaging", words:["box","boxes","jar","jars","bottle","bottles","label","labels","mailer","mailers","tissue","lid","lids","pump","pumps","dropper","droppers","shrink","wrap","bag","bags"]},
+    {cat:"COGS – Production Supplies", words:["gloves","alcohol","isopropyl","paper towel","sanitizer","liner","liners","disposable","mask"]},
     {cat:"COGS – Shipping from Suppliers", words:["shipping","freight","ups","fedex","dhl"]},
-    {cat:"Website & Software", words:["shopify","taxjar","quickbooks","canva","subscription","domain","hosting"]},
-    {cat:"Merchant Processing Fees", words:["processing","stripe","square"]},
-    {cat:"Advertising & Marketing", words:["ad","facebook","instagram","banner","flyer","booth"]},
-    {cat:"Utilities", words:["electric","water","internet"]},
-    {cat:"Insurance", words:["insurance","policy"]},
-    {cat:"Professional Services", words:["cpa","accountant","legal","attorney"]},
-    {cat:"Equipment", words:["mold","mixer","shelving","printer","table","rack","scale","heat gun"]}
+    {cat:"Website & Software", words:["shopify","taxjar","quickbooks","canva","subscription","domain","hosting","app fee"]},
+    {cat:"Merchant Processing Fees", words:["processing","processor","stripe","square","shopify payments"]},
+    {cat:"Advertising & Marketing", words:["ad","ads","facebook","instagram","banner","banners","flyer","flyers","booth","market fee","vendor fee","promo","promotion"]},
+    {cat:"Utilities", words:["electric","electricity","water","internet","utility"]},
+    {cat:"Insurance", words:["insurance","liability","policy"]},
+    {cat:"Professional Services", words:["cpa","accountant","bookkeeper","legal","attorney","law"]},
+    {cat:"Equipment", words:["mold","molds","mixer","shelving","shelf","printer","label printer","table","rack","scale","dehumidifier","heat gun"]}
   ];
 
   for(const r of rules){
     for(const w of r.words){
       if(text.includes(w)){
-
-        let explanation =
-`Matched keyword "${w}" in the transaction description.
+        return {
+          category: r.cat,
+          explanation:
+`Matched keyword "${w}" in the title/vendor.
 
 Why this category fits:
-• The business purpose of this purchase aligns with ${r.cat}.
-• Classification is determined by FUNCTION in your operations — not the dollar amount.
-
-Operational reasoning:
-• The words detected indicate how this item is used inside Bathhouse Trading Co.
-• Categories are structured around production flow, sales flow, and business overhead.`;
-
-        switch(r.cat){
-
-          case "COGS – Ingredients":
-            explanation += `
-• Ingredients physically become part of the finished soap, skincare, or home product.
-• They directly generate revenue.
-• Therefore they are Cost of Goods Sold.`;
-          break;
-
-          case "COGS – Packaging":
-            explanation += `
-• Packaging protects, contains, or presents finished goods.
-• It is required for sale or shipment.
-• It moves with the product to the customer.
-• That makes it a direct product cost.`;
-          break;
-
-          case "COGS – Production Supplies":
-            explanation += `
-• These items support manufacturing but do not become part of the product.
-• They are consumed, replaced, or worn during production.
-• Examples include safety gear, sanitation materials, and disposables.
-• They are necessary for production but not durable long-term assets.`;
-          break;
-
-          case "COGS – Shipping from Suppliers":
-            explanation += `
-• Freight paid to vendors increases your cost of acquiring materials.
-• It is directly tied to inventory purchases.
-• Therefore it increases Cost of Goods Sold.`;
-          break;
-
-          case "Equipment":
-            explanation += `
-• Equipment is durable and used repeatedly.
-• It provides long-term operational benefit.
-• It does not get consumed in one production cycle.
-• Therefore it is classified as a business asset expense, not COGS.`;
-          break;
-
-          case "Website & Software":
-            explanation += `
-• These are digital tools required to operate, sell, or manage the business.
-• They support infrastructure, not individual product units.
-• Therefore they are operating expenses.`;
-          break;
-
-          case "Merchant Processing Fees":
-            explanation += `
-• These fees occur when customers pay you.
-• They are transactional selling expenses.
-• They do not relate to production of goods.
-• Therefore they are operational expenses.`;
-          break;
-
-          case "Advertising & Marketing":
-            explanation += `
-• These expenses promote sales and brand awareness.
-• They generate traffic and revenue.
-• They are not tied to a specific product unit.
-• Therefore they are selling expenses.`;
-          break;
-
-          case "Utilities":
-            explanation += `
-• Utilities power your storefront or production space.
-• They support operations generally.
-• They are overhead costs.`;
-          break;
-
-          case "Insurance":
-            explanation += `
-• Insurance protects business assets and operations.
-• It is risk management overhead.
-• It does not directly produce inventory.`;
-          break;
-
-          case "Professional Services":
-            explanation += `
-• Professional services provide legal, tax, or accounting expertise.
-• These are administrative business expenses.
-• They are not tied to product production.`;
-          break;
-        }
-
-        return { category:r.cat, explanation:explanation };
+• ${r.cat} groups purchases that are typically used in this way for Bathhouse Trading Co.
+• This suggestion is based on the words found in the transaction description (not the amount).`
+        };
       }
     }
   }
 
   return {
-    category:"Needs Review",
+    category: "Needs Review",
     explanation:
-`No strong keyword match was detected.
+`No strong keyword match was detected in the title/vendor.
 
-Why this is Needs Review:
-• The description does not clearly indicate production, packaging, equipment, or operating overhead.
-• Manual verification helps prevent misclassification.
-• Reviewing the receipt or vendor detail is recommended.`
+Why this is "Needs Review":
+• The description doesn't clearly indicate whether it is ingredients, packaging, equipment, or an operating expense.
+• Best next step is to open the vendor line item details or receipt if available.`
   };
 }
 
-/* ===============================
-   (ALL REMAINING ORIGINAL LOGIC
-   IS UNCHANGED BELOW)
-================================ */
+function renderSuggestion(item){
+  const box = document.getElementById("suggestionBox");
+  if(!box) return;
 
-const categories = [
-{name:"COGS – Ingredients",class:"cogs",info:"Raw materials that go into products."},
-{name:"COGS – Packaging",class:"cogs",info:"Packaging that goes with products."},
-{name:"COGS – Resale Inventory",class:"cogs",info:"Finished goods bought and resold."},
-{name:"COGS – Production Supplies",class:"cogs",info:"Items used in production but not in product."},
-{name:"COGS – Shipping from Suppliers",class:"cogs",info:"Freight paid to vendors."},
-{name:"Equipment",class:"expense",info:"Durable operational items."},
-{name:"Advertising & Marketing",class:"expense",info:"Promotional spending."},
-{name:"Website & Software",class:"expense",info:"Digital tools."},
-{name:"Merchant Processing Fees",class:"expense",info:"Payment processing."},
-{name:"Insurance",class:"expense",info:"Business insurance."},
-{name:"Utilities",class:"expense",info:"Operational utilities."},
-{name:"Professional Services",class:"expense",info:"CPA/legal services."},
-{name:"Needs Review",class:"special",info:"Unclear transactions."}
-];
+  // If no data loaded yet, clear it.
+  if(!item){
+    box.innerHTML = "";
+    return;
+  }
+
+  const s = generateSuggestion(item.Title, item.Vendor);
+
+  box.innerHTML = `
+    <div style="border:1px solid #ddd;padding:10px;border-radius:10px;">
+      <b>Suggested:</b> ${s.category}
+      <br><br>
+      <button onclick="acceptSuggestion('${s.category.replace(/'/g,"&#39;")}')">Accept Suggestion</button>
+      <button onclick="toggleExplanation()">▶ Show detailed reasoning</button>
+      <div id="explanationPanel" style="display:none;margin-top:10px;font-size:13px;line-height:1.35;">
+        ${s.explanation.replace(/\n/g,"<br>")}
+      </div>
+    </div>
+  `;
+}
+
+function toggleExplanation(){
+  const p = document.getElementById("explanationPanel");
+  if(!p) return;
+  p.style.display = (p.style.display === "none" || !p.style.display) ? "block" : "none";
+}
+
+function acceptSuggestion(catName){
+  if(!data.length) return;
+  data[currentIndex].Category = catName;
+  showCard();
+  updateTotals();
+  updateProgress();
+  saveProgress();
+}
+
+/* =========================================================
+   ORIGINAL CODE BELOW (UNCHANGED, except calling renderSuggestion)
+========================================================= */
 
 document.getElementById("csvFile").addEventListener("change",function(e){
 localStorage.removeItem(STORAGE_KEY);
@@ -377,7 +474,7 @@ data=rawRows.map(r=>({
 Title:r[t]||"",
 Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
 Vendor:v?r[v]||"":"",
-Date:d?r[d]||"",
+Date:d?r[d]||"":"",
 Category:""
 }));
 
@@ -450,7 +547,10 @@ saveProgress();
 }
 
 function showCard(){
-if(!data.length)return;
+if(!data.length){
+  renderSuggestion(null);
+  return;
+}
 const item=data[currentIndex];
 
 document.getElementById("cardTitle").innerText=item.Title;
@@ -461,36 +561,8 @@ document.getElementById("cardMeta").innerHTML=
 
 document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
 
+/* ✅ Only addition here: render suggestion lazily */
 renderSuggestion(item);
-}
-
-function renderSuggestion(item){
-const s = generateSuggestion(item.Title,item.Vendor);
-
-document.getElementById("suggestionBox").innerHTML=`
-<div style="border:1px solid #ddd;padding:10px;border-radius:10px;">
-<b>Suggested:</b> ${s.category}
-<br><br>
-<button onclick="acceptSuggestion('${s.category}')">Accept Suggestion</button>
-<button onclick="toggleExplanation()">▶ Show detailed reasoning</button>
-<div id="explanationPanel" style="display:none;margin-top:10px;">
-${s.explanation.replace(/\n/g,"<br>")}
-</div>
-</div>
-`;
-}
-
-function toggleExplanation(){
-const p=document.getElementById("explanationPanel");
-p.style.display=p.style.display==="none"?"block":"none";
-}
-
-function acceptSuggestion(cat){
-data[currentIndex].Category=cat;
-showCard();
-updateTotals();
-updateProgress();
-saveProgress();
 }
 
 function updateTotals(){
@@ -499,6 +571,7 @@ categories.forEach(c=>totals[c.name]=0);
 data.forEach(d=>{
 if(d.Category) totals[d.Category]+=d.Amount;
 });
+
 const div=document.getElementById("totals");
 div.innerHTML="";
 Object.keys(totals).forEach(k=>{
