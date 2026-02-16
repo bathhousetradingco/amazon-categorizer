@@ -1,11 +1,9 @@
-
-<!-- rebuild v9 -->
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Bathhouse Categorizer</title>
+<title>Bathhouse Categorizer v10</title>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -63,7 +61,7 @@ button {
 
 <body>
 
-<h2>Bathhouse Categorizer v9</h2>
+<h2>Bathhouse Categorizer v10</h2>
 <input type="file" id="csvFile" accept=".csv">
 <div id="mappingPanel" class="panel" style="display:none;"></div>
 
@@ -80,8 +78,6 @@ button {
 <div id="cardTitle">Upload CSV to begin</div>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
-
-<!-- NEW SUGGESTION AREA -->
 <div id="suggestionBox" class="small" style="margin-top:10px;"></div>
 
 <hr>
@@ -106,17 +102,12 @@ button {
 
 <script>
 
-/* ========= ORIGINAL STORAGE ========= */
-
-const STORAGE_KEY = "bathhouse_categorizer_v6";
+const STORAGE_KEY = "bathhouse_categorizer_v10";
 const LEARN_KEY = "bathhouse_learning_v1";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
-
 let learning = JSON.parse(localStorage.getItem(LEARN_KEY)) || {};
-
-/* ========= ORIGINAL CATEGORY ARRAY (UNCHANGED) ========= */
 
 const categories = [
 { name:"COGS – Ingredients", class:"cogs" },
@@ -134,14 +125,11 @@ const categories = [
 { name:"Needs Review", class:"special" }
 ];
 
-/* ========= SUGGESTION ENGINE ========= */
-
 function normalize(text){
   return (text||"").toLowerCase().replace(/[^\w\s]/g,"");
 }
 
 function generateSuggestion(title,vendor){
-
   const text = normalize(title + " " + vendor);
 
   const rules = {
@@ -156,7 +144,8 @@ function generateSuggestion(title,vendor){
       if(text.includes(word)){
         return {
           category:cat,
-          reason:`Matched keyword "${word}" indicating ${cat}.`
+          explanation:
+            `This transaction likely relates to ${cat}. The keyword "${word}" suggests this item fits within that operational category for Bathhouse Trading Co.`
         };
       }
     }
@@ -164,199 +153,181 @@ function generateSuggestion(title,vendor){
 
   return {
     category:"Needs Review",
-    reason:"No strong keyword pattern detected."
+    explanation:"No strong keyword match was detected. Manual review recommended."
   };
 }
 
-/* ========= FILE LOAD ========= */
-
 document.getElementById("csvFile").addEventListener("change",function(e){
-localStorage.removeItem(STORAGE_KEY);
-const file=e.target.files[0];
-if(!file)return;
 
-Papa.parse(file,{
-header:true,
-skipEmptyLines:true,
-complete:function(res){
-rawRows=res.data;
-headers=Object.keys(rawRows[0]||{});
-showMapping();
-}
-});
-});
+  const file=e.target.files[0];
+  if(!file) return;
 
-/* ========= MAPPING ========= */
+  Papa.parse(file,{
+    header:true,
+    skipEmptyLines:true,
+    error:function(err){
+      alert("CSV Parse Error: " + err.message);
+    },
+    complete:function(res){
+
+      alert("CSV parsed successfully");
+
+      rawRows=res.data;
+      headers=Object.keys(rawRows[0]||{});
+      showMapping();
+    }
+  });
+
+});
 
 function showMapping(){
-const panel=document.getElementById("mappingPanel");
-panel.style.display="block";
+  const panel=document.getElementById("mappingPanel");
+  panel.style.display="block";
 
-panel.innerHTML=`
-<h4>Map Columns</h4>
-Title:<br>${dropdown("mapTitle")}<br><br>
-Amount:<br>${dropdown("mapAmount")}<br><br>
-Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
-Date (optional):<br>${dropdown("mapDate",true)}<br><br>
-<button onclick="confirmMapping()">Confirm</button>
-`;
+  panel.innerHTML=`
+  <h4>Map Columns</h4>
+  Title:<br>${dropdown("mapTitle")}<br><br>
+  Amount:<br>${dropdown("mapAmount")}<br><br>
+  Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
+  Date (optional):<br>${dropdown("mapDate",true)}<br><br>
+  <button onclick="confirmMapping()">Confirm</button>
+  `;
 }
 
 function dropdown(id,allowEmpty=false){
-let html=`<select id="${id}">`;
-if(allowEmpty) html+=`<option value="">--None--</option>`;
-headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
-return html+="</select>";
+  let html=`<select id="${id}">`;
+  if(allowEmpty) html+=`<option value="">--None--</option>`;
+  headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+  return html+="</select>";
 }
 
 function confirmMapping(){
-const t=document.getElementById("mapTitle").value;
-const a=document.getElementById("mapAmount").value;
-const v=document.getElementById("mapVendor").value;
-const d=document.getElementById("mapDate").value;
 
-data=rawRows.map(r=>({
-Title:r[t]||"",
-Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
-Vendor:v?r[v]||"":"",
-Date:d?r[d]||"",
-Category:"",
-Suggestion:null
-}));
+  const t=document.getElementById("mapTitle").value;
+  const a=document.getElementById("mapAmount").value;
+  const v=document.getElementById("mapVendor").value;
+  const d=document.getElementById("mapDate").value;
 
-data.forEach(d=>{
-  d.Suggestion = generateSuggestion(d.Title,d.Vendor);
-});
+  data=rawRows.map(r=>({
+    Title:r[t]||"",
+    Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
+    Vendor:v?r[v]||"":"",
+    Date:d?r[d]||"",
+    Category:"",
+    Suggestion:null
+  }));
 
-document.getElementById("mappingPanel").style.display="none";
-document.getElementById("app").style.display="block";
+  data.forEach(d=>{
+    d.Suggestion = generateSuggestion(d.Title,d.Vendor);
+  });
 
-renderCategories();
-showCard();
-updateTotals();
-updateProgress();
-saveProgress();
+  document.getElementById("mappingPanel").style.display="none";
+  document.getElementById("app").style.display="block";
+
+  renderCategories();
+  showCard();
+  updateTotals();
+  updateProgress();
 }
-
-/* ========= RENDER CATEGORIES ========= */
 
 function renderCategories(){
-const div=document.getElementById("categoryButtons");
-div.innerHTML="";
-categories.forEach(c=>{
-const btn=document.createElement("button");
-btn.className="category-btn "+c.class;
-btn.innerText=c.name;
-btn.onclick=()=>categorize(c.name);
-div.appendChild(btn);
-});
+  const div=document.getElementById("categoryButtons");
+  div.innerHTML="";
+  categories.forEach(c=>{
+    const btn=document.createElement("button");
+    btn.className="category-btn "+c.class;
+    btn.innerText=c.name;
+    btn.onclick=()=>categorize(c.name);
+    div.appendChild(btn);
+  });
 }
-
-/* ========= SHOW CARD ========= */
 
 function showCard(){
-if(!data.length)return;
-const item=data[currentIndex];
+  if(!data.length)return;
+  const item=data[currentIndex];
 
-document.getElementById("cardTitle").innerText=item.Title;
-document.getElementById("cardMeta").innerHTML=
-(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}`;
+  document.getElementById("cardTitle").innerText=item.Title;
+  document.getElementById("cardMeta").innerHTML=
+    (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+    `Amount: $${item.Amount.toFixed(2)}`;
 
-document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
+  document.getElementById("currentCategory").innerText=
+    "Current: "+(item.Category||"—");
 
-renderSuggestion(item);
+  renderSuggestion(item);
 }
 
-/* ========= RENDER SUGGESTION ========= */
-
 function renderSuggestion(item){
-if(!item.Suggestion)return;
+  if(!item.Suggestion)return;
 
-document.getElementById("suggestionBox").innerHTML=`
-<div style="border:1px solid #ddd;padding:10px;border-radius:10px;">
-<b>Suggested:</b> ${item.Suggestion.category}
-<br><br>
-${item.Suggestion.reason}
-<br><br>
-<button onclick="acceptSuggestion()">Accept Suggestion</button>
-</div>
-`;
+  document.getElementById("suggestionBox").innerHTML=`
+    <div style="border:1px solid #ddd;padding:10px;border-radius:10px;">
+      <b>Suggested:</b> ${item.Suggestion.category}
+      <br><br>
+      <button onclick="acceptSuggestion()">Accept Suggestion</button>
+      <button onclick="toggleExplanation()">▶ Show detailed reasoning</button>
+      <div id="explanationPanel" style="display:none;margin-top:10px;font-size:13px;">
+        ${item.Suggestion.explanation}
+      </div>
+    </div>
+  `;
+}
+
+function toggleExplanation(){
+  const p=document.getElementById("explanationPanel");
+  p.style.display=p.style.display==="none"?"block":"none";
 }
 
 function acceptSuggestion(){
-data[currentIndex].Category = data[currentIndex].Suggestion.category;
-showCard();
+  data[currentIndex].Category=data[currentIndex].Suggestion.category;
+  showCard();
+  updateTotals();
+  updateProgress();
 }
 
-/* ========= ORIGINAL NAV ========= */
-
 function categorize(name){
-data[currentIndex].Category=name;
-if(currentIndex<data.length-1) currentIndex++;
-showCard();
-updateTotals();
-updateProgress();
-saveProgress();
+  data[currentIndex].Category=name;
+  if(currentIndex<data.length-1) currentIndex++;
+  showCard();
+  updateTotals();
+  updateProgress();
 }
 
 function goBack(){ if(currentIndex>0){currentIndex--;showCard();} }
 function goNext(){ if(currentIndex<data.length-1){currentIndex++;showCard();} }
 
 function updateTotals(){
-let totals={};
-categories.forEach(c=>totals[c.name]=0);
-data.forEach(d=>{
-if(d.Category) totals[d.Category]+=d.Amount;
-});
-const div=document.getElementById("totals");
-div.innerHTML="";
-Object.keys(totals).forEach(k=>{
-div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
-});
+  let totals={};
+  categories.forEach(c=>totals[c.name]=0);
+  data.forEach(d=>{
+    if(d.Category) totals[d.Category]+=d.Amount;
+  });
+  const div=document.getElementById("totals");
+  div.innerHTML="";
+  Object.keys(totals).forEach(k=>{
+    div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+  });
 }
 
 function updateProgress(){
-const total=data.length;
-const done=data.filter(d=>d.Category).length;
-const percent=total?Math.round((done/total)*100):0;
-document.getElementById("progressBar").style.width=percent+"%";
-document.getElementById("progressText").innerText=
-`${done} of ${total} categorized (${percent}%)`;
-}
-
-function saveProgress(){
-localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
-}
-
-function loadProgress(){
-const saved=localStorage.getItem(STORAGE_KEY);
-if(!saved)return;
-const parsed=JSON.parse(saved);
-data=parsed.data||[];
-currentIndex=parsed.currentIndex||0;
-if(data.length){
-document.getElementById("app").style.display="block";
-renderCategories();
-showCard();
-updateTotals();
-updateProgress();
-}
+  const total=data.length;
+  const done=data.filter(d=>d.Category).length;
+  const percent=total?Math.round((done/total)*100):0;
+  document.getElementById("progressBar").style.width=percent+"%";
+  document.getElementById("progressText").innerText=
+    `${done} of ${total} categorized (${percent}%)`;
 }
 
 function clearProgress(){
-localStorage.removeItem(STORAGE_KEY);
-location.reload();
+  location.reload();
 }
 
 function exportExcel(){
-const ws=XLSX.utils.json_to_sheet(data);
-const wb=XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb,ws,"Categorized");
-XLSX.writeFile(wb,"Categorized.xlsx");
+  const ws=XLSX.utils.json_to_sheet(data);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Categorized");
+  XLSX.writeFile(wb,"Categorized.xlsx");
 }
-
-window.onload=loadProgress;
 
 </script>
 </body>
