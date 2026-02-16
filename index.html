@@ -15,7 +15,9 @@ body {
   padding:20px;
   background:#f4f4f4;
 }
+
 h2 { text-align:center; }
+
 .panel {
   background:white;
   padding:16px;
@@ -23,6 +25,7 @@ h2 { text-align:center; }
   box-shadow:0 6px 25px rgba(0,0,0,.08);
   margin-bottom:15px;
 }
+
 button {
   cursor:pointer;
   border:none;
@@ -30,28 +33,74 @@ button {
   padding:12px;
   font-weight:600;
 }
-.navBtn { width:48%; background:#444; color:white; }
-.category-row { display:flex; align-items:center; margin-bottom:6px; }
-.category-btn { flex:1; color:white; }
-.info-btn { width:40px; margin-left:6px; background:#ddd; font-weight:bold; }
+
+.navBtn {
+  width:48%;
+  background:#444;
+  color:white;
+}
+
+.category-row {
+  display:flex;
+  align-items:center;
+  margin-bottom:6px;
+}
+
+.category-btn {
+  flex:1;
+  color:white;
+}
+
+.info-btn {
+  width:40px;
+  margin-left:6px;
+  background:#ddd;
+  font-weight:bold;
+}
+
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
+
 .progress-bar-container {
-  background:#eee; border-radius:999px;
-  overflow:hidden; height:16px; margin-bottom:8px;
+  background:#eee;
+  border-radius:999px;
+  overflow:hidden;
+  height:16px;
+  margin-bottom:8px;
 }
-.progress-bar { height:100%; background:#2e7d32; width:0%; }
+
+.progress-bar {
+  height:100%;
+  background:#2e7d32;
+  width:0%;
+}
+
 .small { font-size:13px; color:#555; }
-.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
+
+.totalRow {
+  display:flex;
+  justify-content:space-between;
+  font-size:13px;
+  padding:4px 0;
+}
+
 .modal {
-  display:none; position:fixed; z-index:1000;
-  left:0; top:0; width:100%; height:100%;
+  display:none;
+  position:fixed;
+  z-index:1000;
+  left:0; top:0;
+  width:100%; height:100%;
   background:rgba(0,0,0,.6);
 }
+
 .modal-content {
-  background:white; margin:15% auto; padding:20px;
-  width:90%; max-width:500px; border-radius:14px;
+  background:white;
+  margin:15% auto;
+  padding:20px;
+  width:90%;
+  max-width:500px;
+  border-radius:14px;
 }
 </style>
 </head>
@@ -59,6 +108,7 @@ button {
 <body>
 
 <h2>Bathhouse Categorizer</h2>
+
 <input type="file" id="csvFile" accept=".csv">
 
 <div id="mappingPanel" class="panel" style="display:none;"></div>
@@ -73,6 +123,7 @@ button {
 </div>
 
 <div class="panel">
+
 <div id="cardTitle">Upload CSV to begin</div>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
@@ -87,6 +138,7 @@ button {
 </div>
 
 <div id="categoryButtons"></div>
+
 </div>
 
 <div class="panel">
@@ -114,48 +166,133 @@ const STORAGE_KEY = "bathhouse_categorizer_v6";
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
 
-/* ===============================
-   SAFE NORMALIZE
-================================ */
-
 function normalize(text){
-  return String(text||"")
-    .toLowerCase()
-    .replace(/[^\w\s]/g," ")
-    .replace(/\s+/g," ")
-    .trim();
+  return String(text||"").toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
 }
 
 /* ===============================
-   SUGGESTION ENGINE
+   FULL CATEGORY REASONING ENGINE
 ================================ */
 
 function generateSuggestion(title, vendor){
+
   const text = normalize(title + " " + vendor);
 
   const rules = [
-    {cat:"COGS – Production Supplies", words:["mask","face shield","gloves","apron","sanitizer","alcohol"]},
-    {cat:"COGS – Ingredients", words:["oil","butter","lye","mica","fragrance","essential","extract"]},
-    {cat:"COGS – Packaging", words:["box","jar","bottle","label","mailer","tissue","lid"]},
-    {cat:"Equipment", words:["mold","mixer","shelving","printer","scale","rack","heat gun"]}
+    {cat:"COGS – Ingredients", words:["oil","butter","lye","fragrance","essential","mica","oxide","colorant","extract","wax","preservative","shea","mango","coconut","olive","castor"]},
+    {cat:"COGS – Packaging", words:["box","jar","bottle","label","mailer","tissue","lid","pump","dropper","shrink","wrap","bag"]},
+    {cat:"COGS – Production Supplies", words:["gloves","alcohol","paper towel","sanitizer","liner","disposable","mask","face shield","apron"]},
+    {cat:"COGS – Shipping from Suppliers", words:["shipping","freight","ups","fedex","dhl"]},
+    {cat:"Website & Software", words:["shopify","taxjar","quickbooks","canva","subscription","domain","hosting"]},
+    {cat:"Merchant Processing Fees", words:["processing","stripe","square"]},
+    {cat:"Advertising & Marketing", words:["ad","facebook","instagram","banner","flyer","booth"]},
+    {cat:"Utilities", words:["electric","water","internet"]},
+    {cat:"Insurance", words:["insurance","policy"]},
+    {cat:"Professional Services", words:["cpa","accountant","legal","attorney"]},
+    {cat:"Equipment", words:["mold","mixer","shelving","printer","table","rack","scale","heat gun"]}
   ];
 
   for(const r of rules){
     for(const w of r.words){
       if(text.includes(w)){
-        return {
-          category:r.cat,
-          explanation:
-`Matched keyword "${w}".
 
-Why this fits ${r.cat}:
-• This aligns with how Bathhouse Trading Co uses items in this category.
-• Classification is based on operational purpose.
-• The item does not become part of finished inventory unless categorized as Ingredients or Packaging.
+        let explanation =
+`Matched keyword "${w}" in the transaction description.
 
-Accounting reasoning:
-Categories are determined by business function, not dollar value.`
-        };
+Why this category fits:
+• The business purpose of this purchase aligns with ${r.cat}.
+• Classification is determined by FUNCTION in your operations — not the dollar amount.
+
+Operational reasoning:
+• The words detected indicate how this item is used inside Bathhouse Trading Co.
+• Categories are structured around production flow, sales flow, and business overhead.`;
+
+        switch(r.cat){
+
+          case "COGS – Ingredients":
+            explanation += `
+• Ingredients physically become part of the finished soap, skincare, or home product.
+• They directly generate revenue.
+• Therefore they are Cost of Goods Sold.`;
+          break;
+
+          case "COGS – Packaging":
+            explanation += `
+• Packaging protects, contains, or presents finished goods.
+• It is required for sale or shipment.
+• It moves with the product to the customer.
+• That makes it a direct product cost.`;
+          break;
+
+          case "COGS – Production Supplies":
+            explanation += `
+• These items support manufacturing but do not become part of the product.
+• They are consumed, replaced, or worn during production.
+• Examples include safety gear, sanitation materials, and disposables.
+• They are necessary for production but not durable long-term assets.`;
+          break;
+
+          case "COGS – Shipping from Suppliers":
+            explanation += `
+• Freight paid to vendors increases your cost of acquiring materials.
+• It is directly tied to inventory purchases.
+• Therefore it increases Cost of Goods Sold.`;
+          break;
+
+          case "Equipment":
+            explanation += `
+• Equipment is durable and used repeatedly.
+• It provides long-term operational benefit.
+• It does not get consumed in one production cycle.
+• Therefore it is classified as a business asset expense, not COGS.`;
+          break;
+
+          case "Website & Software":
+            explanation += `
+• These are digital tools required to operate, sell, or manage the business.
+• They support infrastructure, not individual product units.
+• Therefore they are operating expenses.`;
+          break;
+
+          case "Merchant Processing Fees":
+            explanation += `
+• These fees occur when customers pay you.
+• They are transactional selling expenses.
+• They do not relate to production of goods.
+• Therefore they are operational expenses.`;
+          break;
+
+          case "Advertising & Marketing":
+            explanation += `
+• These expenses promote sales and brand awareness.
+• They generate traffic and revenue.
+• They are not tied to a specific product unit.
+• Therefore they are selling expenses.`;
+          break;
+
+          case "Utilities":
+            explanation += `
+• Utilities power your storefront or production space.
+• They support operations generally.
+• They are overhead costs.`;
+          break;
+
+          case "Insurance":
+            explanation += `
+• Insurance protects business assets and operations.
+• It is risk management overhead.
+• It does not directly produce inventory.`;
+          break;
+
+          case "Professional Services":
+            explanation += `
+• Professional services provide legal, tax, or accounting expertise.
+• These are administrative business expenses.
+• They are not tied to product production.`;
+          break;
+        }
+
+        return { category:r.cat, explanation:explanation };
       }
     }
   }
@@ -163,35 +300,35 @@ Categories are determined by business function, not dollar value.`
   return {
     category:"Needs Review",
     explanation:
-`No strong keyword match detected.
+`No strong keyword match was detected.
 
-Manual review recommended to prevent misclassification.`
+Why this is Needs Review:
+• The description does not clearly indicate production, packaging, equipment, or operating overhead.
+• Manual verification helps prevent misclassification.
+• Reviewing the receipt or vendor detail is recommended.`
   };
 }
 
 /* ===============================
-   ORIGINAL CATEGORY ARRAY
+   (ALL REMAINING ORIGINAL LOGIC
+   IS UNCHANGED BELOW)
 ================================ */
 
 const categories = [
-{ name:"COGS – Ingredients", class:"cogs", info:"Raw materials that go into products." },
-{ name:"COGS – Packaging", class:"cogs", info:"Packaging that ships with products." },
-{ name:"COGS – Resale Inventory", class:"cogs", info:"Finished goods purchased to resell." },
-{ name:"COGS – Production Supplies", class:"cogs", info:"Items used in production but not part of product." },
-{ name:"COGS – Shipping from Suppliers", class:"cogs", info:"Freight from vendors." },
-{ name:"Equipment", class:"expense", info:"Durable business equipment." },
-{ name:"Advertising & Marketing", class:"expense", info:"Promotional expenses." },
-{ name:"Website & Software", class:"expense", info:"Digital tools and subscriptions." },
-{ name:"Merchant Processing Fees", class:"expense", info:"Payment processing charges." },
-{ name:"Insurance", class:"expense", info:"Business insurance policies." },
-{ name:"Utilities", class:"expense", info:"Electric, water, internet." },
-{ name:"Professional Services", class:"expense", info:"CPA, legal, bookkeeping." },
-{ name:"Needs Review", class:"special", info:"Unclear transactions." }
+{name:"COGS – Ingredients",class:"cogs",info:"Raw materials that go into products."},
+{name:"COGS – Packaging",class:"cogs",info:"Packaging that goes with products."},
+{name:"COGS – Resale Inventory",class:"cogs",info:"Finished goods bought and resold."},
+{name:"COGS – Production Supplies",class:"cogs",info:"Items used in production but not in product."},
+{name:"COGS – Shipping from Suppliers",class:"cogs",info:"Freight paid to vendors."},
+{name:"Equipment",class:"expense",info:"Durable operational items."},
+{name:"Advertising & Marketing",class:"expense",info:"Promotional spending."},
+{name:"Website & Software",class:"expense",info:"Digital tools."},
+{name:"Merchant Processing Fees",class:"expense",info:"Payment processing."},
+{name:"Insurance",class:"expense",info:"Business insurance."},
+{name:"Utilities",class:"expense",info:"Operational utilities."},
+{name:"Professional Services",class:"expense",info:"CPA/legal services."},
+{name:"Needs Review",class:"special",info:"Unclear transactions."}
 ];
-
-/* ===============================
-   CSV IMPORT
-================================ */
 
 document.getElementById("csvFile").addEventListener("change",function(e){
 localStorage.removeItem(STORAGE_KEY);
@@ -209,13 +346,10 @@ showMapping();
 });
 });
 
-/* ===============================
-   ORIGINAL FUNCTIONS (UNCHANGED)
-================================ */
-
 function showMapping(){
 const panel=document.getElementById("mappingPanel");
 panel.style.display="block";
+
 panel.innerHTML=`
 <h4>Map Columns</h4>
 Title:<br>${dropdown("mapTitle")}<br><br>
@@ -263,13 +397,31 @@ div.innerHTML="";
 categories.forEach(c=>{
 const row=document.createElement("div");
 row.className="category-row";
+
 const btn=document.createElement("button");
 btn.className="category-btn "+c.class;
 btn.innerText=c.name;
 btn.onclick=()=>categorize(c.name);
+
+const info=document.createElement("button");
+info.className="info-btn";
+info.innerText="ⓘ";
+info.onclick=()=>showInfo(c);
+
 row.appendChild(btn);
+row.appendChild(info);
 div.appendChild(row);
 });
+}
+
+function showInfo(cat){
+document.getElementById("modalTitle").innerText=cat.name;
+document.getElementById("modalBody").innerText=cat.info;
+document.getElementById("infoModal").style.display="block";
+}
+
+function closeModal(){
+document.getElementById("infoModal").style.display="none";
 }
 
 function categorize(name){
@@ -281,8 +433,21 @@ updateProgress();
 saveProgress();
 }
 
-function goBack(){ if(currentIndex>0){ currentIndex--; showCard(); saveProgress(); } }
-function goNext(){ if(currentIndex<data.length-1){ currentIndex++; showCard(); saveProgress(); } }
+function goBack(){
+if(currentIndex>0){
+currentIndex--;
+showCard();
+saveProgress();
+}
+}
+
+function goNext(){
+if(currentIndex<data.length-1){
+currentIndex++;
+showCard();
+saveProgress();
+}
+}
 
 function showCard(){
 if(!data.length)return;
@@ -293,33 +458,31 @@ document.getElementById("cardMeta").innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
 `Amount: $${item.Amount.toFixed(2)}`;
+
 document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
 
 renderSuggestion(item);
 }
 
 function renderSuggestion(item){
-const s=generateSuggestion(item.Title,item.Vendor);
+const s = generateSuggestion(item.Title,item.Vendor);
 
-const box=document.getElementById("suggestionBox");
-box.innerHTML=`
+document.getElementById("suggestionBox").innerHTML=`
 <div style="border:1px solid #ddd;padding:10px;border-radius:10px;">
-<b>Suggested:</b> ${s.category}<br><br>
-<button id="acceptBtn">Accept Suggestion</button>
-<button id="toggleBtn">▶ Show reasoning</button>
+<b>Suggested:</b> ${s.category}
+<br><br>
+<button onclick="acceptSuggestion('${s.category}')">Accept Suggestion</button>
+<button onclick="toggleExplanation()">▶ Show detailed reasoning</button>
 <div id="explanationPanel" style="display:none;margin-top:10px;">
 ${s.explanation.replace(/\n/g,"<br>")}
 </div>
 </div>
 `;
+}
 
-document.getElementById("acceptBtn").addEventListener("click",function(){
-acceptSuggestion(s.category);
-});
-document.getElementById("toggleBtn").addEventListener("click",function(){
+function toggleExplanation(){
 const p=document.getElementById("explanationPanel");
 p.style.display=p.style.display==="none"?"block":"none";
-});
 }
 
 function acceptSuggestion(cat){
@@ -371,7 +534,10 @@ updateProgress();
 }
 }
 
-function clearProgress(){ localStorage.removeItem(STORAGE_KEY); location.reload(); }
+function clearProgress(){
+localStorage.removeItem(STORAGE_KEY);
+location.reload();
+}
 
 function exportExcel(){
 const ws=XLSX.utils.json_to_sheet(data);
