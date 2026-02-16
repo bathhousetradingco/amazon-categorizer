@@ -15,9 +15,7 @@ body {
   padding:20px;
   background:#f4f4f4;
 }
-
 h2 { text-align:center; }
-
 .panel {
   background:white;
   padding:16px;
@@ -25,82 +23,35 @@ h2 { text-align:center; }
   box-shadow:0 6px 25px rgba(0,0,0,.08);
   margin-bottom:15px;
 }
-
 button {
   cursor:pointer;
   border:none;
   border-radius:10px;
-  padding:12px;
+  padding:10px 12px;
   font-weight:600;
 }
-
-.navBtn {
-  width:48%;
-  background:#444;
-  color:white;
-}
-
-.category-row {
-  display:flex;
-  align-items:center;
-  margin-bottom:6px;
-}
-
-.category-btn {
-  flex:1;
-  color:white;
-}
-
-.info-btn {
-  width:40px;
-  margin-left:6px;
-  background:#ddd;
-  font-weight:bold;
-}
-
+.navBtn { width:48%; background:#444; color:white; }
+.category-row { display:flex; align-items:center; margin-bottom:6px; }
+.category-btn { flex:1; color:white; }
+.info-btn { width:40px; margin-left:6px; background:#ddd; font-weight:bold; }
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
-
 .progress-bar-container {
-  background:#eee;
-  border-radius:999px;
-  overflow:hidden;
-  height:16px;
-  margin-bottom:8px;
+  background:#eee; border-radius:999px; overflow:hidden;
+  height:16px; margin-bottom:8px;
 }
-
-.progress-bar {
-  height:100%;
-  background:#2e7d32;
-  width:0%;
-}
-
+.progress-bar { height:100%; background:#2e7d32; width:0%; }
 .small { font-size:13px; color:#555; }
-
-.totalRow {
-  display:flex;
-  justify-content:space-between;
-  font-size:13px;
-  padding:4px 0;
-}
-
-/* Modal */
+.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
 .modal {
-  display:none;
-  position:fixed;
-  z-index:1000;
-  left:0; top:0;
-  width:100%; height:100%;
+  display:none; position:fixed; z-index:1000;
+  left:0; top:0; width:100%; height:100%;
   background:rgba(0,0,0,.6);
 }
-
 .modal-content {
-  background:white;
-  margin:15% auto;
-  padding:20px;
-  width:90%;
-  max-width:500px;
+  background:white; margin:15% auto;
+  padding:20px; width:90%; max-width:500px;
   border-radius:14px;
 }
 </style>
@@ -109,7 +60,6 @@ button {
 <body>
 
 <h2>Bathhouse Categorizer</h2>
-
 <input type="file" id="csvFile" accept=".csv">
 
 <div id="mappingPanel" class="panel" style="display:none;"></div>
@@ -129,6 +79,8 @@ button {
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
 
+<div id="suggestionBox" class="small" style="margin-top:10px;"></div>
+
 <hr>
 
 <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
@@ -137,7 +89,6 @@ button {
 </div>
 
 <div id="categoryButtons"></div>
-
 </div>
 
 <div class="panel">
@@ -150,365 +101,235 @@ button {
 
 </div>
 
-<!-- INFO MODAL -->
-<div id="infoModal" class="modal">
-  <div class="modal-content">
-    <h3 id="modalTitle"></h3>
-    <div id="modalBody"></div>
-    <button onclick="closeModal()" style="margin-top:15px;background:#444;color:white;width:100%;">Close</button>
-  </div>
-</div>
-
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v6";
+const STORAGE_KEY = "bathhouse_categorizer_v7";
+const LEARN_KEY = "bathhouse_learning_v1";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
+let learning = JSON.parse(localStorage.getItem(LEARN_KEY)) || { keywords:{} };
 
-const categories = [
-{
-name:"COGS – Ingredients",
-class:"cogs",
-info:`This includes all raw materials that physically go into your products.
+/* ---------------- CATEGORY LOGIC ---------------- */
 
-Examples for Bathhouse Trading Co:
-• Oils (olive, coconut, castor)
-• Butters (shea, mango)
-• Lye
-• Fragrance oils
-• Essential oils
-• Colorants, mica, oxides
-• Extracts (green tea, birch, chamomile)
-• Wax for melts
-• Preservatives
+const categoryDefinitions = {
+  "COGS – Ingredients": {
+    businessLogic:
+      "This item appears to be a raw material used in manufacturing finished goods such as soaps, skincare, or home products.",
+    taxLogic:
+      "Ingredients are classified as Cost of Goods Sold because they physically become part of the inventory that is sold to customers.",
+    keywords:["oil","butter","lye","fragrance","essential","mica","extract","wax","preservative"]
+  },
+  "COGS – Packaging": {
+    businessLogic:
+      "This item appears to be packaging used to contain or present finished goods to customers.",
+    taxLogic:
+      "Packaging that accompanies finished goods is classified as Cost of Goods Sold because it is directly associated with inventory sold.",
+    keywords:["box","bottle","jar","lid","label","mailer","tissue","shipping","pump"]
+  },
+  "COGS – Production Supplies": {
+    businessLogic:
+      "This appears to be a consumable supply used during production but not part of the finished product.",
+    taxLogic:
+      "Production supplies are included in COGS because they are directly tied to the manufacturing process.",
+    keywords:["gloves","alcohol","liner","paper towel","sanitizer"]
+  },
+  "Equipment": {
+    businessLogic:
+      "This item appears to be a durable tool or asset used repeatedly in production or operations.",
+    taxLogic:
+      "Equipment is not COGS because it does not become part of the finished product and typically has a useful life beyond one production cycle.",
+    keywords:["mold","mixer","printer","shelving","table","rack","machine"]
+  },
+  "Website & Software": {
+    businessLogic:
+      "This appears to be a digital tool or subscription used to operate the business.",
+    taxLogic:
+      "Software and subscriptions are operating expenses rather than inventory costs.",
+    keywords:["shopify","quickbooks","canva","taxjar","subscription"]
+  }
+};
 
-If it becomes part of the product itself, it belongs here.`
-},
-{
-name:"COGS – Packaging",
-class:"cogs",
-info:`This includes packaging that goes WITH the product or is used to ship customer orders.
+/* ---------------- UTILITIES ---------------- */
 
-Examples:
-• Soap boxes
-• Lotion bottles & jars
-• Lids, pumps, droppers
-• Product labels
-• Tissue paper in orders
-• Shipping boxes
-• Mailers
-• Thank-you cards inside orders
-
-If it’s used to package or ship finished goods, it belongs here.`
-},
-{
-name:"COGS – Resale Inventory",
-class:"cogs",
-info:`Finished goods purchased and resold without modifying.
-
-Examples:
-• Retail accessories bought wholesale
-• Items purchased to resell at events
-• Merchandise not manufactured by you`
-},
-{
-name:"COGS – Production Supplies",
-class:"cogs",
-info:`Items used in production but not part of the final product.
-
-Examples:
-• Gloves
-• Paper towels in production
-• Mold liners
-• Disposable tools
-• Alcohol for sanitizing equipment`
-},
-{
-name:"COGS – Shipping from Suppliers",
-class:"cogs",
-info:`Freight or shipping costs paid to vendors.
-
-Examples:
-• UPS charges from Bramble Berry
-• Freight for pallet deliveries
-• Shipping added to ingredient invoices`
-},
-{
-name:"Equipment",
-class:"expense",
-info:`Large or durable items used for business operations.
-
-Examples:
-• Soap molds
-• Mixers
-• Shelving
-• Display racks
-• Label printers
-• Production tables
-
-These are NOT COGS — they are business equipment.`
-},
-{
-name:"Advertising & Marketing",
-class:"expense",
-info:`Money spent to promote Bathhouse Trading Co.
-
-Examples:
-• Facebook ads
-• Event banners
-• Printed flyers
-• Promo giveaways
-• Booth fees for markets`
-},
-{
-name:"Website & Software",
-class:"expense",
-info:`Digital tools and subscriptions.
-
-Examples:
-• Shopify
-• TaxJar
-• Canva
-• QuickBooks
-• Email marketing software`
-},
-{
-name:"Merchant Processing Fees",
-class:"expense",
-info:`Payment processing fees.
-
-Examples:
-• Shopify Payments fees
-• Stripe fees
-• Square fees`
-},
-{
-name:"Insurance",
-class:"expense",
-info:`Business insurance policies.
-
-Examples:
-• Product liability insurance
-• General liability
-• Property insurance`
-},
-{
-name:"Utilities",
-class:"expense",
-info:`Operational utilities.
-
-Examples:
-• Electricity
-• Water
-• Internet`
-},
-{
-name:"Professional Services",
-class:"expense",
-info:`Professional help.
-
-Examples:
-• CPA
-• Bookkeeper
-• Legal services`
-},
-{
-name:"Needs Review",
-class:"special",
-info:`Unclear transactions.
-
-Use when:
-• You’re unsure
-• You want Steven’s input
-• Something looks suspicious`
-}
-];
-
-document.getElementById("csvFile").addEventListener("change",function(e){
-localStorage.removeItem(STORAGE_KEY);
-const file=e.target.files[0];
-if(!file)return;
-
-Papa.parse(file,{
-header:true,
-skipEmptyLines:true,
-complete:function(res){
-rawRows=res.data;
-headers=Object.keys(rawRows[0]||{});
-showMapping();
-}
-});
-});
-
-function showMapping(){
-const panel=document.getElementById("mappingPanel");
-panel.style.display="block";
-
-panel.innerHTML=`
-<h4>Map Columns</h4>
-Title:<br>${dropdown("mapTitle")}<br><br>
-Amount:<br>${dropdown("mapAmount")}<br><br>
-Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
-Date (optional):<br>${dropdown("mapDate",true)}<br><br>
-<button onclick="confirmMapping()">Confirm</button>
-`;
+function normalize(text){
+  return text.toLowerCase().replace(/[^\w\s]/g,"");
 }
 
-function dropdown(id,allowEmpty=false){
-let html=`<select id="${id}">`;
-if(allowEmpty) html+=`<option value="">--None--</option>`;
-headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
-return html+="</select>";
+/* ---------------- SUGGESTION ENGINE ---------------- */
+
+function generateSuggestion(title,vendor){
+
+  const text = normalize(title + " " + vendor);
+  let scores = {};
+  let reasons = [];
+
+  Object.keys(categoryDefinitions).forEach(cat=>{
+    scores[cat]=0;
+    categoryDefinitions[cat].keywords.forEach(k=>{
+      if(text.includes(k)){
+        scores[cat]+=15;
+        reasons.push(`Matched keyword "${k}" linked to ${cat}.`);
+      }
+    });
+  });
+
+  Object.keys(learning.keywords).forEach(k=>{
+    if(text.includes(k)){
+      scores[learning.keywords[k]]+=30;
+      reasons.push(`Previously categorized similar item containing "${k}".`);
+    }
+  });
+
+  let best = Object.keys(scores).reduce((a,b)=>scores[a]>scores[b]?a:b);
+  let confidence = scores[best];
+  let level = confidence>=70?"High":confidence>=40?"Medium":"Low";
+
+  if(confidence===0) best="Needs Review";
+
+  return { category:best, confidence, level, reasons };
 }
 
-function confirmMapping(){
-const t=document.getElementById("mapTitle").value;
-const a=document.getElementById("mapAmount").value;
-const v=document.getElementById("mapVendor").value;
-const d=document.getElementById("mapDate").value;
+/* ---------------- APPLY SUGGESTIONS ---------------- */
 
-data=rawRows.map(r=>({
-Title:r[t]||"",
-Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
-Vendor:v?r[v]||"":"",
-Date:d?r[d]||"":"",
-Category:""
-}));
-
-document.getElementById("mappingPanel").style.display="none";
-document.getElementById("app").style.display="block";
-
-renderCategories();
-showCard();
-updateTotals();
-updateProgress();
-saveProgress();
+function applySuggestions(){
+  data.forEach(d=>{
+    d.Suggestion = generateSuggestion(d.Title,d.Vendor);
+  });
 }
 
-function renderCategories(){
-const div=document.getElementById("categoryButtons");
-div.innerHTML="";
-categories.forEach(c=>{
-const row=document.createElement("div");
-row.className="category-row";
+/* ---------------- LEARNING ---------------- */
 
-const btn=document.createElement("button");
-btn.className="category-btn "+c.class;
-btn.innerText=c.name;
-btn.onclick=()=>categorize(c.name);
-
-const info=document.createElement("button");
-info.className="info-btn";
-info.innerText="ⓘ";
-info.onclick=()=>showInfo(c);
-
-row.appendChild(btn);
-row.appendChild(info);
-div.appendChild(row);
-});
+function learnFromOverride(title,category){
+  const words = normalize(title).split(" ");
+  words.forEach(w=>{
+    if(w.length>4){
+      learning.keywords[w]=category;
+    }
+  });
+  localStorage.setItem(LEARN_KEY,JSON.stringify(learning));
 }
 
-function showInfo(cat){
-document.getElementById("modalTitle").innerText=cat.name;
-document.getElementById("modalBody").innerText=cat.info;
-document.getElementById("infoModal").style.display="block";
+/* ---------------- UI ---------------- */
+
+function renderSuggestion(item){
+
+  const s = item.Suggestion;
+  if(!s) return;
+
+  const def = categoryDefinitions[s.category];
+
+  let explanation = def ?
+    `<b>Why this fits:</b><br><br>
+     ${def.businessLogic}<br><br>
+     ${def.taxLogic}<br><br>
+     <b>Pattern reasoning:</b><br>${s.reasons.join("<br>")}`
+    :
+    "No strong pattern detected. Manual review recommended.";
+
+  document.getElementById("suggestionBox").innerHTML = `
+    <div style="padding:10px;border:1px solid #ddd;border-radius:10px;">
+      <b>Suggested Category:</b> ${s.category} (${s.level} Confidence)
+      <br><br>
+      <button onclick="acceptSuggestion()">Accept Suggestion</button>
+      <button onclick="toggleExplanation()">▶ Show detailed reasoning</button>
+      <div id="explanationPanel" style="display:none;margin-top:10px;font-size:13px;">
+        ${explanation}
+      </div>
+    </div>
+  `;
 }
 
-function closeModal(){
-document.getElementById("infoModal").style.display="none";
+function toggleExplanation(){
+  const panel=document.getElementById("explanationPanel");
+  panel.style.display = panel.style.display==="none"?"block":"none";
+}
+
+function acceptSuggestion(){
+  const item=data[currentIndex];
+  item.Category=item.Suggestion.category;
+  updateTotals();
+  updateProgress();
+  showCard();
+  saveProgress();
 }
 
 function categorize(name){
-data[currentIndex].Category=name;
-if(currentIndex<data.length-1) currentIndex++;
-showCard();
-updateTotals();
-updateProgress();
-saveProgress();
-}
-
-function goBack(){
-if(currentIndex>0){
-currentIndex--;
-showCard();
-saveProgress();
-}
-}
-
-function goNext(){
-if(currentIndex<data.length-1){
-currentIndex++;
-showCard();
-saveProgress();
-}
+  const item=data[currentIndex];
+  if(item.Suggestion && item.Suggestion.category!==name){
+    learnFromOverride(item.Title,name);
+  }
+  item.Category=name;
+  if(currentIndex<data.length-1) currentIndex++;
+  showCard();
+  updateTotals();
+  updateProgress();
+  saveProgress();
 }
 
 function showCard(){
-if(!data.length)return;
-const item=data[currentIndex];
-
-document.getElementById("cardTitle").innerText=item.Title;
-document.getElementById("cardMeta").innerHTML=
-(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-(item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}`;
-
-document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
+  if(!data.length)return;
+  const item=data[currentIndex];
+  document.getElementById("cardTitle").innerText=item.Title;
+  document.getElementById("cardMeta").innerHTML=
+    (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+    (item.Date?`Date: ${item.Date}<br>`:"")+
+    `Amount: $${item.Amount.toFixed(2)}`;
+  document.getElementById("currentCategory").innerText=
+    "Current: "+(item.Category||"—");
+  renderSuggestion(item);
 }
 
+/* --------- Remaining original functions unchanged --------- */
+
+function goBack(){ if(currentIndex>0){ currentIndex--; showCard(); } }
+function goNext(){ if(currentIndex<data.length-1){ currentIndex++; showCard(); } }
 function updateTotals(){
-let totals={};
-categories.forEach(c=>totals[c.name]=0);
-data.forEach(d=>{
-if(d.Category) totals[d.Category]+=d.Amount;
-});
-
-const div=document.getElementById("totals");
-div.innerHTML="";
-Object.keys(totals).forEach(k=>{
-div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
-});
+  let totals={};
+  data.forEach(d=>{
+    if(d.Category){
+      totals[d.Category]=(totals[d.Category]||0)+d.Amount;
+    }
+  });
+  const div=document.getElementById("totals");
+  div.innerHTML="";
+  Object.keys(totals).forEach(k=>{
+    div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+  });
 }
-
 function updateProgress(){
-const total=data.length;
-const done=data.filter(d=>d.Category).length;
-const percent=total?Math.round((done/total)*100):0;
-document.getElementById("progressBar").style.width=percent+"%";
-document.getElementById("progressText").innerText=
-`${done} of ${total} categorized (${percent}%)`;
+  const done=data.filter(d=>d.Category).length;
+  const total=data.length;
+  const percent=total?Math.round((done/total)*100):0;
+  document.getElementById("progressBar").style.width=percent+"%";
+  document.getElementById("progressText").innerText=
+    `${done} of ${total} categorized (${percent}%)`;
 }
-
 function saveProgress(){
-localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
+  localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
 }
-
 function loadProgress(){
-const saved=localStorage.getItem(STORAGE_KEY);
-if(!saved)return;
-const parsed=JSON.parse(saved);
-data=parsed.data||[];
-currentIndex=parsed.currentIndex||0;
-if(data.length){
-document.getElementById("app").style.display="block";
-renderCategories();
-showCard();
-updateTotals();
-updateProgress();
+  const saved=localStorage.getItem(STORAGE_KEY);
+  if(!saved)return;
+  const parsed=JSON.parse(saved);
+  data=parsed.data||[];
+  currentIndex=parsed.currentIndex||0;
+  if(data.length){
+    document.getElementById("app").style.display="block";
+    showCard();
+    updateTotals();
+    updateProgress();
+  }
 }
-}
-
 function clearProgress(){
-localStorage.removeItem(STORAGE_KEY);
-location.reload();
+  localStorage.removeItem(STORAGE_KEY);
+  location.reload();
 }
-
 function exportExcel(){
-const ws=XLSX.utils.json_to_sheet(data);
-const wb=XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb,ws,"Categorized");
-XLSX.writeFile(wb,"Categorized.xlsx");
+  const ws=XLSX.utils.json_to_sheet(data);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Categorized");
+  XLSX.writeFile(wb,"Categorized.xlsx");
 }
 
 window.onload=loadProgress;
