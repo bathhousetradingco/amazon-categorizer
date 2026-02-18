@@ -1,5 +1,4 @@
-Latest 10
-
+latest 11
 <!DOCTYPE html>
 <html>
 <head>
@@ -7,7 +6,6 @@ Latest 10
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bathhouse Categorizer</title>
 
-<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <style>
@@ -18,6 +16,7 @@ body {
   background:#f4f4f4;
 }
 h2 { text-align:center; }
+
 .panel {
   background:white;
   padding:16px;
@@ -25,6 +24,7 @@ h2 { text-align:center; }
   box-shadow:0 6px 25px rgba(0,0,0,.08);
   margin-bottom:15px;
 }
+
 button {
   cursor:pointer;
   border:none;
@@ -32,28 +32,33 @@ button {
   padding:12px;
   font-weight:600;
 }
+
 input, select {
   padding:10px;
   border-radius:10px;
   border:1px solid #ddd;
 }
+
 .navBtn {
   width:48%;
   background:#444;
   color:white;
 }
+
 .category-row {
   display:flex;
-  align-items:center;
   margin-bottom:6px;
 }
+
 .category-btn {
   flex:1;
   color:white;
 }
+
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
+
 .progress-bar-container {
   background:#eee;
   border-radius:999px;
@@ -61,18 +66,22 @@ input, select {
   height:16px;
   margin-bottom:8px;
 }
+
 .progress-bar {
   height:100%;
   background:#2e7d32;
   width:0%;
 }
+
 .small { font-size:13px; color:#555; }
+
 .totalRow {
   display:flex;
   justify-content:space-between;
   font-size:13px;
   padding:4px 0;
 }
+
 .previewRow {
   display:flex;
   justify-content:space-between;
@@ -88,6 +97,7 @@ input, select {
 <h2>Bathhouse Categorizer</h2>
 
 <input type="file" id="csvFile" accept=".csv">
+
 <div id="mappingPanel" class="panel" style="display:none;"></div>
 
 <div id="app" style="display:none;">
@@ -128,7 +138,6 @@ input, select {
 
 <script>
 
-const STORAGE_KEY="bathhouse_categorizer_v14";
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
 let previewCategory=null;
@@ -149,7 +158,7 @@ const categories=[
 {name:"Needs Review",class:"special"}
 ];
 
-/* ================= CSV IMPORT ================= */
+/* ================= CSV IMPORT (Bulletproof) ================= */
 
 document.getElementById("csvFile").addEventListener("change",function(e){
 const file=e.target.files[0];
@@ -159,16 +168,36 @@ Papa.parse(file,{
 header:true,
 skipEmptyLines:true,
 complete:function(res){
-rawRows=res.data;
-headers=Object.keys(rawRows[0]||{});
-if(headers.length===0){
-alert("No headers detected in CSV.");
+
+rawRows = res.data || [];
+
+let firstValidRow=null;
+
+for(let i=0;i<rawRows.length;i++){
+if(rawRows[i] && Object.keys(rawRows[i]).length>0){
+firstValidRow=rawRows[i];
+break;
+}
+}
+
+if(!firstValidRow){
+alert("No valid rows found in CSV.");
 return;
 }
+
+headers=Object.keys(firstValidRow);
+
+if(headers.length===0){
+alert("No headers detected.");
+return;
+}
+
 showMapping();
 }
 });
 });
+
+/* ================= COLUMN MAPPING ================= */
 
 function showMapping(){
 const panel=document.getElementById("mappingPanel");
@@ -187,7 +216,7 @@ Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
 
 function dropdown(id,allowEmpty=false){
 let html=`<select id="${id}">`;
-if(allowEmpty)html+=`<option value="">--None--</option>`;
+if(allowEmpty) html+=`<option value="">--None--</option>`;
 headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
 html+="</select>";
 return html;
@@ -205,7 +234,7 @@ Title:r[t]||"",
 Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
 Vendor:v?r[v]||"":"",
 Date:d?r[d]||"",
-Category:c?(r[c]||""):"",
+Category:c?(r[c]||""):""
 }));
 
 document.getElementById("mappingPanel").style.display="none";
@@ -251,7 +280,7 @@ currentIndex=i;
 showCard();
 return;
 }}
-alert("No Uncategorized transactions found.");
+alert("No Uncategorized transactions.");
 }
 
 /* ================= DISPLAY ================= */
@@ -260,7 +289,8 @@ function renderCategories(){
 const div=document.getElementById("categoryButtons");
 div.innerHTML="";
 
-categories.forEach(c=>{
+categories.forEach(function(c){
+
 const row=document.createElement("div");
 row.className="category-row";
 
@@ -284,6 +314,7 @@ updateTotals();
 
 row.appendChild(btn);
 div.appendChild(row);
+
 });
 }
 
@@ -297,6 +328,7 @@ showCard();
 
 function showCard(){
 if(!data.length)return;
+
 const item=data[currentIndex];
 
 document.getElementById("cardTitle").innerText=item.Title;
@@ -311,14 +343,13 @@ document.getElementById("currentCategory").innerText="Current: "+(item.Category|
 /* ================= TOTALS ================= */
 
 function updateTotals(){
+
 let totals={};
 categories.forEach(c=>totals[c.name]=0);
 
 data.forEach(d=>{
-if(d.Category){
-if(totals[d.Category]!=null){
+if(d.Category && totals[d.Category]!=null){
 totals[d.Category]+=d.Amount;
-}
 }
 });
 
@@ -329,7 +360,7 @@ totals[previewCategory]+=data[currentIndex].Amount;
 const div=document.getElementById("totals");
 div.innerHTML="";
 
-Object.keys(totals).forEach(k=>{
+Object.keys(totals).forEach(function(k){
 if(previewCategory===k && !data[currentIndex].Category){
 div.innerHTML+=`<div class="previewRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
 }else{
@@ -342,6 +373,7 @@ function updateProgress(){
 const total=data.length;
 const done=data.filter(d=>d.Category).length;
 const percent=total?Math.round((done/total)*100):0;
+
 document.getElementById("progressBar").style.width=percent+"%";
 document.getElementById("progressText").innerText=
 `${done} of ${total} categorized (${percent}%)`;
