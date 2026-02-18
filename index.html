@@ -1,4 +1,5 @@
-latest 11
+latest 12 
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -6,6 +7,7 @@ latest 11
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bathhouse Categorizer</title>
 
+<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <style>
@@ -33,11 +35,13 @@ button {
   font-weight:600;
 }
 
-input, select {
+input[type="number"], input[type="text"]{
   padding:10px;
   border-radius:10px;
   border:1px solid #ddd;
 }
+
+label { user-select:none; }
 
 .navBtn {
   width:48%;
@@ -47,12 +51,20 @@ input, select {
 
 .category-row {
   display:flex;
+  align-items:center;
   margin-bottom:6px;
 }
 
 .category-btn {
   flex:1;
   color:white;
+}
+
+.info-btn {
+  width:40px;
+  margin-left:6px;
+  background:#ddd;
+  font-weight:bold;
 }
 
 .cogs{background:#2e7d32;}
@@ -82,12 +94,24 @@ input, select {
   padding:4px 0;
 }
 
-.previewRow {
-  display:flex;
-  justify-content:space-between;
-  font-size:13px;
-  padding:4px 0;
-  background:#eef6ff;
+.modal {
+  display:none;
+  position:fixed;
+  z-index:1000;
+  left:0; top:0;
+  width:100%; height:100%;
+  background:rgba(0,0,0,.6);
+}
+
+.modal-content {
+  background:white;
+  margin:10% auto;
+  padding:20px;
+  width:95%;
+  max-width:600px;
+  border-radius:14px;
+  max-height:90vh;
+  overflow:auto;
 }
 </style>
 </head>
@@ -103,8 +127,22 @@ input, select {
 <div id="app" style="display:none;">
 
 <div class="panel">
-<label><input type="checkbox" id="uncategorizedToggle"> Navigate only Uncategorized</label>
-<button onclick="jumpToFirstUncategorized()">Jump to First Uncategorized</button>
+<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+<b>Find:</b>
+<input id="searchAmount" type="number" step="0.01" placeholder="Amount (e.g. 187.42)">
+<button onclick="searchByAmount()">Go</button>
+<button onclick="jumpToNextReceipt()">Next With Receipt</button>
+
+<label style="display:flex;gap:8px;align-items:center;">
+<input id="receiptOnlyToggle" type="checkbox">
+Navigate receipts only
+</label>
+
+<label style="display:flex;gap:8px;align-items:center;">
+<input id="uncategorizedToggle" type="checkbox">
+Navigate Uncategorized Only
+</label>
+</div>
 </div>
 
 <div class="panel">
@@ -115,9 +153,18 @@ input, select {
 </div>
 
 <div class="panel">
-<div id="cardTitle"></div>
+
+<div id="cardTitle">Upload CSV to begin</div>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
+<div id="suggestionBox" class="small" style="margin-top:10px;"></div>
+
+<div style="margin-top:10px;">
+<input type="file" id="receiptUpload" accept="image/*" style="display:none;">
+<button onclick="triggerReceiptUpload()">📎 Upload Receipt</button>
+<button onclick="viewReceipt()">👁 View Receipt</button>
+<button onclick="openSplitEditor()">🧾 Split Transaction</button>
+</div>
 
 <hr>
 
@@ -127,20 +174,50 @@ input, select {
 </div>
 
 <div id="categoryButtons"></div>
+
 </div>
 
 <div class="panel">
-<h4>Totals (Live Preview)</h4>
+<h4>Totals</h4>
 <div id="totals"></div>
 </div>
 
+<button onclick="exportExcel()">Export to Excel</button>
+<button onclick="clearProgress()" style="background:#c62828;color:white;margin-top:10px;">Reset Saved Progress</button>
+
+</div>
+
+<div id="infoModal" class="modal">
+<div class="modal-content">
+<h3 id="modalTitle"></h3>
+<div id="modalBody"></div>
+<button onclick="closeModal()" style="margin-top:15px;background:#444;color:white;width:100%;">Close</button>
+</div>
+</div>
+
+<div id="splitModal" class="modal">
+<div class="modal-content">
+<h3>Split Transaction</h3>
+<div id="splitList"></div>
+
+<div style="margin-top:10px;">
+<input id="splitAmount" type="number" step="0.01" placeholder="Amount">
+<select id="splitCategory"></select>
+<button onclick="addSplit()">Add</button>
+</div>
+
+<div style="margin-top:15px;">
+<button onclick="saveSplits()">Save Splits</button>
+<button onclick="closeSplit()">Cancel</button>
+</div>
+</div>
 </div>
 
 <script>
 
-let rawRows=[], data=[], headers=[];
+const STORAGE_KEY="bathhouse_categorizer_v13";
+let rawRows=[],data=[],headers=[];
 let currentIndex=0;
-let previewCategory=null;
 
 const categories=[
 {name:"COGS – Ingredients",class:"cogs"},
@@ -158,9 +235,8 @@ const categories=[
 {name:"Needs Review",class:"special"}
 ];
 
-/* ================= CSV IMPORT (Bulletproof) ================= */
-
 document.getElementById("csvFile").addEventListener("change",function(e){
+localStorage.removeItem(STORAGE_KEY);
 const file=e.target.files[0];
 if(!file)return;
 
@@ -168,36 +244,12 @@ Papa.parse(file,{
 header:true,
 skipEmptyLines:true,
 complete:function(res){
-
-rawRows = res.data || [];
-
-let firstValidRow=null;
-
-for(let i=0;i<rawRows.length;i++){
-if(rawRows[i] && Object.keys(rawRows[i]).length>0){
-firstValidRow=rawRows[i];
-break;
-}
-}
-
-if(!firstValidRow){
-alert("No valid rows found in CSV.");
-return;
-}
-
-headers=Object.keys(firstValidRow);
-
-if(headers.length===0){
-alert("No headers detected.");
-return;
-}
-
+rawRows=res.data;
+headers=Object.keys(rawRows[0]||{});
 showMapping();
 }
 });
 });
-
-/* ================= COLUMN MAPPING ================= */
 
 function showMapping(){
 const panel=document.getElementById("mappingPanel");
@@ -234,7 +286,9 @@ Title:r[t]||"",
 Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
 Vendor:v?r[v]||"":"",
 Date:d?r[d]||"",
-Category:c?(r[c]||""):""
+Category:c?(r[c]||""):"",
+Receipt:"",
+Splits:[]
 }));
 
 document.getElementById("mappingPanel").style.display="none";
@@ -244,140 +298,247 @@ renderCategories();
 showCard();
 updateTotals();
 updateProgress();
+saveProgress();
 }
 
-/* ================= NAVIGATION ================= */
-
-function passesFilter(index){
-if(document.getElementById("uncategorizedToggle").checked){
-if(data[index].Category)return false;
-}
+function passesFilters(index){
+if(document.getElementById("receiptOnlyToggle").checked && !data[index].Receipt) return false;
+if(document.getElementById("uncategorizedToggle").checked && data[index].Category) return false;
 return true;
 }
 
 function goNext(){
 for(let i=currentIndex+1;i<data.length;i++){
-if(passesFilter(i)){
+if(passesFilters(i)){
 currentIndex=i;
 showCard();
+saveProgress();
 return;
 }}
+alert("No more matching transactions.");
 }
 
 function goBack(){
 for(let i=currentIndex-1;i>=0;i--){
-if(passesFilter(i)){
+if(passesFilters(i)){
 currentIndex=i;
 showCard();
+saveProgress();
 return;
 }}
+alert("No more matching transactions.");
 }
 
-function jumpToFirstUncategorized(){
+function searchByAmount(){
+const amt=parseFloat(document.getElementById("searchAmount").value);
+if(isNaN(amt)){alert("Enter valid amount.");return;}
 for(let i=0;i<data.length;i++){
-if(!data[i].Category){
+if(Math.abs(Number(data[i].Amount)-amt)<0.01){
 currentIndex=i;
 showCard();
 return;
 }}
-alert("No Uncategorized transactions.");
+alert("No transaction found.");
 }
 
-/* ================= DISPLAY ================= */
+function jumpToNextReceipt(){
+for(let i=currentIndex+1;i<data.length;i++){
+if(data[i].Receipt){
+currentIndex=i;
+showCard();
+return;
+}}
+alert("No more receipts.");
+}
 
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
 div.innerHTML="";
-
-categories.forEach(function(c){
-
+categories.forEach(c=>{
 const row=document.createElement("div");
 row.className="category-row";
 
 const btn=document.createElement("button");
 btn.className="category-btn "+c.class;
 btn.innerText=c.name;
-
-btn.onclick=function(){
-categorize(c.name);
-};
-
-btn.onmouseenter=function(){
-previewCategory=c.name;
-updateTotals();
-};
-
-btn.onmouseleave=function(){
-previewCategory=null;
-updateTotals();
-};
+btn.onclick=()=>categorize(c.name);
 
 row.appendChild(btn);
 div.appendChild(row);
-
 });
 }
 
 function categorize(name){
-data[currentIndex].Category=name;
-previewCategory=null;
+const item=data[currentIndex];
+item.Category=name;
+item.Splits=[];
+if(currentIndex<data.length-1) currentIndex++;
+showCard();
 updateTotals();
 updateProgress();
-showCard();
+saveProgress();
 }
 
 function showCard(){
 if(!data.length)return;
-
 const item=data[currentIndex];
-
-document.getElementById("cardTitle").innerText=item.Title;
+document.getElementById("cardTitle").innerText=item.Title+(item.Receipt?" 📎":"")+(item.Splits.length?" (SPLIT)":"");
 document.getElementById("cardMeta").innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}`;
-
-document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
+`Amount: $${Number(item.Amount).toFixed(2)}`;
+document.getElementById("currentCategory").innerText=
+item.Splits.length?"Current: SPLIT":"Current: "+(item.Category||"—");
+updateTotals();
+updateProgress();
 }
 
-/* ================= TOTALS ================= */
+function triggerReceiptUpload(){
+document.getElementById("receiptUpload").value="";
+document.getElementById("receiptUpload").click();
+}
+
+document.getElementById("receiptUpload").addEventListener("change",function(e){
+const file=e.target.files[0];
+if(!file)return;
+const reader=new FileReader();
+reader.onload=function(evt){
+data[currentIndex].Receipt=evt.target.result;
+saveProgress();
+showCard();
+};
+reader.readAsDataURL(file);
+});
+
+function viewReceipt(){
+const item=data[currentIndex];
+if(!item.Receipt){alert("No receipt.");return;}
+document.getElementById("modalTitle").innerText="Receipt";
+document.getElementById("modalBody").innerHTML=`<img src="${item.Receipt}" style="max-width:100%;">`;
+document.getElementById("infoModal").style.display="block";
+}
+
+function closeModal(){
+document.getElementById("infoModal").style.display="none";
+}
+
+function openSplitEditor(){
+const select=document.getElementById("splitCategory");
+select.innerHTML="";
+categories.forEach(c=>{
+const opt=document.createElement("option");
+opt.value=c.name;
+opt.innerText=c.name;
+select.appendChild(opt);
+});
+renderSplitList();
+document.getElementById("splitModal").style.display="block";
+}
+
+function renderSplitList(){
+const item=data[currentIndex];
+let html="",total=0;
+item.Splits.forEach((s,i)=>{
+total+=Number(s.amount);
+html+=`<div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+<div>${s.category}</div>
+<div>$${Number(s.amount).toFixed(2)}</div>
+<button onclick="removeSplit(${i})">X</button>
+</div>`;
+});
+html+=`<hr>Split Total: $${total.toFixed(2)}<br>Original: $${Number(item.Amount).toFixed(2)}`;
+document.getElementById("splitList").innerHTML=html;
+}
+
+function addSplit(){
+const amt=parseFloat(document.getElementById("splitAmount").value);
+const cat=document.getElementById("splitCategory").value;
+if(!amt||amt<=0)return;
+data[currentIndex].Splits.push({amount:amt,category:cat});
+document.getElementById("splitAmount").value="";
+renderSplitList();
+}
+
+function removeSplit(i){
+data[currentIndex].Splits.splice(i,1);
+renderSplitList();
+}
+
+function saveSplits(){
+const item=data[currentIndex];
+const total=item.Splits.reduce((a,b)=>a+Number(b.amount),0);
+if(Math.abs(total-Number(item.Amount))>0.01){
+alert("Split must equal original amount.");
+return;
+}
+saveProgress();
+closeSplit();
+showCard();
+}
+
+function closeSplit(){
+document.getElementById("splitModal").style.display="none";
+}
 
 function updateTotals(){
-
 let totals={};
 categories.forEach(c=>totals[c.name]=0);
 
 data.forEach(d=>{
-if(d.Category && totals[d.Category]!=null){
-totals[d.Category]+=d.Amount;
+if(d.Splits.length){
+d.Splits.forEach(s=>{
+totals[s.category]+=Number(s.amount);
+});
+}else if(d.Category){
+totals[d.Category]+=Number(d.Amount);
 }
 });
 
-if(previewCategory && !data[currentIndex].Category){
-totals[previewCategory]+=data[currentIndex].Amount;
-}
-
 const div=document.getElementById("totals");
 div.innerHTML="";
-
-Object.keys(totals).forEach(function(k){
-if(previewCategory===k && !data[currentIndex].Category){
-div.innerHTML+=`<div class="previewRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
-}else{
+Object.keys(totals).forEach(k=>{
 div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
-}
 });
 }
 
 function updateProgress(){
 const total=data.length;
-const done=data.filter(d=>d.Category).length;
+const done=data.filter(d=>d.Category||d.Splits.length).length;
 const percent=total?Math.round((done/total)*100):0;
-
 document.getElementById("progressBar").style.width=percent+"%";
-document.getElementById("progressText").innerText=
-`${done} of ${total} categorized (${percent}%)`;
+document.getElementById("progressText").innerText=`${done} of ${total} categorized (${percent}%)`;
 }
+
+function saveProgress(){
+localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
+}
+
+function loadProgress(){
+const saved=localStorage.getItem(STORAGE_KEY);
+if(!saved)return;
+const parsed=JSON.parse(saved);
+data=parsed.data||[];
+currentIndex=parsed.currentIndex||0;
+if(data.length){
+document.getElementById("app").style.display="block";
+renderCategories();
+showCard();
+}
+}
+
+function clearProgress(){
+localStorage.removeItem(STORAGE_KEY);
+location.reload();
+}
+
+function exportExcel(){
+const ws=XLSX.utils.json_to_sheet(data);
+const wb=XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb,ws,"Categorized");
+XLSX.writeFile(wb,"Categorized.xlsx");
+}
+
+window.onload=loadProgress;
 
 </script>
 </body>
