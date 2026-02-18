@@ -1,4 +1,5 @@
-Latest 19
+latest 19
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -36,7 +37,6 @@ input[type="number"], input[type="text"]{
   border-radius:10px;
   border:1px solid #ddd;
 }
-label { user-select:none; }
 .navBtn {
   width:48%;
   background:#444;
@@ -50,12 +50,6 @@ label { user-select:none; }
 .category-btn {
   flex:1;
   color:white;
-}
-.info-btn {
-  width:40px;
-  margin-left:6px;
-  background:#ddd;
-  font-weight:bold;
 }
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
@@ -79,24 +73,6 @@ label { user-select:none; }
   font-size:13px;
   padding:4px 0;
 }
-.modal {
-  display:none;
-  position:fixed;
-  z-index:1000;
-  left:0; top:0;
-  width:100%; height:100%;
-  background:rgba(0,0,0,.6);
-}
-.modal-content {
-  background:white;
-  margin:10% auto;
-  padding:20px;
-  width:95%;
-  max-width:600px;
-  border-radius:14px;
-  max-height:90vh;
-  overflow:auto;
-}
 </style>
 </head>
 
@@ -109,21 +85,6 @@ label { user-select:none; }
 <div id="mappingPanel" class="panel" style="display:none;"></div>
 
 <div id="app" style="display:none;">
-  <div class="panel">
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-      <b>Find:</b>
-      <input id="searchAmount" type="number" step="0.01" placeholder="Amount (e.g. 187.42)">
-      <button onclick="searchByAmount()">Go</button>
-      <button onclick="jumpToNextReceipt()">Next With Receipt</button>
-      <label style="display:flex;gap:8px;align-items:center;margin-left:auto;">
-        <input id="receiptOnlyToggle" type="checkbox" onchange="onReceiptFilterChange()">
-        Navigate receipts only
-      </label>
-    </div>
-    <div class="small" style="margin-top:8px;">
-      Tip: Turn on “Navigate receipts only” to jump through just the 📎 items using Back/Next.
-    </div>
-  </div>
 
   <div class="panel">
     <div class="progress-bar-container">
@@ -136,22 +97,11 @@ label { user-select:none; }
     <div id="cardTitle">Upload CSV to begin</div>
     <div id="cardMeta" class="small"></div>
     <div id="currentCategory" class="small" style="margin-top:6px;"></div>
-    <div id="suggestionBox" class="small" style="margin-top:10px;"></div>
-
-    <div style="margin-top:10px;">
-      <input type="file" id="receiptUpload" accept="image/*" style="display:none;">
-      <button onclick="triggerReceiptUpload()">📎 Upload Receipt</button>
-      <button onclick="viewReceipt()">👁 View Receipt</button>
-      <button onclick="openSplitEditor()">🧾 Split Transaction</button>
-    </div>
-
     <hr>
-
     <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
       <button class="navBtn" onclick="goBack()">⬅ Back</button>
       <button class="navBtn" onclick="goNext()">Next ➡</button>
     </div>
-
     <div id="categoryButtons"></div>
   </div>
 
@@ -162,11 +112,12 @@ label { user-select:none; }
 
   <button onclick="exportExcel()">Export to Excel</button>
   <button onclick="clearProgress()" style="background:#c62828;color:white;margin-top:10px;">Reset Saved Progress</button>
+
 </div>
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v12";
+const STORAGE_KEY = "bathhouse_categorizer_v13";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
@@ -187,6 +138,10 @@ const categories = [
 {name:"Needs Review",class:"special"}
 ];
 
+/* ===============================
+   CSV Upload
+================================ */
+
 document.getElementById("csvFile").addEventListener("change",function(e){
   localStorage.removeItem(STORAGE_KEY);
   const file=e.target.files[0];
@@ -196,18 +151,40 @@ document.getElementById("csvFile").addEventListener("change",function(e){
     header:true,
     skipEmptyLines:true,
     complete:function(res){
-      rawRows=res.data;
-      headers=Object.keys(rawRows[0]||{});
+
+      // Remove completely empty rows
+      rawRows = res.data.filter(row =>
+        Object.values(row).some(v => v !== null && v !== "")
+      );
+
+      if(!rawRows.length){
+        alert("No valid data found in CSV.");
+        return;
+      }
+
+      // Find first row with actual keys
+      const firstValidRow = rawRows.find(r => Object.keys(r).length > 0);
+      headers = firstValidRow ? Object.keys(firstValidRow) : [];
+
+      if(!headers.length){
+        alert("Could not detect columns.");
+        return;
+      }
+
       showMapping();
     }
   });
 });
 
+/* ===============================
+   Mapping UI
+================================ */
+
 function showMapping(){
   const panel=document.getElementById("mappingPanel");
   panel.style.display="block";
 
-  const hasCategory=headers.includes("Category");
+  const hasCategory=headers.some(h => h.toLowerCase()==="category");
 
   panel.innerHTML=`
     <h4>Map Columns</h4>
@@ -220,7 +197,8 @@ function showMapping(){
   `;
 
   if(hasCategory){
-    document.getElementById("mapCategory").value="Category";
+    const actualHeader=headers.find(h=>h.toLowerCase()==="category");
+    document.getElementById("mapCategory").value=actualHeader;
   }
 }
 
@@ -252,9 +230,7 @@ function confirmMapping(){
       Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
       Vendor:v?r[v]||"":"",
       Date:d?r[d]||"",
-      Category:cat,
-      Receipt:"",
-      Splits:[]
+      Category:cat
     };
   });
 
@@ -267,6 +243,10 @@ function confirmMapping(){
   updateProgress();
   saveProgress();
 }
+
+/* ===============================
+   Core App
+================================ */
 
 function renderCategories(){
   const div=document.getElementById("categoryButtons");
@@ -290,6 +270,20 @@ function categorize(name){
   updateTotals();
   updateProgress();
   saveProgress();
+}
+
+function goBack(){
+  if(currentIndex>0){
+    currentIndex--;
+    showCard();
+  }
+}
+
+function goNext(){
+  if(currentIndex<data.length-1){
+    currentIndex++;
+    showCard();
+  }
 }
 
 function showCard(){
