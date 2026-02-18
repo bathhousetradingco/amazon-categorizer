@@ -1,4 +1,4 @@
-35
+36
 <!DOCTYPE html>
 <html>
 <head>
@@ -42,7 +42,7 @@ align-items:center;
 background:white;
 padding:20px;
 border-radius:12px;
-width:300px;
+width:320px;
 }
 .vendor-option {
 padding:8px;
@@ -76,7 +76,6 @@ cursor:pointer;
 <h3 id="cardTitle"></h3>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
-
 <div id="splitContainer"></div>
 
 <hr>
@@ -133,8 +132,76 @@ let rawRows=[],data=[],headers=[],currentIndex=0;
 let filterUncategorized=false,filterAttachment=false;
 let vendorFilterActive=false,vendorFilterText="",amountFilter=null;
 
-const categories=[ ... ]; // unchanged for brevity
-// (Your full categories array remains exactly as before)
+const categories=[
+{name:"COGS - Ingredients",class:"cogs"},
+{name:"COGS - Packaging",class:"cogs"},
+{name:"COGS - Resale Inventory",class:"cogs"},
+{name:"COGS - Production Supplies",class:"cogs"},
+{name:"COGS - Shipping from Suppliers",class:"cogs"},
+{name:"Equipment",class:"expense"},
+{name:"Advertising & Marketing",class:"expense"},
+{name:"Website & Software",class:"expense"},
+{name:"Merchant Processing Fees",class:"expense"},
+{name:"Insurance",class:"expense"},
+{name:"Utilities",class:"expense"},
+{name:"Professional Services",class:"expense"},
+{name:"Needs Review",class:"special"}
+];
+
+document.getElementById("csvFile").addEventListener("change",e=>{
+localStorage.removeItem(STORAGE_KEY);
+const file=e.target.files[0];
+if(!file)return;
+Papa.parse(file,{
+header:true,
+skipEmptyLines:true,
+complete:res=>{
+rawRows=res.data;
+headers=Object.keys(rawRows[0]);
+showMapping();
+}
+});
+});
+
+function showMapping(){
+mappingPanel.style.display="block";
+mappingPanel.innerHTML=`
+<h4>Map Columns</h4>
+Title:<br>${dropdown("mapTitle")}<br><br>
+Amount:<br>${dropdown("mapAmount")}<br><br>
+Vendor:<br>${dropdown("mapVendor",true)}<br><br>
+Date:<br>${dropdown("mapDate",true)}<br><br>
+Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
+<button onclick="confirmMapping()">Confirm</button>`;
+}
+
+function dropdown(id,allowEmpty=false){
+let html=`<select id="${id}">`;
+if(allowEmpty)html+=`<option value="">--None--</option>`;
+headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+html+=`</select>`;
+return html;
+}
+
+function confirmMapping(){
+const t=mapTitle.value,a=mapAmount.value,v=mapVendor.value,d=mapDate.value,c=mapCategory.value;
+data=rawRows.map(r=>({
+Title:r[t]||"",
+Amount:parseFloat(String(r[a]||"").replace(/[$,]/g,""))||0,
+Vendor:v?r[v]:"",
+Date:d?r[d]:"",
+Category:c?r[c]||"":"",
+Splits:[],
+Receipt:null
+}));
+mappingPanel.style.display="none";
+app.style.display="block";
+renderCategories();
+showCard();
+updateTotals();
+updateProgress();
+saveProgress();
+}
 
 function normalize(str){
 return str.toLowerCase().replace(/[^a-z0-9]/g,"");
@@ -143,7 +210,6 @@ return str.toLowerCase().replace(/[^a-z0-9]/g,"");
 function getVendorSuggestions(input){
 const normInput=normalize(input);
 const vendorMap={};
-
 data.forEach(d=>{
 if(!d.Vendor) return;
 const normVendor=normalize(d.Vendor);
@@ -151,7 +217,6 @@ if(normVendor.includes(normInput)){
 vendorMap[d.Vendor]=(vendorMap[d.Vendor]||0)+1;
 }
 });
-
 return Object.entries(vendorMap).sort((a,b)=>b[1]-a[1]);
 }
 
@@ -191,12 +256,10 @@ const amountVal=document.getElementById("searchAmount").value;
 
 if(vendorInput){
 const suggestions=getVendorSuggestions(vendorInput);
-
 if(suggestions.length===0){
 alert("No matching vendors found.");
 return;
 }
-
 if(suggestions.length===1){
 applyVendorFilter(suggestions[0][0],amountVal);
 } else {
@@ -215,14 +278,113 @@ return;
 alert("Enter Vendor or Amount.");
 }
 
-function clearSearch(){
-vendorFilterActive=false;
-vendorFilterText="";
-amountFilter=null;
-document.getElementById("searchVendor").value="";
-document.getElementById("searchAmount").value="";
-currentIndex=0;
+function passesFilters(item){
+if(filterUncategorized && item.Category) return false;
+if(filterAttachment && !item.Receipt) return false;
+if(vendorFilterActive){
+if(!item.Vendor.toLowerCase().includes(vendorFilterText)) return false;
+if(amountFilter!=null && Math.abs(item.Amount-amountFilter)>0.01) return false;
+}
+return true;
+}
+
+function findNextIndex(start,dir){
+let i=start;
+while(i>=0 && i<data.length){
+if(passesFilters(data[i])) return i;
+i+=dir;
+}
+return -1;
+}
+
+function goNext(){
+let next=findNextIndex(currentIndex+1,1);
+if(next!==-1){currentIndex=next;showCard();}
+}
+
+function goBack(){
+let prev=findNextIndex(currentIndex-1,-1);
+if(prev!==-1){currentIndex=prev;showCard();}
+}
+
+function categorize(name){
+data[currentIndex].Category=name;
+data[currentIndex].Splits=[];
+updateTotals();
+updateProgress();
+saveProgress();
+goNext();
+}
+
+function renderCategories(){
+const div=document.getElementById("categoryButtons");
+div.innerHTML="";
+categories.forEach(cat=>{
+const btn=document.createElement("button");
+btn.className="category-btn "+cat.class;
+btn.innerText=cat.name;
+btn.onclick=()=>categorize(cat.name);
+div.appendChild(btn);
+});
+const splitBtn=document.createElement("button");
+splitBtn.className="category-btn expense";
+splitBtn.style.background="#ff9800";
+splitBtn.innerText="Split Transaction";
+splitBtn.onclick=showSplitUI;
+div.appendChild(splitBtn);
+}
+
+function showSplitUI(){
+const item=data[currentIndex];
+let html=`<div class="splitBox">
+<strong>Total: $${item.Amount.toFixed(2)}</strong><br>
+<div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div>`;
+categories.forEach((c,i)=>{
+html+=`${c.name}<br>
+<input type="number" step="0.01" id="split_${i}" oninput="updateRemaining()"><br><br>`;
+});
+html+=`<button onclick="saveSplit()">Save Split</button></div>`;
+splitContainer.innerHTML=html;
+}
+
+function updateRemaining(){
+const item=data[currentIndex];
+let total=0;
+categories.forEach((c,i)=>{
+total+=parseFloat(document.getElementById("split_"+i).value)||0;
+});
+const remaining=item.Amount-total;
+const el=document.getElementById("remainingBalance");
+el.innerText="Remaining: $"+remaining.toFixed(2);
+el.style.color=Math.abs(remaining)<0.01?"green":remaining<0?"red":"orange";
+}
+
+function saveSplit(){
+const item=data[currentIndex];
+let total=0,splits=[];
+categories.forEach((c,i)=>{
+const val=parseFloat(document.getElementById("split_"+i).value)||0;
+if(val>0){splits.push({Category:c.name,Amount:val});total+=val;}
+});
+if(Math.abs(total-item.Amount)>0.01){alert("Split must equal total.");return;}
+item.Splits=splits;
+item.Category="SPLIT";
+updateTotals();
+updateProgress();
+saveProgress();
+goNext();
+}
+
+function attachReceipt(e){
+const file=e.target.files[0];
+if(!file)return;
+const reader=new FileReader();
+reader.onload=function(ev){
+data[currentIndex].Receipt={name:file.name,data:ev.target.result};
+saveProgress();
 showCard();
+};
+reader.readAsDataURL(file);
 }
 
 function showCard(){
