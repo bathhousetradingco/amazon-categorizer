@@ -1,4 +1,4 @@
-latest 19
+latest 20
 
 <!DOCTYPE html>
 <html>
@@ -7,72 +7,21 @@ latest 19
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bathhouse Categorizer</title>
 
-<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
 <style>
-body {
-  font-family:-apple-system,BlinkMacSystemFont,sans-serif;
-  margin:0;
-  padding:20px;
-  background:#f4f4f4;
-}
-h2 { text-align:center; }
-.panel {
-  background:white;
-  padding:16px;
-  border-radius:14px;
-  box-shadow:0 6px 25px rgba(0,0,0,.08);
-  margin-bottom:15px;
-}
-button {
-  cursor:pointer;
-  border:none;
-  border-radius:10px;
-  padding:12px;
-  font-weight:600;
-}
-input[type="number"], input[type="text"]{
-  padding:10px;
-  border-radius:10px;
-  border:1px solid #ddd;
-}
-.navBtn {
-  width:48%;
-  background:#444;
-  color:white;
-}
-.category-row {
-  display:flex;
-  align-items:center;
-  margin-bottom:6px;
-}
-.category-btn {
-  flex:1;
-  color:white;
-}
+body {font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:0;padding:20px;background:#f4f4f4;}
+.panel {background:white;padding:16px;border-radius:14px;box-shadow:0 6px 25px rgba(0,0,0,.08);margin-bottom:15px;}
+button {cursor:pointer;border:none;border-radius:10px;padding:10px 14px;font-weight:600;}
+.category-row {display:flex;margin-bottom:6px;}
+.category-btn {flex:1;color:white;}
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
-.progress-bar-container {
-  background:#eee;
-  border-radius:999px;
-  overflow:hidden;
-  height:16px;
-  margin-bottom:8px;
-}
-.progress-bar {
-  height:100%;
-  background:#2e7d32;
-  width:0%;
-}
-.small { font-size:13px; color:#555; }
-.totalRow {
-  display:flex;
-  justify-content:space-between;
-  font-size:13px;
-  padding:4px 0;
-}
+.progress-bar-container {background:#eee;border-radius:999px;overflow:hidden;height:16px;margin-bottom:8px;}
+.progress-bar {height:100%;background:#2e7d32;width:0%;}
+.totalRow {display:flex;justify-content:space-between;font-size:13px;padding:4px 0;}
 </style>
 </head>
 
@@ -83,41 +32,35 @@ input[type="number"], input[type="text"]{
 <input type="file" id="csvFile" accept=".csv">
 
 <div id="mappingPanel" class="panel" style="display:none;"></div>
-
 <div id="app" style="display:none;">
 
-  <div class="panel">
-    <div class="progress-bar-container">
-      <div id="progressBar" class="progress-bar"></div>
-    </div>
-    <div id="progressText" class="small"></div>
-  </div>
+<div class="panel">
+<div class="progress-bar-container">
+<div id="progressBar" class="progress-bar"></div>
+</div>
+<div id="progressText"></div>
+</div>
 
-  <div class="panel">
-    <div id="cardTitle">Upload CSV to begin</div>
-    <div id="cardMeta" class="small"></div>
-    <div id="currentCategory" class="small" style="margin-top:6px;"></div>
-    <hr>
-    <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
-      <button class="navBtn" onclick="goBack()">⬅ Back</button>
-      <button class="navBtn" onclick="goNext()">Next ➡</button>
-    </div>
-    <div id="categoryButtons"></div>
-  </div>
+<div class="panel">
+<div id="cardTitle">Upload CSV to begin</div>
+<div id="cardMeta"></div>
+<div id="currentCategory"></div>
+<hr>
+<button onclick="goBack()">⬅ Back</button>
+<button onclick="goNext()">Next ➡</button>
+<div id="categoryButtons"></div>
+</div>
 
-  <div class="panel">
-    <h4>Totals</h4>
-    <div id="totals"></div>
-  </div>
+<div class="panel">
+<h4>Totals</h4>
+<div id="totals"></div>
+</div>
 
-  <button onclick="exportExcel()">Export to Excel</button>
-  <button onclick="clearProgress()" style="background:#c62828;color:white;margin-top:10px;">Reset Saved Progress</button>
+<button onclick="exportExcel()">Export to Excel</button>
 
 </div>
 
 <script>
-
-const STORAGE_KEY = "bathhouse_categorizer_v13";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
@@ -138,12 +81,12 @@ const categories = [
 {name:"Needs Review",class:"special"}
 ];
 
-/* ===============================
+/* ===========================
    CSV Upload
-================================ */
+=========================== */
 
 document.getElementById("csvFile").addEventListener("change",function(e){
-  localStorage.removeItem(STORAGE_KEY);
+
   const file=e.target.files[0];
   if(!file)return;
 
@@ -152,53 +95,46 @@ document.getElementById("csvFile").addEventListener("change",function(e){
     skipEmptyLines:true,
     complete:function(res){
 
-      // Remove completely empty rows
       rawRows = res.data.filter(row =>
         Object.values(row).some(v => v !== null && v !== "")
       );
 
       if(!rawRows.length){
-        alert("No valid data found in CSV.");
+        alert("No valid data found.");
         return;
       }
 
-      // Find first row with actual keys
-      const firstValidRow = rawRows.find(r => Object.keys(r).length > 0);
-      headers = firstValidRow ? Object.keys(firstValidRow) : [];
-
-      if(!headers.length){
-        alert("Could not detect columns.");
-        return;
-      }
+      headers = Object.keys(rawRows[0]);
 
       showMapping();
     }
   });
 });
 
-/* ===============================
-   Mapping UI
-================================ */
+/* ===========================
+   Mapping
+=========================== */
 
 function showMapping(){
+
   const panel=document.getElementById("mappingPanel");
   panel.style.display="block";
 
-  const hasCategory=headers.some(h => h.toLowerCase()==="category");
+  const hasCategory=headers.some(h=>h.toLowerCase()==="category");
 
   panel.innerHTML=`
     <h4>Map Columns</h4>
     Title:<br>${dropdown("mapTitle")}<br><br>
     Amount:<br>${dropdown("mapAmount")}<br><br>
-    Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
-    Date (optional):<br>${dropdown("mapDate",true)}<br><br>
-    ${hasCategory?`Category (auto-detected):<br>${dropdown("mapCategory",true)}<br><br>`:""}
+    Vendor:<br>${dropdown("mapVendor",true)}<br><br>
+    Date:<br>${dropdown("mapDate",true)}<br><br>
+    ${hasCategory?`Category:<br>${dropdown("mapCategory",true)}<br><br>`:""}
     <button onclick="confirmMapping()">Confirm</button>
   `;
 
   if(hasCategory){
-    const actualHeader=headers.find(h=>h.toLowerCase()==="category");
-    document.getElementById("mapCategory").value=actualHeader;
+    const actual=headers.find(h=>h.toLowerCase()==="category");
+    document.getElementById("mapCategory").value=actual;
   }
 }
 
@@ -210,6 +146,7 @@ function dropdown(id,allowEmpty=false){
 }
 
 function confirmMapping(){
+
   const t=document.getElementById("mapTitle").value;
   const a=document.getElementById("mapAmount").value;
   const v=document.getElementById("mapVendor").value;
@@ -217,12 +154,13 @@ function confirmMapping(){
   const cSelect=document.getElementById("mapCategory");
   const c=cSelect?cSelect.value:"";
 
-  data=rawRows.map(r=>{
-    let cat="";
+  data = rawRows.map(r=>{
+
+    let categoryValue="";
     if(c){
       const value=r[c]||"";
-      const valid=categories.find(catObj=>catObj.name===value);
-      if(valid) cat=value;
+      const valid=categories.find(cat=>cat.name===value);
+      if(valid) categoryValue=value;
     }
 
     return{
@@ -230,7 +168,7 @@ function confirmMapping(){
       Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
       Vendor:v?r[v]||"":"",
       Date:d?r[d]||"",
-      Category:cat
+      Category:categoryValue
     };
   });
 
@@ -241,12 +179,11 @@ function confirmMapping(){
   showCard();
   updateTotals();
   updateProgress();
-  saveProgress();
 }
 
-/* ===============================
+/* ===========================
    Core App
-================================ */
+=========================== */
 
 function renderCategories(){
   const div=document.getElementById("categoryButtons");
@@ -269,21 +206,14 @@ function categorize(name){
   showCard();
   updateTotals();
   updateProgress();
-  saveProgress();
 }
 
 function goBack(){
-  if(currentIndex>0){
-    currentIndex--;
-    showCard();
-  }
+  if(currentIndex>0){currentIndex--;showCard();}
 }
 
 function goNext(){
-  if(currentIndex<data.length-1){
-    currentIndex++;
-    showCard();
-  }
+  if(currentIndex<data.length-1){currentIndex++;showCard();}
 }
 
 function showCard(){
@@ -301,13 +231,11 @@ function showCard(){
 function updateTotals(){
   let totals={};
   categories.forEach(c=>totals[c.name]=0);
-
   data.forEach(d=>{
     if(d.Category && totals[d.Category]!=null){
       totals[d.Category]+=d.Amount;
     }
   });
-
   const div=document.getElementById("totals");
   div.innerHTML="";
   Object.keys(totals).forEach(k=>{
@@ -324,39 +252,12 @@ function updateProgress(){
     `${done} of ${total} categorized (${percent}%)`;
 }
 
-function saveProgress(){
-  localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
-}
-
-function loadProgress(){
-  const saved=localStorage.getItem(STORAGE_KEY);
-  if(!saved)return;
-  const parsed=JSON.parse(saved);
-  data=parsed.data||[];
-  currentIndex=parsed.currentIndex||0;
-
-  if(data.length){
-    document.getElementById("app").style.display="block";
-    renderCategories();
-    showCard();
-    updateTotals();
-    updateProgress();
-  }
-}
-
-function clearProgress(){
-  localStorage.removeItem(STORAGE_KEY);
-  location.reload();
-}
-
 function exportExcel(){
   const ws=XLSX.utils.json_to_sheet(data);
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Categorized");
   XLSX.writeFile(wb,"Categorized.xlsx");
 }
-
-window.onload=loadProgress;
 
 </script>
 </body>
