@@ -1,4 +1,4 @@
-43
+44
 <!DOCTYPE html>
 <html>
 <head>
@@ -6,15 +6,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bathhouse Categorizer</title>
 
-<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
 <style>
 body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; margin:0; padding:20px; background:#f4f4f4;}
 h2 { text-align:center; }
 .panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px;}
 button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-weight:600;}
-input[type="number"], input[type="text"], select { padding:10px; border-radius:10px; border:1px solid #ddd; width:100%;}
+input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:100%;}
 .navBtn { width:48%; background:#444; color:white;}
 .category-btn { width:100%; margin-bottom:6px; color:white;}
 .cogs{background:#2e7d32;}
@@ -26,7 +26,6 @@ input[type="number"], input[type="text"], select { padding:10px; border-radius:1
 .totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0;}
 .splitBox { background:#fafafa; padding:10px; border-radius:10px; margin-top:10px;}
 .viewBtn { background:#1565c0; color:white; margin-top:6px;}
-.clearBtn { background:#c62828; color:white; margin-top:8px;}
 </style>
 </head>
 
@@ -69,11 +68,16 @@ input[type="number"], input[type="text"], select { padding:10px; border-radius:1
 <div id="totals"></div>
 </div>
 
+<button onclick="exportExcel()">Export to Excel</button>
+
 </div>
 
 <script>
 
-let rawRows=[],data=[],headers=[],currentIndex=0;
+let rawRows=[];
+let headers=[];
+let data=[];
+let currentIndex=0;
 
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
@@ -96,15 +100,20 @@ const file=e.target.files[0];
 if(!file)return;
 
 Papa.parse(file,{
-header:true,
+header:false,
 skipEmptyLines:true,
 complete:res=>{
-rawRows=res.data || [];
-headers=(res.meta.fields || Object.keys(rawRows[0] || {})).map(h=>h.trim());
-if(!headers.length){
-alert("No headers detected. Please check your CSV format.");
+if(!res.data.length){
+alert("CSV appears empty.");
 return;
 }
+
+// FIRST ROW = HEADERS
+headers = res.data[0].map(h=>String(h).trim());
+
+// REST = DATA
+rawRows = res.data.slice(1);
+
 showMapping();
 }
 });
@@ -114,37 +123,48 @@ function showMapping(){
 mappingPanel.style.display="block";
 mappingPanel.innerHTML=`
 <h4>Map Columns</h4>
+
 Title:<br>${dropdown("mapTitle")}<br><br>
 Amount:<br>${dropdown("mapAmount")}<br><br>
-Vendor:<br>${dropdown("mapVendor",true)}<br><br>
-Date:<br>${dropdown("mapDate",true)}<br><br>
+Vendor:<br>${dropdown("mapVendor")}<br><br>
+Date:<br>${dropdown("mapDate")}<br><br>
 Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
-<button onclick="confirmMapping()">Confirm</button>`;
+
+<button onclick="confirmMapping()">Confirm Mapping</button>
+`;
 }
 
 function dropdown(id,allowEmpty=false){
 let html=`<select id="${id}">`;
 if(allowEmpty) html+=`<option value="">--None--</option>`;
-headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+headers.forEach((h,i)=>{
+html+=`<option value="${i}">${h}</option>`;
+});
 html+=`</select>`;
 return html;
 }
 
 function confirmMapping(){
-const t=mapTitle.value,a=mapAmount.value,v=mapVendor.value,d=mapDate.value,c=mapCategory.value;
 
-data=rawRows.map(r=>({
-Title:r[t]||"",
-Amount:parseFloat(String(r[a]||"").replace(/[$,]/g,""))||0,
-Vendor:v?r[v]||"":"",
-Date:d?r[d]||"",
-Category:c?r[c]||"",
-Splits:[],
-Receipt:null
+const t=parseInt(mapTitle.value);
+const a=parseInt(mapAmount.value);
+const v=parseInt(mapVendor.value);
+const d=parseInt(mapDate.value);
+const c=mapCategory.value !== "" ? parseInt(mapCategory.value) : null;
+
+data = rawRows.map(row=>({
+Title: row[t] || "",
+Amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
+Vendor: row[v] || "",
+Date: row[d] || "",
+Category: c !== null ? (row[c] || "") : "",
+Splits: [],
+Receipt: null
 }));
 
 mappingPanel.style.display="none";
 app.style.display="block";
+
 renderCategories();
 showCard();
 updateTotals();
@@ -231,12 +251,17 @@ reader.readAsDataURL(file);
 function viewReceipt(){
 const receipt=data[currentIndex].Receipt;
 if(!receipt)return;
-fetch(receipt.data)
-.then(res=>res.blob())
-.then(blob=>{
-const url=URL.createObjectURL(blob);
+const url=URL.createObjectURL(dataURItoBlob(receipt.data));
 window.open(url,"_blank");
-});
+}
+
+function dataURItoBlob(dataURI){
+const byteString=atob(dataURI.split(',')[1]);
+const mimeString=dataURI.split(',')[0].split(':')[1].split(';')[0];
+const ab=new ArrayBuffer(byteString.length);
+const ia=new Uint8Array(ab);
+for(let i=0;i<byteString.length;i++) ia[i]=byteString.charCodeAt(i);
+return new Blob([ab],{type:mimeString});
 }
 
 function showCard(){
@@ -265,13 +290,8 @@ currentCategory.innerText=item.Splits.length?"Split into multiple categories":"C
 splitContainer.innerHTML="";
 }
 
-function goNext(){
-if(currentIndex<data.length-1){currentIndex++;showCard();}
-}
-
-function goBack(){
-if(currentIndex>0){currentIndex--;showCard();}
-}
+function goNext(){ if(currentIndex<data.length-1){currentIndex++;showCard();}}
+function goBack(){ if(currentIndex>0){currentIndex--;showCard();}}
 
 function updateTotals(){
 let totalsObj={};
@@ -295,6 +315,13 @@ const done=data.filter(d=>d.Category).length;
 const percent=total?Math.round((done/total)*100):0;
 progressBar.style.width=percent+"%";
 progressText.innerText=`${done} of ${total} categorized (${percent}%)`;
+}
+
+function exportExcel(){
+const ws=XLSX.utils.json_to_sheet(data);
+const wb=XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb,ws,"Categorized");
+XLSX.writeFile(wb,"Categorized.xlsx");
 }
 
 </script>
