@@ -1,4 +1,4 @@
-Latest 9
+Latest 10
 
 <!DOCTYPE html>
 <html>
@@ -78,7 +78,7 @@ input, select {
   justify-content:space-between;
   font-size:13px;
   padding:4px 0;
-  background:#f3f9ff;
+  background:#eef6ff;
 }
 </style>
 </head>
@@ -128,7 +128,7 @@ input, select {
 
 <script>
 
-const STORAGE_KEY="bathhouse_categorizer_v13";
+const STORAGE_KEY="bathhouse_categorizer_v14";
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
 let previewCategory=null;
@@ -161,6 +161,10 @@ skipEmptyLines:true,
 complete:function(res){
 rawRows=res.data;
 headers=Object.keys(rawRows[0]||{});
+if(headers.length===0){
+alert("No headers detected in CSV.");
+return;
+}
 showMapping();
 }
 });
@@ -169,6 +173,7 @@ showMapping();
 function showMapping(){
 const panel=document.getElementById("mappingPanel");
 panel.style.display="block";
+
 panel.innerHTML=`
 <h4>Map Columns</h4>
 Title:<br>${dropdown("mapTitle")}<br><br>
@@ -184,7 +189,8 @@ function dropdown(id,allowEmpty=false){
 let html=`<select id="${id}">`;
 if(allowEmpty)html+=`<option value="">--None--</option>`;
 headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
-return html+="</select>";
+html+="</select>";
+return html;
 }
 
 function confirmMapping(){
@@ -200,7 +206,6 @@ Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
 Vendor:v?r[v]||"":"",
 Date:d?r[d]||"",
 Category:c?(r[c]||""):"",
-Splits:[]
 }));
 
 document.getElementById("mappingPanel").style.display="none";
@@ -254,6 +259,7 @@ alert("No Uncategorized transactions found.");
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
 div.innerHTML="";
+
 categories.forEach(c=>{
 const row=document.createElement("div");
 row.className="category-row";
@@ -261,9 +267,20 @@ row.className="category-row";
 const btn=document.createElement("button");
 btn.className="category-btn "+c.class;
 btn.innerText=c.name;
-btn.onclick=()=>categorize(c.name);
-btn.onmouseenter=()=>previewCategory=c.name,updateTotals();
-btn.onmouseleave=()=>previewCategory=null,updateTotals();
+
+btn.onclick=function(){
+categorize(c.name);
+};
+
+btn.onmouseenter=function(){
+previewCategory=c.name;
+updateTotals();
+};
+
+btn.onmouseleave=function(){
+previewCategory=null;
+updateTotals();
+};
 
 row.appendChild(btn);
 div.appendChild(row);
@@ -281,33 +298,37 @@ showCard();
 function showCard(){
 if(!data.length)return;
 const item=data[currentIndex];
+
 document.getElementById("cardTitle").innerText=item.Title;
 document.getElementById("cardMeta").innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
 `Amount: $${item.Amount.toFixed(2)}`;
+
 document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
 }
 
-/* ================= TOTALS (LIVE PREVIEW) ================= */
+/* ================= TOTALS ================= */
 
 function updateTotals(){
 let totals={};
 categories.forEach(c=>totals[c.name]=0);
 
-data.forEach((d,i)=>{
+data.forEach(d=>{
 if(d.Category){
+if(totals[d.Category]!=null){
 totals[d.Category]+=d.Amount;
+}
 }
 });
 
-// preview logic
 if(previewCategory && !data[currentIndex].Category){
 totals[previewCategory]+=data[currentIndex].Amount;
 }
 
 const div=document.getElementById("totals");
 div.innerHTML="";
+
 Object.keys(totals).forEach(k=>{
 if(previewCategory===k && !data[currentIndex].Category){
 div.innerHTML+=`<div class="previewRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
