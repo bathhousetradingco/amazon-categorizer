@@ -1,4 +1,4 @@
-24
+25
 
 <!DOCTYPE html>
 <html>
@@ -55,6 +55,17 @@ input[type="number"], input[type="text"]{
 
 <input type="file" id="csvFile" accept=".csv">
 
+<div class="panel">
+<h4>Attach Receipt by Search</h4>
+Vendor:<br>
+<input type="text" id="searchVendor"><br><br>
+Amount:<br>
+<input type="number" id="searchAmount" step="0.01"><br><br>
+<input type="file" id="searchReceipt" accept="image/*,.pdf"><br><br>
+<button onclick="attachReceiptBySearch()">Attach Receipt</button>
+<div id="searchResult" class="small"></div>
+</div>
+
 <div id="mappingPanel" class="panel" style="display:none;"></div>
 
 <div id="app" style="display:none;">
@@ -93,7 +104,7 @@ input[type="number"], input[type="text"]{
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v15";
+const STORAGE_KEY = "bathhouse_categorizer_v17";
 
 let rawRows = [];
 let data = [];
@@ -118,9 +129,7 @@ const categories = [
 ];
 
 document.getElementById("csvFile").addEventListener("change", function(e){
-
   localStorage.removeItem(STORAGE_KEY);
-
   const file = e.target.files[0];
   if(!file) return;
 
@@ -133,13 +142,11 @@ document.getElementById("csvFile").addEventListener("change", function(e){
       showMapping();
     }
   });
-
 });
 
 function showMapping(){
   const panel = document.getElementById("mappingPanel");
   panel.style.display = "block";
-
   panel.innerHTML = `
     <h4>Map Columns</h4>
     Title:<br>${dropdown("mapTitle")}<br><br>
@@ -160,7 +167,6 @@ function dropdown(id, allowEmpty=false){
 }
 
 function confirmMapping(){
-
   const t = mapTitle.value;
   const a = mapAmount.value;
   const v = mapVendor.value;
@@ -173,25 +179,23 @@ function confirmMapping(){
     Vendor: v ? r[v] : "",
     Date: d ? r[d] : "",
     Category: c ? r[c] : "",
-    Splits: []
+    Splits: [],
+    Receipt: null
   }));
 
   mappingPanel.style.display="none";
   app.style.display="block";
-
   renderCategories();
-  jumpToNextVisible();
+  showCard();
   updateTotals();
   updateProgress();
   saveProgress();
 }
 
 function renderCategories(){
-
   const div = document.getElementById("categoryButtons");
   div.innerHTML = "";
 
-  // Toggle Filter Button
   const toggle = document.createElement("button");
   toggle.className = "category-btn special";
   toggle.style.background = filterUncategorized ? "#4caf50" : "#777";
@@ -201,7 +205,6 @@ function renderCategories(){
   toggle.onclick = toggleFilter;
   div.appendChild(toggle);
 
-  // Category Buttons
   categories.forEach(c => {
     const btn = document.createElement("button");
     btn.className = "category-btn " + c.class;
@@ -210,7 +213,6 @@ function renderCategories(){
     div.appendChild(btn);
   });
 
-  // Split Button
   const splitBtn = document.createElement("button");
   splitBtn.className = "category-btn expense";
   splitBtn.style.background="#ff9800";
@@ -222,68 +224,25 @@ function renderCategories(){
 function toggleFilter(){
   filterUncategorized = !filterUncategorized;
   currentIndex = 0;
-  renderCategories();
-  jumpToNextVisible();
-  saveProgress();
-}
-
-function jumpToNextVisible(){
-
-  while(currentIndex < data.length){
-
-    if(!filterUncategorized){
-      showCard();
-      return;
-    }
-
-    if(!data[currentIndex].Category){
-      showCard();
-      return;
-    }
-
-    currentIndex++;
-  }
-
-  alert("No more uncategorized items.");
+  showCard();
 }
 
 function categorize(name){
-  const item = data[currentIndex];
-  item.Category = name;
-  item.Splits = [];
-  nextItem();
-}
-
-function nextItem(){
-  if(currentIndex < data.length-1){
-    currentIndex++;
-    jumpToNextVisible();
-  }
+  data[currentIndex].Category = name;
+  data[currentIndex].Splits = [];
+  goNext();
   updateTotals();
   updateProgress();
   saveProgress();
 }
 
-function goBack(){
-  if(currentIndex > 0){
-    currentIndex--;
-    if(filterUncategorized){
-      while(currentIndex > 0 && data[currentIndex].Category){
-        currentIndex--;
-      }
-    }
-    showCard();
-  }
-}
-
-function goNext(){
-  if(currentIndex < data.length-1){
-    currentIndex++;
-    jumpToNextVisible();
-  }
-}
-
 function showCard(){
+  if(!data.length) return;
+
+  if(filterUncategorized){
+    const next = data.findIndex(d => !d.Category);
+    if(next !== -1) currentIndex = next;
+  }
 
   const item = data[currentIndex];
 
@@ -292,7 +251,12 @@ function showCard(){
   document.getElementById("cardMeta").innerHTML =
     (item.Vendor ? `Vendor: ${item.Vendor}<br>` : "") +
     (item.Date ? `Date: ${item.Date}<br>` : "") +
-    `Amount: $${item.Amount.toFixed(2)}`;
+    `Amount: $${item.Amount.toFixed(2)}<br>` +
+    (item.Receipt ? `📎 Receipt Attached<br>` : "") +
+    `<br>
+    <input type="file" accept="image/*,.pdf"
+      onchange="attachReceiptToCurrent(event)">
+    `;
 
   document.getElementById("currentCategory").innerText =
     item.Splits.length
@@ -300,8 +264,21 @@ function showCard(){
       : "Current: " + (item.Category || "—");
 }
 
-function showSplitUI(){
+function goBack(){
+  if(currentIndex > 0){
+    currentIndex--;
+    showCard();
+  }
+}
 
+function goNext(){
+  if(currentIndex < data.length-1){
+    currentIndex++;
+    showCard();
+  }
+}
+
+function showSplitUI(){
   const item = data[currentIndex];
 
   let html = `
@@ -326,37 +303,24 @@ function showSplitUI(){
   });
 
   html += `<button onclick="saveSplit()">Save Split</button></div>`;
-
   document.getElementById("cardMeta").innerHTML += html;
 }
 
 function updateRemaining(){
-
   const item = data[currentIndex];
   let totalEntered = 0;
-
   categories.forEach((c,i)=>{
     totalEntered += parseFloat(document.getElementById("split_"+i).value) || 0;
   });
-
   const remaining = item.Amount - totalEntered;
   const display = document.getElementById("remainingBalance");
-
   display.innerText = "Remaining: $" + remaining.toFixed(2);
-
-  if(Math.abs(remaining) < 0.01){
-    display.style.color = "green";
-  }
-  else if(remaining < 0){
-    display.style.color = "red";
-  }
-  else{
-    display.style.color = "orange";
-  }
+  display.style.color =
+    Math.abs(remaining) < 0.01 ? "green" :
+    remaining < 0 ? "red" : "orange";
 }
 
 function saveSplit(){
-
   const item = data[currentIndex];
   let total = 0;
   let splits = [];
@@ -376,12 +340,62 @@ function saveSplit(){
 
   item.Splits = splits;
   item.Category = "SPLIT";
+  goNext();
+  updateTotals();
+  updateProgress();
+  saveProgress();
+}
 
-  nextItem();
+function attachReceiptToCurrent(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e){
+    data[currentIndex].Receipt = {
+      name: file.name,
+      data: e.target.result
+    };
+    saveProgress();
+    showCard();
+  };
+  reader.readAsDataURL(file);
+}
+
+function attachReceiptBySearch(){
+  const vendor = document.getElementById("searchVendor").value.trim().toLowerCase();
+  const amount = parseFloat(document.getElementById("searchAmount").value);
+  const file = document.getElementById("searchReceipt").files[0];
+  const resultDiv = document.getElementById("searchResult");
+
+  if(!vendor || !amount || !file){
+    resultDiv.innerText = "Please enter vendor, amount, and receipt.";
+    return;
+  }
+
+  const match = data.find(d =>
+    d.Vendor &&
+    d.Vendor.toLowerCase().includes(vendor) &&
+    Math.abs(d.Amount - amount) < 0.01
+  );
+
+  if(!match){
+    resultDiv.innerText = "No matching transaction found.";
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(e){
+    match.Receipt = {
+      name: file.name,
+      data: e.target.result
+    };
+    saveProgress();
+    resultDiv.innerText = "Receipt attached successfully.";
+  };
+  reader.readAsDataURL(file);
 }
 
 function updateTotals(){
-
   let totals = {};
   categories.forEach(c => totals[c.name] = 0);
 
@@ -396,15 +410,14 @@ function updateTotals(){
     }
   });
 
-  const totalsDiv = document.getElementById("totals");
-  totalsDiv.innerHTML = "";
-
+  const div = document.getElementById("totals");
+  div.innerHTML = "";
   Object.keys(totals).forEach(k=>{
-    totalsDiv.innerHTML += `
-    <div class="totalRow">
-      <div>${k}</div>
-      <div>$${totals[k].toFixed(2)}</div>
-    </div>`;
+    div.innerHTML += `
+      <div class="totalRow">
+        <div>${k}</div>
+        <div>$${totals[k].toFixed(2)}</div>
+      </div>`;
   });
 }
 
@@ -412,10 +425,16 @@ function updateProgress(){
   const total = data.length;
   const done = data.filter(d => d.Category).length;
   const percent = total ? Math.round((done/total)*100) : 0;
-
   document.getElementById("progressBar").style.width = percent+"%";
   document.getElementById("progressText").innerText =
     `${done} of ${total} categorized (${percent}%)`;
+}
+
+function exportExcel(){
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Categorized");
+  XLSX.writeFile(wb, "Categorized.xlsx");
 }
 
 function saveProgress(){
@@ -427,12 +446,9 @@ function saveProgress(){
 }
 
 function loadProgress(){
-
   const saved = localStorage.getItem(STORAGE_KEY);
   if(!saved) return;
-
   const parsed = JSON.parse(saved);
-
   data = parsed.data || [];
   currentIndex = parsed.currentIndex || 0;
   filterUncategorized = parsed.filterUncategorized || false;
@@ -440,41 +456,10 @@ function loadProgress(){
   if(data.length){
     document.getElementById("app").style.display="block";
     renderCategories();
-    jumpToNextVisible();
+    showCard();
     updateTotals();
     updateProgress();
   }
-}
-
-function clearProgress(){
-  localStorage.removeItem(STORAGE_KEY);
-  location.reload();
-}
-
-function exportExcel(){
-
-  let exportData = [];
-
-  data.forEach(d=>{
-    if(d.Splits.length){
-      d.Splits.forEach(s=>{
-        exportData.push({
-          Title:d.Title,
-          Vendor:d.Vendor,
-          Date:d.Date,
-          Category:s.Category,
-          Amount:s.Amount
-        });
-      });
-    } else {
-      exportData.push(d);
-    }
-  });
-
-  const ws = XLSX.utils.json_to_sheet(exportData);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Categorized");
-  XLSX.writeFile(wb, "Categorized.xlsx");
 }
 
 window.onload = loadProgress;
