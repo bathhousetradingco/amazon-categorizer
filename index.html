@@ -1,4 +1,5 @@
-32
+33
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -26,6 +27,7 @@ input[type="number"], input[type="text"] { padding:10px; border-radius:10px; bor
 .totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0;}
 .toggleBtn { background:#777; color:white; width:100%; margin-bottom:8px;}
 .toggleActive { background:#4caf50 !important;}
+.splitBox { background:#fafafa; padding:10px; border-radius:10px; margin-top:10px;}
 .clearBtn { background:#c62828; color:white; margin-top:8px; }
 </style>
 </head>
@@ -47,9 +49,12 @@ input[type="number"], input[type="text"] { padding:10px; border-radius:10px; bor
 </div>
 
 <div class="panel">
+
 <h3 id="cardTitle"></h3>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
+
+<div id="splitContainer"></div>
 
 <hr>
 
@@ -60,6 +65,7 @@ input[type="number"], input[type="text"] { padding:10px; border-radius:10px; bor
 
 <h4>Choose Category</h4>
 <div id="categoryButtons"></div>
+
 </div>
 
 <div class="panel">
@@ -89,13 +95,11 @@ Amount:<br>
 
 <script>
 
-const STORAGE_KEY="bathhouse_categorizer_v23";
+const STORAGE_KEY="bathhouse_categorizer_v24";
 
 let rawRows=[],data=[],headers=[],currentIndex=0;
 let filterUncategorized=false,filterAttachment=false;
-let vendorFilterActive=false;
-let vendorFilterText="";
-let amountFilter=null;
+let vendorFilterActive=false,vendorFilterText="",amountFilter=null;
 
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
@@ -150,16 +154,15 @@ return html;
 
 function confirmMapping(){
 const t=mapTitle.value,a=mapAmount.value,v=mapVendor.value,d=mapDate.value,c=mapCategory.value;
-
 data=rawRows.map(r=>({
 Title:r[t]||"",
 Amount:parseFloat(String(r[a]||"").replace(/[$,]/g,""))||0,
 Vendor:v?r[v]:"",
 Date:d?r[d]:"",
 Category:c?r[c]||"":"",
+Splits:[],
 Receipt:null
 }));
-
 mappingPanel.style.display="none";
 app.style.display="block";
 renderCategories();
@@ -179,6 +182,12 @@ btn.innerText=cat.name;
 btn.onclick=()=>categorize(cat.name);
 div.appendChild(btn);
 });
+const splitBtn=document.createElement("button");
+splitBtn.className="category-btn expense";
+splitBtn.style.background="#ff9800";
+splitBtn.innerText="Split Transaction";
+splitBtn.onclick=showSplitUI;
+div.appendChild(splitBtn);
 }
 
 function passesFilters(item){
@@ -191,30 +200,85 @@ if(amountFilter!=null && Math.abs(item.Amount-amountFilter)>0.01) return false;
 return true;
 }
 
-function goNext(){
-let i=currentIndex+1;
-while(i<data.length){
-if(passesFilters(data[i])){currentIndex=i;break;}
-i++;
+function findNextIndex(start,dir){
+let i=start;
+while(i>=0 && i<data.length){
+if(passesFilters(data[i])) return i;
+i+=dir;
 }
-showCard();
+return -1;
+}
+
+function goNext(){
+let next=findNextIndex(currentIndex+1,1);
+if(next!==-1){currentIndex=next;showCard();}
 }
 
 function goBack(){
-let i=currentIndex-1;
-while(i>=0){
-if(passesFilters(data[i])){currentIndex=i;break;}
-i--;
-}
-showCard();
+let prev=findNextIndex(currentIndex-1,-1);
+if(prev!==-1){currentIndex=prev;showCard();}
 }
 
 function categorize(name){
 data[currentIndex].Category=name;
+data[currentIndex].Splits=[];
 updateTotals();
 updateProgress();
 saveProgress();
 goNext();
+}
+
+function showSplitUI(){
+const item=data[currentIndex];
+let html=`<div class="splitBox">
+<strong>Total: $${item.Amount.toFixed(2)}</strong><br>
+<div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div>`;
+categories.forEach((c,i)=>{
+html+=`${c.name}<br>
+<input type="number" step="0.01" id="split_${i}" oninput="updateRemaining()"><br><br>`;
+});
+html+=`<button onclick="saveSplit()">Save Split</button></div>`;
+splitContainer.innerHTML=html;
+}
+
+function updateRemaining(){
+const item=data[currentIndex];
+let total=0;
+categories.forEach((c,i)=>{
+total+=parseFloat(document.getElementById("split_"+i).value)||0;
+});
+const remaining=item.Amount-total;
+const el=document.getElementById("remainingBalance");
+el.innerText="Remaining: $"+remaining.toFixed(2);
+el.style.color=Math.abs(remaining)<0.01?"green":remaining<0?"red":"orange";
+}
+
+function saveSplit(){
+const item=data[currentIndex];
+let total=0,splits=[];
+categories.forEach((c,i)=>{
+const val=parseFloat(document.getElementById("split_"+i).value)||0;
+if(val>0){splits.push({Category:c.name,Amount:val});total+=val;}
+});
+if(Math.abs(total-item.Amount)>0.01){alert("Split must equal total.");return;}
+item.Splits=splits;
+item.Category="SPLIT";
+updateTotals();
+updateProgress();
+saveProgress();
+goNext();
+}
+
+function attachReceipt(e){
+const file=e.target.files[0];
+if(!file)return;
+const reader=new FileReader();
+reader.onload=function(ev){
+data[currentIndex].Receipt={name:file.name,data:ev.target.result};
+saveProgress();
+showCard();
+};
+reader.readAsDataURL(file);
 }
 
 function searchTransaction(){
@@ -226,6 +290,8 @@ vendorFilterActive=true;
 vendorFilterText=vendor;
 amountFilter=amountVal?parseFloat(amountVal):null;
 currentIndex=0;
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
 showCard();
 return;
 }
@@ -233,10 +299,7 @@ return;
 if(amountVal){
 const amt=parseFloat(amountVal);
 const index=data.findIndex(d=>Math.abs(d.Amount-amt)<0.01);
-if(index!==-1){
-currentIndex=index;
-showCard();
-}
+if(index!==-1){currentIndex=index;showCard();}
 return;
 }
 
@@ -255,35 +318,26 @@ showCard();
 
 function showCard(){
 if(!data.length)return;
-
-let found=false;
-for(let i=0;i<data.length;i++){
-if(passesFilters(data[i])){
-currentIndex=i;
-found=true;
-break;
-}
-}
-if(!found){
-cardTitle.innerText="No matching transactions.";
-cardMeta.innerHTML="";
-return;
-}
-
 const item=data[currentIndex];
 cardTitle.innerText=item.Title;
 cardMeta.innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}`;
-
-currentCategory.innerText="Current: "+(item.Category||"—");
+`Amount: $${item.Amount.toFixed(2)}<br>`+
+(item.Receipt?`📎 Receipt Attached<br>`:"")+
+`<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">`;
+currentCategory.innerText=
+item.Splits.length?"Split into multiple categories":
+"Current: "+(item.Category||"—");
+splitContainer.innerHTML="";
 }
 
 function toggleUncategorized(){
 filterUncategorized=!filterUncategorized;
 uncatToggle.classList.toggle("toggleActive");
 currentIndex=0;
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
 showCard();
 }
 
@@ -291,6 +345,8 @@ function toggleAttachment(){
 filterAttachment=!filterAttachment;
 attachmentToggle.classList.toggle("toggleActive");
 currentIndex=0;
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
 showCard();
 }
 
@@ -298,7 +354,9 @@ function updateTotals(){
 let totalsObj={};
 categories.forEach(c=>totalsObj[c.name]=0);
 data.forEach(d=>{
-if(d.Category && totalsObj[d.Category]!=null){
+if(d.Splits.length){
+d.Splits.forEach(s=>totalsObj[s.Category]+=s.Amount);
+}else if(d.Category && totalsObj[d.Category]!=null){
 totalsObj[d.Category]+=d.Amount;
 }
 });
