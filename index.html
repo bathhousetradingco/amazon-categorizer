@@ -1,4 +1,4 @@
-36
+37 
 <!DOCTYPE html>
 <html>
 <head>
@@ -28,6 +28,7 @@ input[type="number"], input[type="text"] { padding:10px; border-radius:10px; bor
 .toggleActive { background:#4caf50 !important;}
 .splitBox { background:#fafafa; padding:10px; border-radius:10px; margin-top:10px;}
 .clearBtn { background:#c62828; color:white; margin-top:8px; }
+.viewBtn { background:#1565c0; color:white; margin-top:6px; }
 
 /* Vendor Modal */
 #vendorModal {
@@ -37,6 +38,7 @@ inset:0;
 background:rgba(0,0,0,0.4);
 justify-content:center;
 align-items:center;
+z-index:1000;
 }
 #vendorModalContent {
 background:white;
@@ -100,8 +102,10 @@ Vendor:<br>
 <input type="text" id="searchVendor"><br><br>
 Amount:<br>
 <input type="number" id="searchAmount" step="0.01"><br><br>
+
 <button onclick="searchTransaction()">Search</button>
 <button class="clearBtn" onclick="clearSearch()">Clear Search</button>
+<button class="clearBtn" onclick="resetAllFilters()">Reset All Filters</button>
 
 </div>
 
@@ -115,7 +119,7 @@ Amount:<br>
 
 </div>
 
-<!-- Vendor Suggestion Modal -->
+<!-- Vendor Modal -->
 <div id="vendorModal">
   <div id="vendorModalContent">
     <h4>Select Vendor</h4>
@@ -126,7 +130,7 @@ Amount:<br>
 
 <script>
 
-const STORAGE_KEY="bathhouse_categorizer_v24";
+const STORAGE_KEY="bathhouse_categorizer_v26";
 
 let rawRows=[],data=[],headers=[],currentIndex=0;
 let filterUncategorized=false,filterAttachment=false;
@@ -203,32 +207,33 @@ updateProgress();
 saveProgress();
 }
 
+/* Vendor Suggest */
+
 function normalize(str){
 return str.toLowerCase().replace(/[^a-z0-9]/g,"");
 }
 
 function getVendorSuggestions(input){
 const normInput=normalize(input);
-const vendorMap={};
+const vendorSet=new Set();
 data.forEach(d=>{
 if(!d.Vendor) return;
-const normVendor=normalize(d.Vendor);
-if(normVendor.includes(normInput)){
-vendorMap[d.Vendor]=(vendorMap[d.Vendor]||0)+1;
+if(normalize(d.Vendor).includes(normInput)){
+vendorSet.add(d.Vendor);
 }
 });
-return Object.entries(vendorMap).sort((a,b)=>b[1]-a[1]);
+return Array.from(vendorSet);
 }
 
-function showVendorModal(options,amountVal){
+function showVendorModal(list){
 const container=document.getElementById("vendorOptions");
 container.innerHTML="";
-options.forEach(([vendor,count])=>{
+list.forEach(vendor=>{
 const div=document.createElement("div");
 div.className="vendor-option";
-div.innerText=`${vendor} (${count} transactions)`;
+div.innerText=vendor;
 div.onclick=()=>{
-applyVendorFilter(vendor,amountVal);
+applyVendorFilter(vendor);
 closeVendorModal();
 };
 container.appendChild(div);
@@ -240,10 +245,9 @@ function closeVendorModal(){
 document.getElementById("vendorModal").style.display="none";
 }
 
-function applyVendorFilter(vendor,amountVal){
+function applyVendorFilter(vendor){
 vendorFilterActive=true;
 vendorFilterText=vendor.toLowerCase();
-amountFilter=amountVal?parseFloat(amountVal):null;
 currentIndex=0;
 let first=findNextIndex(0,1);
 if(first!==-1) currentIndex=first;
@@ -255,15 +259,15 @@ const vendorInput=document.getElementById("searchVendor").value.trim();
 const amountVal=document.getElementById("searchAmount").value;
 
 if(vendorInput){
-const suggestions=getVendorSuggestions(vendorInput);
-if(suggestions.length===0){
+const matches=getVendorSuggestions(vendorInput);
+if(matches.length===0){
 alert("No matching vendors found.");
 return;
 }
-if(suggestions.length===1){
-applyVendorFilter(suggestions[0][0],amountVal);
+if(matches.length===1){
+applyVendorFilter(matches[0]);
 } else {
-showVendorModal(suggestions,amountVal);
+showVendorModal(matches);
 }
 return;
 }
@@ -278,12 +282,40 @@ return;
 alert("Enter Vendor or Amount.");
 }
 
+function clearSearch(){
+vendorFilterActive=false;
+vendorFilterText="";
+amountFilter=null;
+document.getElementById("searchVendor").value="";
+document.getElementById("searchAmount").value="";
+currentIndex=0;
+showCard();
+}
+
+function resetAllFilters(){
+filterUncategorized=false;
+filterAttachment=false;
+vendorFilterActive=false;
+vendorFilterText="";
+amountFilter=null;
+document.getElementById("uncatToggle").classList.remove("toggleActive");
+document.getElementById("attachmentToggle").classList.remove("toggleActive");
+document.getElementById("searchVendor").value="";
+document.getElementById("searchAmount").value="";
+currentIndex=0;
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
+showCard();
+saveProgress();
+}
+
+/* Navigation + Filters */
+
 function passesFilters(item){
 if(filterUncategorized && item.Category) return false;
 if(filterAttachment && !item.Receipt) return false;
 if(vendorFilterActive){
 if(!item.Vendor.toLowerCase().includes(vendorFilterText)) return false;
-if(amountFilter!=null && Math.abs(item.Amount-amountFilter)>0.01) return false;
 }
 return true;
 }
@@ -307,14 +339,7 @@ let prev=findNextIndex(currentIndex-1,-1);
 if(prev!==-1){currentIndex=prev;showCard();}
 }
 
-function categorize(name){
-data[currentIndex].Category=name;
-data[currentIndex].Splits=[];
-updateTotals();
-updateProgress();
-saveProgress();
-goNext();
-}
+/* Category + Split */
 
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
@@ -334,46 +359,16 @@ splitBtn.onclick=showSplitUI;
 div.appendChild(splitBtn);
 }
 
-function showSplitUI(){
-const item=data[currentIndex];
-let html=`<div class="splitBox">
-<strong>Total: $${item.Amount.toFixed(2)}</strong><br>
-<div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div>`;
-categories.forEach((c,i)=>{
-html+=`${c.name}<br>
-<input type="number" step="0.01" id="split_${i}" oninput="updateRemaining()"><br><br>`;
-});
-html+=`<button onclick="saveSplit()">Save Split</button></div>`;
-splitContainer.innerHTML=html;
-}
-
-function updateRemaining(){
-const item=data[currentIndex];
-let total=0;
-categories.forEach((c,i)=>{
-total+=parseFloat(document.getElementById("split_"+i).value)||0;
-});
-const remaining=item.Amount-total;
-const el=document.getElementById("remainingBalance");
-el.innerText="Remaining: $"+remaining.toFixed(2);
-el.style.color=Math.abs(remaining)<0.01?"green":remaining<0?"red":"orange";
-}
-
-function saveSplit(){
-const item=data[currentIndex];
-let total=0,splits=[];
-categories.forEach((c,i)=>{
-const val=parseFloat(document.getElementById("split_"+i).value)||0;
-if(val>0){splits.push({Category:c.name,Amount:val});total+=val;}
-});
-if(Math.abs(total-item.Amount)>0.01){alert("Split must equal total.");return;}
-item.Splits=splits;
-item.Category="SPLIT";
+function categorize(name){
+data[currentIndex].Category=name;
+data[currentIndex].Splits=[];
 updateTotals();
 updateProgress();
 saveProgress();
 goNext();
 }
+
+/* Receipt */
 
 function attachReceipt(e){
 const file=e.target.files[0];
@@ -387,6 +382,13 @@ showCard();
 reader.readAsDataURL(file);
 }
 
+function viewReceipt(){
+const receipt=data[currentIndex].Receipt;
+if(!receipt)return;
+const win=window.open();
+win.document.write(`<iframe src="${receipt.data}" style="width:100%;height:100%"></iframe>`);
+}
+
 function showCard(){
 if(!data.length)return;
 const item=data[currentIndex];
@@ -395,7 +397,8 @@ cardMeta.innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
 `Amount: $${item.Amount.toFixed(2)}<br>`+
-(item.Receipt?`📎 Receipt Attached<br>`:"")+
+(item.Receipt?`📎 Receipt Attached<br>
+<button class="viewBtn" onclick="viewReceipt()">View Receipt</button><br>`:"")+
 `<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">`;
 currentCategory.innerText=
 item.Splits.length?"Split into multiple categories":
@@ -403,23 +406,7 @@ item.Splits.length?"Split into multiple categories":
 splitContainer.innerHTML="";
 }
 
-function toggleUncategorized(){
-filterUncategorized=!filterUncategorized;
-uncatToggle.classList.toggle("toggleActive");
-currentIndex=0;
-let first=findNextIndex(0,1);
-if(first!==-1) currentIndex=first;
-showCard();
-}
-
-function toggleAttachment(){
-filterAttachment=!filterAttachment;
-attachmentToggle.classList.toggle("toggleActive");
-currentIndex=0;
-let first=findNextIndex(0,1);
-if(first!==-1) currentIndex=first;
-showCard();
-}
+/* Totals */
 
 function updateTotals(){
 let totalsObj={};
