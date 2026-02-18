@@ -1,3 +1,5 @@
+latest 18
+
 latest 17
 
 <!DOCTYPE html>
@@ -606,21 +608,59 @@ function showMapping(){
   const panel=document.getElementById("mappingPanel");
   panel.style.display="block";
 
+  const defaultCategoryHeader = headers.find(h=>String(h).trim().toLowerCase()==="category") || "";
+
   panel.innerHTML=`
     <h4>Map Columns</h4>
     Title:<br>${dropdown("mapTitle")}<br><br>
     Amount:<br>${dropdown("mapAmount")}<br><br>
     Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
     Date (optional):<br>${dropdown("mapDate",true)}<br><br>
+    Category (optional):<br>${dropdown("mapCategory",true,defaultCategoryHeader)}<br><br>
     <button onclick="confirmMapping()">Confirm</button>
   `;
 }
 
-function dropdown(id,allowEmpty=false){
+function dropdown(id,allowEmpty=false,selectedValue=""){
   let html=`<select id="${id}">`;
   if(allowEmpty) html+=`<option value="">--None--</option>`;
-  headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+  headers.forEach(h=>{
+    const selected = h===selectedValue ? " selected" : "";
+    html+=`<option value="${h}"${selected}>${h}</option>`;
+  });
   return html+="</select>";
+}
+
+function resolveCategory(rawCategory){
+  const value = String(rawCategory||"").trim();
+  if(!value) return "";
+
+  const normalizedValue = value.toLowerCase();
+  const direct = categories.find(c=>c.name.toLowerCase()===normalizedValue);
+  if(direct) return direct.name;
+
+  const aliases = {
+    "ingredients": "COGS – Ingredients",
+    "cogs ingredients": "COGS – Ingredients",
+    "packaging": "COGS – Packaging",
+    "cogs packaging": "COGS – Packaging",
+    "resale inventory": "COGS – Resale Inventory",
+    "production supplies": "COGS – Production Supplies",
+    "supplier shipping": "COGS – Shipping from Suppliers",
+    "shipping from suppliers": "COGS – Shipping from Suppliers",
+    "marketing": "Advertising & Marketing",
+    "advertising": "Advertising & Marketing",
+    "software": "Website & Software",
+    "merchant fees": "Merchant Processing Fees",
+    "processing fees": "Merchant Processing Fees",
+    "insurance": "Insurance",
+    "utilities": "Utilities",
+    "professional services": "Professional Services",
+    "equipment": "Equipment",
+    "needs review": "Needs Review"
+  };
+
+  return aliases[normalizedValue] || value;
 }
 
 function confirmMapping(){
@@ -628,13 +668,14 @@ function confirmMapping(){
   const a=document.getElementById("mapAmount").value;
   const v=document.getElementById("mapVendor").value;
   const d=document.getElementById("mapDate").value;
+  const c=document.getElementById("mapCategory").value;
 
   data=rawRows.map(r=>({
     Title:r[t]||"",
     Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
     Vendor:v?r[v]||"":"",
-    Date:d?r[d]||"":"",
-    Category:"",
+    Date:d?r[d]||"",
+    Category:c?resolveCategory(r[c]):"",
     Receipt:"",
     Splits:[]
   }));
