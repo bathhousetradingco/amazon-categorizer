@@ -1,4 +1,4 @@
-
+22
 
 <!DOCTYPE html>
 <html>
@@ -38,9 +38,7 @@ input[type="number"], input[type="text"]{
   border:1px solid #ddd;
 }
 .navBtn { width:48%; background:#444; color:white; }
-.category-row { display:flex; align-items:center; margin-bottom:6px; }
-.category-btn { flex:1; color:white; }
-.info-btn { width:40px; margin-left:6px; background:#ddd; font-weight:bold; }
+.category-btn { width:100%; margin-bottom:6px; color:white; }
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
@@ -48,24 +46,6 @@ input[type="number"], input[type="text"]{
 .progress-bar { height:100%; background:#2e7d32; width:0%; }
 .small { font-size:13px; color:#555; }
 .totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
-.modal {
-  display:none;
-  position:fixed;
-  z-index:1000;
-  left:0; top:0;
-  width:100%; height:100%;
-  background:rgba(0,0,0,.6);
-}
-.modal-content {
-  background:white;
-  margin:10% auto;
-  padding:20px;
-  width:95%;
-  max-width:600px;
-  border-radius:14px;
-  max-height:90vh;
-  overflow:auto;
-}
 </style>
 </head>
 
@@ -78,6 +58,7 @@ input[type="number"], input[type="text"]{
 <div id="mappingPanel" class="panel" style="display:none;"></div>
 
 <div id="app" style="display:none;">
+
 <div class="panel">
 <div class="progress-bar-container">
 <div id="progressBar" class="progress-bar"></div>
@@ -107,14 +88,17 @@ input[type="number"], input[type="text"]{
 
 <button onclick="exportExcel()">Export to Excel</button>
 <button onclick="clearProgress()" style="background:#c62828;color:white;margin-top:10px;">Reset Saved Progress</button>
+
 </div>
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v12";
+const STORAGE_KEY = "bathhouse_categorizer_v13";
 
-let rawRows=[], data=[], headers=[];
-let currentIndex=0;
+let rawRows = [];
+let data = [];
+let headers = [];
+let currentIndex = 0;
 
 const categories = [
 {name:"COGS - Ingredients",class:"cogs"},
@@ -132,26 +116,46 @@ const categories = [
 {name:"Needs Review",class:"special"}
 ];
 
-document.getElementById("csvFile").addEventListener("change",function(e){
+document.getElementById("csvFile").addEventListener("change", function(e){
+
   localStorage.removeItem(STORAGE_KEY);
-  const file=e.target.files[0];
-  if(!file)return;
+
+  const file = e.target.files[0];
+  if(!file) return;
 
   Papa.parse(file,{
     header:true,
     skipEmptyLines:true,
+    worker:true,
     complete:function(res){
-      rawRows=res.data;
-      headers=Object.keys(rawRows[0]||{});
+
+      if(!res.data || !res.data.length){
+        alert("CSV failed to parse.");
+        return;
+      }
+
+      rawRows = res.data;
+      headers = Object.keys(rawRows[0]);
+
+      if(!headers.length){
+        alert("No headers detected.");
+        return;
+      }
+
       showMapping();
+    },
+    error:function(err){
+      alert("Parse error: " + err.message);
     }
   });
+
 });
 
 function showMapping(){
-  const panel=document.getElementById("mappingPanel");
-  panel.style.display="block";
-  panel.innerHTML=`
+  const panel = document.getElementById("mappingPanel");
+  panel.style.display = "block";
+
+  panel.innerHTML = `
     <h4>Map Columns</h4>
     Title:<br>${dropdown("mapTitle")}<br><br>
     Amount:<br>${dropdown("mapAmount")}<br><br>
@@ -162,11 +166,14 @@ function showMapping(){
   `;
 }
 
-function dropdown(id,allowEmpty=false){
-  let html=`<select id="${id}">`;
-  if(allowEmpty) html+=`<option value="">--None--</option>`;
-  headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
-  return html+="</select>";
+function dropdown(id, allowEmpty=false){
+  let html = `<select id="${id}">`;
+  if(allowEmpty) html += `<option value="">--None--</option>`;
+  headers.forEach(h => {
+    html += `<option value="${h}">${h}</option>`;
+  });
+  html += `</select>`;
+  return html;
 }
 
 function normalizeCategory(cat){
@@ -178,22 +185,23 @@ function normalizeCategory(cat){
 }
 
 function confirmMapping(){
-  const t=document.getElementById("mapTitle").value;
-  const a=document.getElementById("mapAmount").value;
-  const v=document.getElementById("mapVendor").value;
-  const d=document.getElementById("mapDate").value;
-  const c=document.getElementById("mapExistingCategory").value;
 
-  data=rawRows.map(r=>({
-    Title:r[t]||"",
-    Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
-    Vendor:v?r[v]||"":"",
-    Date:d?r[d]||"",
+  const t = document.getElementById("mapTitle").value;
+  const a = document.getElementById("mapAmount").value;
+  const v = document.getElementById("mapVendor").value;
+  const d = document.getElementById("mapDate").value;
+  const c = document.getElementById("mapExistingCategory").value;
+
+  data = rawRows.map(r => ({
+    Title: r[t] || "",
+    Amount: parseFloat(String(r[a] || "").replace(/[$,]/g,"")) || 0,
+    Vendor: v ? (r[v] || "") : "",
+    Date: d ? (r[d] || "") : "",
     Category: normalizeCategory(c ? r[c] : "")
   }));
 
-  document.getElementById("mappingPanel").style.display="none";
-  document.getElementById("app").style.display="block";
+  document.getElementById("mappingPanel").style.display = "none";
+  document.getElementById("app").style.display = "block";
 
   renderCategories();
   showCard();
@@ -203,77 +211,105 @@ function confirmMapping(){
 }
 
 function renderCategories(){
-  const div=document.getElementById("categoryButtons");
-  div.innerHTML="";
-  categories.forEach(c=>{
-    const btn=document.createElement("button");
-    btn.className="category-btn "+c.class;
-    btn.innerText=c.name;
-    btn.onclick=()=>categorize(c.name);
+  const div = document.getElementById("categoryButtons");
+  div.innerHTML = "";
+  categories.forEach(c => {
+    const btn = document.createElement("button");
+    btn.className = "category-btn " + c.class;
+    btn.innerText = c.name;
+    btn.onclick = () => categorize(c.name);
     div.appendChild(btn);
   });
 }
 
 function categorize(name){
-  data[currentIndex].Category=name;
-  if(currentIndex<data.length-1) currentIndex++;
+  data[currentIndex].Category = name;
+  if(currentIndex < data.length-1) currentIndex++;
   showCard();
   updateTotals();
   updateProgress();
   saveProgress();
 }
 
-function goBack(){ if(currentIndex>0){currentIndex--; showCard(); saveProgress();} }
-function goNext(){ if(currentIndex<data.length-1){currentIndex++; showCard(); saveProgress();} }
+function goBack(){
+  if(currentIndex > 0){
+    currentIndex--;
+    showCard();
+    saveProgress();
+  }
+}
+
+function goNext(){
+  if(currentIndex < data.length-1){
+    currentIndex++;
+    showCard();
+    saveProgress();
+  }
+}
 
 function showCard(){
   if(!data.length) return;
-  const item=data[currentIndex];
-  document.getElementById("cardTitle").innerText=item.Title;
-  document.getElementById("cardMeta").innerHTML=
-    (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-    (item.Date?`Date: ${item.Date}<br>`:"")+
+
+  const item = data[currentIndex];
+
+  document.getElementById("cardTitle").innerText = item.Title;
+
+  document.getElementById("cardMeta").innerHTML =
+    (item.Vendor ? `Vendor: ${item.Vendor}<br>` : "") +
+    (item.Date ? `Date: ${item.Date}<br>` : "") +
     `Amount: $${Number(item.Amount).toFixed(2)}`;
-  document.getElementById("currentCategory").innerText=
-    "Current: "+(item.Category||"—");
+
+  document.getElementById("currentCategory").innerText =
+    "Current: " + (item.Category || "—");
 }
 
 function updateTotals(){
-  let totals={};
-  categories.forEach(c=>totals[c.name]=0);
-  data.forEach(d=>{
-    if(d.Category && totals[d.Category]!=null){
-      totals[d.Category]+=Number(d.Amount||0);
+  let totals = {};
+  categories.forEach(c => totals[c.name] = 0);
+
+  data.forEach(d => {
+    if(d.Category && totals[d.Category] != null){
+      totals[d.Category] += Number(d.Amount || 0);
     }
   });
-  const div=document.getElementById("totals");
-  div.innerHTML="";
-  Object.keys(totals).forEach(k=>{
-    div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+
+  const div = document.getElementById("totals");
+  div.innerHTML = "";
+
+  Object.keys(totals).forEach(k => {
+    div.innerHTML += `
+      <div class="totalRow">
+        <div>${k}</div>
+        <div>$${totals[k].toFixed(2)}</div>
+      </div>
+    `;
   });
 }
 
 function updateProgress(){
-  const total=data.length;
-  const done=data.filter(d=>d.Category).length;
-  const percent=total?Math.round((done/total)*100):0;
-  document.getElementById("progressBar").style.width=percent+"%";
-  document.getElementById("progressText").innerText=
-  `${done} of ${total} categorized (${percent}%)`;
+  const total = data.length;
+  const done = data.filter(d => d.Category).length;
+  const percent = total ? Math.round((done/total)*100) : 0;
+
+  document.getElementById("progressBar").style.width = percent + "%";
+  document.getElementById("progressText").innerText =
+    `${done} of ${total} categorized (${percent}%)`;
 }
 
 function saveProgress(){
-  localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({data, currentIndex}));
 }
 
 function loadProgress(){
-  const saved=localStorage.getItem(STORAGE_KEY);
-  if(!saved)return;
-  const parsed=JSON.parse(saved);
-  data=parsed.data||[];
-  currentIndex=parsed.currentIndex||0;
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if(!saved) return;
+
+  const parsed = JSON.parse(saved);
+  data = parsed.data || [];
+  currentIndex = parsed.currentIndex || 0;
+
   if(data.length){
-    document.getElementById("app").style.display="block";
+    document.getElementById("app").style.display = "block";
     renderCategories();
     showCard();
     updateTotals();
@@ -287,13 +323,13 @@ function clearProgress(){
 }
 
 function exportExcel(){
-  const ws=XLSX.utils.json_to_sheet(data);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"Categorized");
-  XLSX.writeFile(wb,"Categorized.xlsx");
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Categorized");
+  XLSX.writeFile(wb, "Categorized.xlsx");
 }
 
-window.onload=loadProgress;
+window.onload = loadProgress;
 
 </script>
 </body>
