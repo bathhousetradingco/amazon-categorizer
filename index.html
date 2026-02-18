@@ -1,4 +1,4 @@
-latest 13
+Latest 14
 
 <!DOCTYPE html>
 <html>
@@ -128,27 +128,20 @@ label { user-select:none; }
 
 <div id="app" style="display:none;">
 
-  <!-- SEARCH / FILTER PANEL -->
+  <!-- ✅ NEW: SEARCH / FILTER PANEL -->
   <div class="panel">
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
       <b>Find:</b>
       <input id="searchAmount" type="number" step="0.01" placeholder="Amount (e.g. 187.42)">
       <button onclick="searchByAmount()">Go</button>
       <button onclick="jumpToNextReceipt()">Next With Receipt</button>
-
       <label style="display:flex;gap:8px;align-items:center;margin-left:auto;">
         <input id="receiptOnlyToggle" type="checkbox" onchange="onReceiptFilterChange()">
         Navigate receipts only
       </label>
-
-      <!-- ✅ NEW -->
-      <label style="display:flex;gap:8px;align-items:center;">
-        <input id="uncategorizedToggle" type="checkbox">
-        Navigate Uncategorized only
-      </label>
     </div>
     <div class="small" style="margin-top:8px;">
-      Tip: Toggle “Navigate receipts only” or “Navigate Uncategorized only” to skip using Back/Next.
+      Tip: Turn on “Navigate receipts only” to jump through just the 📎 items using Back/Next.
     </div>
   </div>
 
@@ -165,10 +158,10 @@ label { user-select:none; }
     <div id="cardMeta" class="small"></div>
     <div id="currentCategory" class="small" style="margin-top:6px;"></div>
 
-    <!-- suggestion box -->
+    <!-- ✅ suggestion box -->
     <div id="suggestionBox" class="small" style="margin-top:10px;"></div>
 
-    <!-- Receipt + Split Controls -->
+    <!-- ✅ Receipt + Split Controls -->
     <div style="margin-top:10px;">
       <input type="file" id="receiptUpload" accept="image/*" style="display:none;">
       <button onclick="triggerReceiptUpload()">📎 Upload Receipt</button>
@@ -416,15 +409,78 @@ function generateSuggestion(title, vendor){
     {cat:"Equipment", words:["mold","molds","mixer","shelving","shelf","printer","label printer","table","rack","scale","dehumidifier","heat gun"]}
   ];
 
+  function whyNotOthers(chosen){
+    const commonNot = [];
+
+    if(chosen.startsWith("COGS")){
+      commonNot.push(`• Not "Equipment": COGS items are typically used up (or become part of a sold unit). Equipment is durable/reusable for months+.`);
+    } else if(chosen === "Equipment"){
+      commonNot.push(`• Not "COGS": durable tools/machines aren’t consumed per unit sold; they support production over time.`);
+    }
+
+    if(chosen === "COGS – Packaging"){
+      commonNot.push(`• Not "COGS – Production Supplies": packaging goes with the product or ships the order; production supplies are used during making/cleanup and don’t leave with the customer.`);
+    }
+    if(chosen === "COGS – Production Supplies"){
+      commonNot.push(`• Not "COGS – Packaging": production supplies are used behind-the-scenes and don’t ship out with customer orders.`);
+    }
+
+    if(chosen.startsWith("COGS")){
+      commonNot.push(`• Not an operating expense (like Utilities/Insurance/Software): those keep the business running but don’t tie directly to producing/fulfilling a sellable item.`);
+    } else {
+      commonNot.push(`• Not COGS: operating expenses support the business overall rather than being tied to a specific product or shipment.`);
+    }
+
+    if(chosen !== "Merchant Processing Fees"){
+      commonNot.push(`• Not "Merchant Processing Fees": those usually appear as Stripe/Square/Shopify Payments fee language rather than a product/material description.`);
+    }
+
+    return commonNot.join("\n");
+  }
+
   for(const r of rules){
     for(const w of r.words){
       if(text.includes(w)){
-        return { category:r.cat, explanation:`Matched "${w}"` };
+        const confidence =
+          (w.includes("shopify payments") || w.includes("label printer") || w.includes("isopropyl") || w.includes("taxjar"))
+          ? "High"
+          : (w.length >= 6 ? "Medium-High" : "Medium");
+
+        return {
+          category: r.cat,
+          explanation:
+`Matched keyword "${w}" in the title/vendor.
+
+Why this category fits:
+• "${w}" is a strong clue this purchase is typically used as: ${r.cat}.
+• This suggestion is based on the description text (title/vendor), not the dollar amount.
+
+Why it's NOT other categories:
+${whyNotOthers(r.cat)}
+
+Confidence: ${confidence}`
+        };
       }
     }
   }
 
-  return { category:"Needs Review", explanation:"No keyword match." };
+  return {
+    category: "Needs Review",
+    explanation:
+`No strong keyword match was detected in the title/vendor.
+
+Why this is "Needs Review":
+• The description doesn’t clearly indicate Ingredients vs Packaging vs Equipment vs an Operating Expense.
+• Some vendors (Amazon/Walmart) often contain mixed purchases that need a receipt to split correctly.
+
+What to do next:
+• If you can, open the receipt/line-item detail.
+• If it’s clearly a material that goes into product → Ingredients.
+• If it’s something customers receive (container/label/shipping supplies) → Packaging.
+• If it’s durable/reusable (mixer, printer, shelving) → Equipment.
+
+Confidence: Low`
+  };
 }
 
 function renderSuggestion(item){
@@ -443,8 +499,18 @@ function renderSuggestion(item){
       <b>Suggested:</b> ${s.category}
       <br><br>
       <button onclick="acceptSuggestion('${s.category.replace(/'/g,"&#39;")}')">Accept Suggestion</button>
+      <button onclick="toggleExplanation()">▶ Show detailed reasoning</button>
+      <div id="explanationPanel" style="display:none;margin-top:10px;font-size:13px;line-height:1.35;">
+        ${s.explanation.replace(/\n/g,"<br>")}
+      </div>
     </div>
   `;
+}
+
+function toggleExplanation(){
+  const p = document.getElementById("explanationPanel");
+  if(!p) return;
+  p.style.display = (p.style.display === "none" || !p.style.display) ? "block" : "none";
 }
 
 function acceptSuggestion(catName){
@@ -464,12 +530,14 @@ function acceptSuggestion(catName){
 }
 
 /* =========================================================
-   Search / Receipt filter
+   NEW: Search / Receipt filter
 ========================================================= */
 
 function onReceiptFilterChange(){
+  // Optional: if turning on and current item doesn't have a receipt, jump to next receipt
   const on = document.getElementById("receiptOnlyToggle").checked;
   if(on && data.length && !data[currentIndex].Receipt){
+    // try to find nearest receipt (forward first, then backward)
     for(let i=currentIndex+1;i<data.length;i++){
       if(data[i].Receipt){ currentIndex=i; showCard(); return; }
     }
@@ -483,7 +551,8 @@ function onReceiptFilterChange(){
 
 function searchByAmount(){
   if(!data.length) return;
-  const amt = parseFloat(document.getElementById("searchAmount").value);
+  const raw = document.getElementById("searchAmount").value;
+  const amt = parseFloat(raw);
   if(isNaN(amt)){
     alert("Enter a valid amount (e.g. 187.42).");
     return;
@@ -514,41 +583,20 @@ function jumpToNextReceipt(){
 }
 
 /* =========================================================
-   ✅ FIXED: CSV upload + mapping (robust headers)
+   CSV upload + mapping (unchanged)
 ========================================================= */
-
-function getFirstNonEmptyRow(rows){
-  for(let i=0;i<rows.length;i++){
-    const r = rows[i];
-    if(r && typeof r === "object" && Object.keys(r).length > 0){
-      // Also ensure at least one value is non-empty
-      const hasSomeValue = Object.values(r).some(v => String(v ?? "").trim() !== "");
-      if(hasSomeValue) return r;
-    }
-  }
-  return null;
-}
 
 document.getElementById("csvFile").addEventListener("change",function(e){
   localStorage.removeItem(STORAGE_KEY);
   const file=e.target.files[0];
-  if(!file) return;
+  if(!file)return;
 
   Papa.parse(file,{
     header:true,
     skipEmptyLines:true,
     complete:function(res){
-      rawRows = res.data || [];
-
-      const first = getFirstNonEmptyRow(rawRows);
-      headers = Object.keys(first || {});
-
-      if(!headers.length){
-        const errs = (res.errors||[]).slice(0,3).map(er=>`${er.code||"ERR"}: ${er.message||""}`).join("\n");
-        alert("Could not detect CSV headers/columns.\n\nTry re-exporting as CSV with headers.\n\nParser errors:\n" + (errs || "(none)"));
-        return;
-      }
-
+      rawRows=res.data;
+      headers=Object.keys(rawRows[0]||{});
       showMapping();
     }
   });
@@ -564,7 +612,6 @@ function showMapping(){
     Amount:<br>${dropdown("mapAmount")}<br><br>
     Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
     Date (optional):<br>${dropdown("mapDate",true)}<br><br>
-    Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
     <button onclick="confirmMapping()">Confirm</button>
   `;
 }
@@ -581,14 +628,13 @@ function confirmMapping(){
   const a=document.getElementById("mapAmount").value;
   const v=document.getElementById("mapVendor").value;
   const d=document.getElementById("mapDate").value;
-  const c=document.getElementById("mapCategory").value;
 
   data=rawRows.map(r=>({
     Title:r[t]||"",
     Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
     Vendor:v?r[v]||"":"",
-    Date:d?r[d]||"",
-    Category:c?(r[c]||""):"",
+    Date:d?r[d]||"":"",
+    Category:"",
     Receipt:"",
     Splits:[]
   }));
@@ -610,7 +656,7 @@ function confirmMapping(){
 function triggerReceiptUpload(){
   if(!data.length) return;
   const input = document.getElementById("receiptUpload");
-  input.value = "";
+  input.value = ""; // allow re-upload same file
   input.click();
 }
 
@@ -664,10 +710,6 @@ function viewReceipt(){
     img.style.transform=zoom?"scale(2)":"scale(1)";
     img.style.cursor=zoom?"zoom-out":"zoom-in";
   };
-}
-
-function closeModal(){
-  document.getElementById("infoModal").style.display="none";
 }
 
 /* =========================================================
@@ -784,14 +826,13 @@ function showInfo(cat){
   document.getElementById("infoModal").style.display="block";
 }
 
-/* =========================================================
-   Navigation + card rendering (with Uncategorized filter)
-========================================================= */
-
-function isUncategorized(item){
-  // Uncategorized means: no Category AND no splits
-  return !item.Category && !(item.Splits && item.Splits.length);
+function closeModal(){
+  document.getElementById("infoModal").style.display="none";
 }
+
+/* =========================================================
+   Navigation + card rendering
+========================================================= */
 
 function categorize(name){
   const item = data[currentIndex];
@@ -814,33 +855,51 @@ function categorize(name){
 function goBack(){
   if(!data.length) return;
   const receiptsOnly = document.getElementById("receiptOnlyToggle").checked;
-  const uncOnly = document.getElementById("uncategorizedToggle").checked;
 
-  for(let i=currentIndex-1;i>=0;i--){
-    if(receiptsOnly && !data[i].Receipt) continue;
-    if(uncOnly && !isUncategorized(data[i])) continue;
-    currentIndex=i;
-    showCard();
-    saveProgress();
+  if(!receiptsOnly){
+    if(currentIndex>0){
+      currentIndex--;
+      showCard();
+      saveProgress();
+    }
     return;
   }
-  alert("No earlier matching transactions found.");
+
+  // receipts-only navigation
+  for(let i=currentIndex-1;i>=0;i--){
+    if(data[i].Receipt){
+      currentIndex=i;
+      showCard();
+      saveProgress();
+      return;
+    }
+  }
+  alert("No earlier receipts found.");
 }
 
 function goNext(){
   if(!data.length) return;
   const receiptsOnly = document.getElementById("receiptOnlyToggle").checked;
-  const uncOnly = document.getElementById("uncategorizedToggle").checked;
 
-  for(let i=currentIndex+1;i<data.length;i++){
-    if(receiptsOnly && !data[i].Receipt) continue;
-    if(uncOnly && !isUncategorized(data[i])) continue;
-    currentIndex=i;
-    showCard();
-    saveProgress();
+  if(!receiptsOnly){
+    if(currentIndex<data.length-1){
+      currentIndex++;
+      showCard();
+      saveProgress();
+    }
     return;
   }
-  alert("No more matching transactions found.");
+
+  // receipts-only navigation
+  for(let i=currentIndex+1;i<data.length;i++){
+    if(data[i].Receipt){
+      currentIndex=i;
+      showCard();
+      saveProgress();
+      return;
+    }
+  }
+  alert("No more receipts found.");
 }
 
 function showCard(){
@@ -851,6 +910,7 @@ function showCard(){
 
   const item=data[currentIndex];
 
+  // normalize older saves
   if(!("Receipt" in item)) item.Receipt="";
   if(!("Splits" in item) || !Array.isArray(item.Splits)) item.Splits=[];
 
@@ -886,8 +946,9 @@ function updateTotals(){
         }
       });
     } else if(d.Category){
-      if(totals[d.Category]==null) totals[d.Category]=0; // in case imported category doesn't match list
-      totals[d.Category]+=Number(d.Amount||0);
+      if(totals[d.Category]!=null){
+        totals[d.Category]+=Number(d.Amount||0);
+      }
     }
   });
 
@@ -922,6 +983,7 @@ function loadProgress(){
   data=parsed.data||[];
   currentIndex=parsed.currentIndex||0;
 
+  // normalize older saves
   data.forEach(r=>{
     if(!("Receipt" in r)) r.Receipt="";
     if(!("Splits" in r) || !Array.isArray(r.Splits)) r.Splits=[];
