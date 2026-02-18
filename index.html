@@ -1,4 +1,4 @@
-42
+43
 <!DOCTYPE html>
 <html>
 <head>
@@ -24,11 +24,9 @@ input[type="number"], input[type="text"], select { padding:10px; border-radius:1
 .progress-bar { height:100%; background:#2e7d32; width:0%;}
 .small { font-size:13px; color:#555;}
 .totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0;}
-.toggleBtn { background:#777; color:white; width:100%; margin-bottom:8px;}
-.toggleActive { background:#4caf50 !important;}
-.clearBtn { background:#c62828; color:white; margin-top:8px;}
 .splitBox { background:#fafafa; padding:10px; border-radius:10px; margin-top:10px;}
 .viewBtn { background:#1565c0; color:white; margin-top:6px;}
+.clearBtn { background:#c62828; color:white; margin-top:8px;}
 </style>
 </head>
 
@@ -96,12 +94,17 @@ const categories=[
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
 if(!file)return;
+
 Papa.parse(file,{
 header:true,
 skipEmptyLines:true,
 complete:res=>{
-rawRows=res.data;
-headers=Object.keys(rawRows[0]);
+rawRows=res.data || [];
+headers=(res.meta.fields || Object.keys(rawRows[0] || {})).map(h=>h.trim());
+if(!headers.length){
+alert("No headers detected. Please check your CSV format.");
+return;
+}
 showMapping();
 }
 });
@@ -129,15 +132,17 @@ return html;
 
 function confirmMapping(){
 const t=mapTitle.value,a=mapAmount.value,v=mapVendor.value,d=mapDate.value,c=mapCategory.value;
+
 data=rawRows.map(r=>({
 Title:r[t]||"",
 Amount:parseFloat(String(r[a]||"").replace(/[$,]/g,""))||0,
 Vendor:v?r[v]||"":"",
-Date:d?r[d]:"",
+Date:d?r[d]||"",
 Category:c?r[c]||"",
 Splits:[],
 Receipt:null
 }));
+
 mappingPanel.style.display="none";
 app.style.display="block";
 renderCategories();
@@ -153,7 +158,7 @@ categories.forEach(cat=>{
 const btn=document.createElement("button");
 btn.className="category-btn "+cat.class;
 btn.innerText=cat.name;
-btn.onclick=()=>{ categorize(cat.name); };
+btn.onclick=()=>categorize(cat.name);
 div.appendChild(btn);
 });
 const splitBtn=document.createElement("button");
