@@ -1,4 +1,4 @@
-38
+39
 <!DOCTYPE html>
 <html>
 <head>
@@ -14,7 +14,7 @@ body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; margin:0; paddin
 h2 { text-align:center; }
 .panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px;}
 button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-weight:600;}
-input[type="number"], input[type="text"] { padding:10px; border-radius:10px; border:1px solid #ddd;}
+input[type="number"], input[type="text"], select { padding:10px; border-radius:10px; border:1px solid #ddd; width:100%;}
 .navBtn { width:48%; background:#444; color:white;}
 .category-btn { width:100%; margin-bottom:6px; color:white;}
 .cogs{background:#2e7d32;}
@@ -27,10 +27,9 @@ input[type="number"], input[type="text"] { padding:10px; border-radius:10px; bor
 .toggleBtn { background:#777; color:white; width:100%; margin-bottom:8px;}
 .toggleActive { background:#4caf50 !important;}
 .splitBox { background:#fafafa; padding:10px; border-radius:10px; margin-top:10px;}
-.clearBtn { background:#c62828; color:white; margin-top:8px; }
-.viewBtn { background:#1565c0; color:white; margin-top:6px; }
+.clearBtn { background:#c62828; color:white; margin-top:8px;}
+.viewBtn { background:#1565c0; color:white; margin-top:6px;}
 
-/* Vendor Modal */
 #vendorModal {
 display:none;
 position:fixed;
@@ -113,22 +112,21 @@ Amount:<br>
 
 </div>
 
-<!-- Vendor Modal -->
 <div id="vendorModal">
-  <div id="vendorModalContent">
-    <h4>Select Vendor</h4>
-    <div id="vendorOptions"></div>
-    <button class="clearBtn" onclick="closeVendorModal()">Cancel</button>
-  </div>
+<div id="vendorModalContent">
+<h4>Select Vendor</h4>
+<div id="vendorOptions"></div>
+<button class="clearBtn" onclick="closeVendorModal()">Cancel</button>
+</div>
 </div>
 
 <script>
 
-const STORAGE_KEY="bathhouse_categorizer_v25";
+const STORAGE_KEY="bathhouse_categorizer_v26";
 
 let rawRows=[],data=[],headers=[],currentIndex=0;
 let filterUncategorized=false,filterAttachment=false;
-let vendorFilterActive=false,vendorFilterText="";
+let vendorFilterActive=false,vendorFilterText="",amountFilter=null;
 
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
@@ -175,7 +173,7 @@ Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
 
 function dropdown(id,allowEmpty=false){
 let html=`<select id="${id}">`;
-if(allowEmpty)html+=`<option value="">--None--</option>`;
+if(allowEmpty) html+=`<option value="">--None--</option>`;
 headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
 html+=`</select>`;
 return html;
@@ -200,78 +198,116 @@ updateTotals();
 updateProgress();
 }
 
-function normalize(str){
-return str.toLowerCase().replace(/[^a-z0-9]/g,"");
-}
-
-function getVendorSuggestions(input){
-const normInput=normalize(input);
-const vendorSet=new Set();
-data.forEach(d=>{
-if(!d.Vendor) return;
-if(normalize(d.Vendor).includes(normInput)){
-vendorSet.add(d.Vendor);
-}
+function renderCategories(){
+const div=document.getElementById("categoryButtons");
+div.innerHTML="";
+categories.forEach(cat=>{
+const btn=document.createElement("button");
+btn.className="category-btn "+cat.class;
+btn.innerText=cat.name;
+btn.onclick=()=>categorize(cat.name);
+div.appendChild(btn);
 });
-return Array.from(vendorSet);
+const splitBtn=document.createElement("button");
+splitBtn.className="category-btn";
+splitBtn.style.background="#ff9800";
+splitBtn.innerText="Split Transaction";
+splitBtn.onclick=showSplitUI;
+div.appendChild(splitBtn);
 }
 
-function showVendorModal(list){
-const container=document.getElementById("vendorOptions");
-container.innerHTML="";
-list.forEach(vendor=>{
-const div=document.createElement("div");
-div.className="vendor-option";
-div.innerText=vendor;
-div.onclick=()=>{
-vendorFilterActive=true;
-vendorFilterText=vendor.toLowerCase();
-closeVendorModal();
-currentIndex=0;
+function categorize(name){
+data[currentIndex].Category=name;
+data[currentIndex].Splits=[];
+updateTotals();
+updateProgress();
 goNext();
-};
-container.appendChild(div);
+}
+
+function showSplitUI(){
+const item=data[currentIndex];
+let html=`<div class="splitBox">
+<strong>Total: $${item.Amount.toFixed(2)}</strong><br>
+<div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div><br>`;
+categories.forEach((c,i)=>{
+html+=`${c.name}<br>
+<input type="number" step="0.01" id="split_${i}" oninput="updateRemaining()"><br><br>`;
 });
-document.getElementById("vendorModal").style.display="flex";
+html+=`<button onclick="saveSplit()">Save Split</button></div>`;
+splitContainer.innerHTML=html;
 }
 
-function closeVendorModal(){
-document.getElementById("vendorModal").style.display="none";
+function updateRemaining(){
+const item=data[currentIndex];
+let total=0;
+categories.forEach((c,i)=>{
+total+=parseFloat(document.getElementById("split_"+i).value)||0;
+});
+const remaining=item.Amount-total;
+const el=document.getElementById("remainingBalance");
+el.innerText="Remaining: $"+remaining.toFixed(2);
+el.style.color=Math.abs(remaining)<0.01?"green":remaining<0?"red":"orange";
 }
 
-function searchTransaction(){
-const vendorInput=document.getElementById("searchVendor").value.trim();
-if(vendorInput){
-const matches=getVendorSuggestions(vendorInput);
-if(matches.length===0){
-alert("No matching vendors found.");
-return;
-}
-if(matches.length===1){
-vendorFilterActive=true;
-vendorFilterText=matches[0].toLowerCase();
-currentIndex=0;
+function saveSplit(){
+const item=data[currentIndex];
+let total=0,splits=[];
+categories.forEach((c,i)=>{
+const val=parseFloat(document.getElementById("split_"+i).value)||0;
+if(val>0){splits.push({Category:c.name,Amount:val});total+=val;}
+});
+if(Math.abs(total-item.Amount)>0.01){alert("Split must equal total.");return;}
+item.Splits=splits;
+item.Category="SPLIT";
+updateTotals();
+updateProgress();
 goNext();
-} else {
-showVendorModal(matches);
-}
-return;
-}
-alert("Enter Vendor.");
 }
 
-function clearSearch(){
-vendorFilterActive=false;
-vendorFilterText="";
-document.getElementById("searchVendor").value="";
-currentIndex=0;
+function attachReceipt(e){
+const file=e.target.files[0];
+if(!file)return;
+const reader=new FileReader();
+reader.onload=function(ev){
+data[currentIndex].Receipt={name:file.name,data:ev.target.result};
 showCard();
+};
+reader.readAsDataURL(file);
+}
+
+function viewReceipt(){
+const receipt=data[currentIndex].Receipt;
+if(!receipt)return;
+fetch(receipt.data)
+.then(res=>res.blob())
+.then(blob=>{
+const url=URL.createObjectURL(blob);
+window.open(url,"_blank");
+});
+}
+
+function showCard(){
+if(!data.length)return;
+const item=data[currentIndex];
+cardTitle.innerText=item.Title;
+cardMeta.innerHTML=
+(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+(item.Date?`Date: ${item.Date}<br>`:"")+
+`Amount: $${item.Amount.toFixed(2)}<br>`+
+(item.Receipt?`📎 Receipt Attached<br>
+<button class="viewBtn" onclick="viewReceipt()">View Receipt</button><br>`:"")+
+`<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">`;
+currentCategory.innerText=item.Splits.length?"Split into multiple categories":"Current: "+(item.Category||"—");
+splitContainer.innerHTML="";
 }
 
 function passesFilters(item){
 if(filterUncategorized && item.Category) return false;
 if(filterAttachment && !item.Receipt) return false;
-if(vendorFilterActive && !item.Vendor.toLowerCase().includes(vendorFilterText)) return false;
+if(vendorFilterActive){
+if(!item.Vendor.toLowerCase().includes(vendorFilterText)) return false;
+if(amountFilter!=null && Math.abs(item.Amount-amountFilter)>0.01) return false;
+}
 return true;
 }
 
@@ -294,76 +330,31 @@ let prev=findNextIndex(currentIndex-1,-1);
 if(prev!==-1){currentIndex=prev;showCard();}
 }
 
-function renderCategories(){
-const div=document.getElementById("categoryButtons");
-div.innerHTML="";
-categories.forEach(cat=>{
-const btn=document.createElement("button");
-btn.className="category-btn "+cat.class;
-btn.innerText=cat.name;
-btn.onclick=()=>categorize(cat.name);
-div.appendChild(btn);
-});
-}
-
-function categorize(name){
-data[currentIndex].Category=name;
-updateTotals();
-updateProgress();
-goNext();
-}
-
-function attachReceipt(e){
-const file=e.target.files[0];
-if(!file)return;
-const reader=new FileReader();
-reader.onload=function(ev){
-data[currentIndex].Receipt={name:file.name,data:ev.target.result};
-showCard();
-};
-reader.readAsDataURL(file);
-}
-
-function viewReceipt(){
-const receipt=data[currentIndex].Receipt;
-if(!receipt)return;
-const win=window.open();
-win.document.write(`<iframe src="${receipt.data}" style="width:100%;height:100%"></iframe>`);
-}
-
-function showCard(){
-if(!data.length)return;
-const item=data[currentIndex];
-cardTitle.innerText=item.Title;
-cardMeta.innerHTML=
-(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-(item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}<br>`+
-(item.Receipt?`📎 Receipt Attached<br>
-<button class="viewBtn" onclick="viewReceipt()">View Receipt</button><br>`:"")+
-`<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">`;
-currentCategory.innerText="Current: "+(item.Category||"—");
-}
-
 function toggleUncategorized(){
 filterUncategorized=!filterUncategorized;
 uncatToggle.classList.toggle("toggleActive");
 currentIndex=0;
-goNext();
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
+showCard();
 }
 
 function toggleAttachment(){
 filterAttachment=!filterAttachment;
 attachmentToggle.classList.toggle("toggleActive");
 currentIndex=0;
-goNext();
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
+showCard();
 }
 
 function updateTotals(){
 let totalsObj={};
 categories.forEach(c=>totalsObj[c.name]=0);
 data.forEach(d=>{
-if(d.Category && totalsObj[d.Category]!=null){
+if(d.Splits.length){
+d.Splits.forEach(s=>totalsObj[s.Category]+=s.Amount);
+}else if(d.Category && totalsObj[d.Category]!=null){
 totalsObj[d.Category]+=d.Amount;
 }
 });
