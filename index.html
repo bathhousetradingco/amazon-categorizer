@@ -1,4 +1,4 @@
-44
+45
 <!DOCTYPE html>
 <html>
 <head>
@@ -26,6 +26,23 @@ input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:1
 .totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0;}
 .splitBox { background:#fafafa; padding:10px; border-radius:10px; margin-top:10px;}
 .viewBtn { background:#1565c0; color:white; margin-top:6px;}
+.toggleBtn { background:#777; color:white; width:100%; margin-bottom:8px;}
+.toggleActive { background:#4caf50 !important;}
+.clearBtn { background:#c62828; color:white; margin-top:8px;}
+.resetBtn { background:#444; color:white; margin-top:8px; width:100%;}
+#vendorDropdown {
+position:absolute;
+background:white;
+border:1px solid #ddd;
+border-radius:10px;
+box-shadow:0 6px 20px rgba(0,0,0,.1);
+max-height:200px;
+overflow:auto;
+display:none;
+z-index:999;
+}
+.vendor-option { padding:8px; cursor:pointer; }
+.vendor-option:hover { background:#f0f0f0; }
 </style>
 </head>
 
@@ -64,6 +81,28 @@ input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:1
 </div>
 
 <div class="panel">
+
+<button id="uncatToggle" class="toggleBtn" onclick="toggleUncategorized()">Show: Not Categorized Only</button>
+<button id="attachmentToggle" class="toggleBtn" onclick="toggleAttachment()">Show: Has Attachment Only</button>
+
+<h4>Search Transaction</h4>
+
+Vendor:<br>
+<div style="position:relative;">
+<input type="text" id="searchVendor" oninput="showVendorSuggestions()">
+<div id="vendorDropdown"></div>
+</div><br>
+
+Amount:<br>
+<input type="number" id="searchAmount" step="0.01"><br><br>
+
+<button onclick="applySearch()">Search</button>
+<button class="clearBtn" onclick="clearSearch()">Clear Search</button>
+<button class="resetBtn" onclick="resetAllFilters()">Reset All Filters</button>
+
+</div>
+
+<div class="panel">
 <h4>Totals</h4>
 <div id="totals"></div>
 </div>
@@ -78,6 +117,11 @@ let rawRows=[];
 let headers=[];
 let data=[];
 let currentIndex=0;
+
+let filterUncategorized=false;
+let filterAttachment=false;
+let vendorFilter="";
+let amountFilter=null;
 
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
@@ -103,17 +147,8 @@ Papa.parse(file,{
 header:false,
 skipEmptyLines:true,
 complete:res=>{
-if(!res.data.length){
-alert("CSV appears empty.");
-return;
-}
-
-// FIRST ROW = HEADERS
 headers = res.data[0].map(h=>String(h).trim());
-
-// REST = DATA
 rawRows = res.data.slice(1);
-
 showMapping();
 }
 });
@@ -123,13 +158,11 @@ function showMapping(){
 mappingPanel.style.display="block";
 mappingPanel.innerHTML=`
 <h4>Map Columns</h4>
-
 Title:<br>${dropdown("mapTitle")}<br><br>
 Amount:<br>${dropdown("mapAmount")}<br><br>
 Vendor:<br>${dropdown("mapVendor")}<br><br>
 Date:<br>${dropdown("mapDate")}<br><br>
 Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
-
 <button onclick="confirmMapping()">Confirm Mapping</button>
 `;
 }
@@ -166,9 +199,97 @@ mappingPanel.style.display="none";
 app.style.display="block";
 
 renderCategories();
-showCard();
+resetToFirstMatch();
 updateTotals();
 updateProgress();
+}
+
+function passesFilters(item){
+if(filterUncategorized && item.Category) return false;
+if(filterAttachment && !item.Receipt) return false;
+if(vendorFilter && !item.Vendor.toLowerCase().includes(vendorFilter)) return false;
+if(amountFilter!==null && Math.abs(item.Amount-amountFilter)>0.01) return false;
+return true;
+}
+
+function resetToFirstMatch(){
+currentIndex=0;
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
+showCard();
+}
+
+function findNextIndex(start,dir){
+let i=start;
+while(i>=0 && i<data.length){
+if(passesFilters(data[i])) return i;
+i+=dir;
+}
+return -1;
+}
+
+function toggleUncategorized(){
+filterUncategorized=!filterUncategorized;
+uncatToggle.classList.toggle("toggleActive");
+resetToFirstMatch();
+}
+
+function toggleAttachment(){
+filterAttachment=!filterAttachment;
+attachmentToggle.classList.toggle("toggleActive");
+resetToFirstMatch();
+}
+
+function applySearch(){
+vendorFilter=document.getElementById("searchVendor").value.toLowerCase().trim();
+amountFilter=parseFloat(document.getElementById("searchAmount").value);
+if(isNaN(amountFilter)) amountFilter=null;
+resetToFirstMatch();
+}
+
+function clearSearch(){
+document.getElementById("searchVendor").value="";
+document.getElementById("searchAmount").value="";
+vendorFilter="";
+amountFilter=null;
+resetToFirstMatch();
+}
+
+function resetAllFilters(){
+filterUncategorized=false;
+filterAttachment=false;
+vendorFilter="";
+amountFilter=null;
+document.getElementById("searchVendor").value="";
+document.getElementById("searchAmount").value="";
+uncatToggle.classList.remove("toggleActive");
+attachmentToggle.classList.remove("toggleActive");
+resetToFirstMatch();
+}
+
+function showVendorSuggestions(){
+const input=document.getElementById("searchVendor").value.toLowerCase().trim();
+const dropdown=document.getElementById("vendorDropdown");
+if(!input){ dropdown.style.display="none"; return; }
+
+const unique=[...new Set(data.map(d=>d.Vendor).filter(v=>v))];
+const matches=unique.filter(v=>v.toLowerCase().includes(input)).slice(0,8);
+
+if(!matches.length){ dropdown.style.display="none"; return; }
+
+dropdown.innerHTML="";
+matches.forEach(v=>{
+const div=document.createElement("div");
+div.className="vendor-option";
+div.innerText=v;
+div.onclick=()=>{
+document.getElementById("searchVendor").value=v;
+dropdown.style.display="none";
+applySearch();
+};
+dropdown.appendChild(div);
+});
+dropdown.style.display="block";
 }
 
 function renderCategories(){
@@ -251,17 +372,13 @@ reader.readAsDataURL(file);
 function viewReceipt(){
 const receipt=data[currentIndex].Receipt;
 if(!receipt)return;
-const url=URL.createObjectURL(dataURItoBlob(receipt.data));
-window.open(url,"_blank");
-}
-
-function dataURItoBlob(dataURI){
-const byteString=atob(dataURI.split(',')[1]);
-const mimeString=dataURI.split(',')[0].split(':')[1].split(';')[0];
+const byteString=atob(receipt.data.split(',')[1]);
+const mimeString=receipt.data.split(',')[0].split(':')[1].split(';')[0];
 const ab=new ArrayBuffer(byteString.length);
 const ia=new Uint8Array(ab);
 for(let i=0;i<byteString.length;i++) ia[i]=byteString.charCodeAt(i);
-return new Blob([ab],{type:mimeString});
+const blob=new Blob([ab],{type:mimeString});
+window.open(URL.createObjectURL(blob));
 }
 
 function showCard(){
@@ -290,8 +407,8 @@ currentCategory.innerText=item.Splits.length?"Split into multiple categories":"C
 splitContainer.innerHTML="";
 }
 
-function goNext(){ if(currentIndex<data.length-1){currentIndex++;showCard();}}
-function goBack(){ if(currentIndex>0){currentIndex--;showCard();}}
+function goNext(){ let next=findNextIndex(currentIndex+1,1); if(next!==-1){currentIndex=next;showCard();}}
+function goBack(){ let prev=findNextIndex(currentIndex-1,-1); if(prev!==-1){currentIndex=prev;showCard();}}
 
 function updateTotals(){
 let totalsObj={};
