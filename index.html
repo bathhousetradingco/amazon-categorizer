@@ -1,4 +1,5 @@
-39
+40
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -44,6 +45,8 @@ background:white;
 padding:20px;
 border-radius:12px;
 width:320px;
+max-height:400px;
+overflow:auto;
 }
 .vendor-option {
 padding:8px;
@@ -53,6 +56,12 @@ background:#eee;
 cursor:pointer;
 }
 .vendor-option:hover { background:#ddd; }
+.resetBtn {
+background:#444;
+color:white;
+margin-top:8px;
+width:100%;
+}
 </style>
 </head>
 
@@ -95,11 +104,12 @@ cursor:pointer;
 
 <h4>Search Transaction</h4>
 Vendor:<br>
-<input type="text" id="searchVendor"><br><br>
+<input type="text" id="searchVendor" oninput="showVendorSuggestions()"><br><br>
 Amount:<br>
 <input type="number" id="searchAmount" step="0.01"><br><br>
 <button onclick="searchTransaction()">Search</button>
 <button class="clearBtn" onclick="clearSearch()">Clear Search</button>
+<button class="resetBtn" onclick="resetAllFilters()">Reset All Filters</button>
 </div>
 
 <div class="panel">
@@ -122,7 +132,7 @@ Amount:<br>
 
 <script>
 
-const STORAGE_KEY="bathhouse_categorizer_v26";
+const STORAGE_KEY="bathhouse_categorizer_v27";
 
 let rawRows=[],data=[],headers=[],currentIndex=0;
 let filterUncategorized=false,filterAttachment=false;
@@ -184,7 +194,7 @@ const t=mapTitle.value,a=mapAmount.value,v=mapVendor.value,d=mapDate.value,c=map
 data=rawRows.map(r=>({
 Title:r[t]||"",
 Amount:parseFloat(String(r[a]||"").replace(/[$,]/g,""))||0,
-Vendor:v?r[v]:"",
+Vendor:v?r[v]||"":"",
 Date:d?r[d]:"",
 Category:c?r[c]||"":"",
 Splits:[],
@@ -198,115 +208,82 @@ updateTotals();
 updateProgress();
 }
 
-function renderCategories(){
-const div=document.getElementById("categoryButtons");
-div.innerHTML="";
-categories.forEach(cat=>{
-const btn=document.createElement("button");
-btn.className="category-btn "+cat.class;
-btn.innerText=cat.name;
-btn.onclick=()=>categorize(cat.name);
-div.appendChild(btn);
-});
-const splitBtn=document.createElement("button");
-splitBtn.className="category-btn";
-splitBtn.style.background="#ff9800";
-splitBtn.innerText="Split Transaction";
-splitBtn.onclick=showSplitUI;
-div.appendChild(splitBtn);
-}
+function showVendorSuggestions(){
+const input=document.getElementById("searchVendor").value.toLowerCase().trim();
+if(!input){ closeVendorModal(); return; }
 
-function categorize(name){
-data[currentIndex].Category=name;
-data[currentIndex].Splits=[];
-updateTotals();
-updateProgress();
-goNext();
-}
+const uniqueVendors=[...new Set(data.map(d=>d.Vendor).filter(v=>v))];
 
-function showSplitUI(){
-const item=data[currentIndex];
-let html=`<div class="splitBox">
-<strong>Total: $${item.Amount.toFixed(2)}</strong><br>
-<div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div><br>`;
-categories.forEach((c,i)=>{
-html+=`${c.name}<br>
-<input type="number" step="0.01" id="split_${i}" oninput="updateRemaining()"><br><br>`;
-});
-html+=`<button onclick="saveSplit()">Save Split</button></div>`;
-splitContainer.innerHTML=html;
-}
+const matches=uniqueVendors
+.filter(v=>v.toLowerCase().includes(input))
+.sort((a,b)=>{
+const aStarts=a.toLowerCase().startsWith(input)?0:1;
+const bStarts=b.toLowerCase().startsWith(input)?0:1;
+return aStarts-bStarts;
+})
+.slice(0,10);
 
-function updateRemaining(){
-const item=data[currentIndex];
-let total=0;
-categories.forEach((c,i)=>{
-total+=parseFloat(document.getElementById("split_"+i).value)||0;
-});
-const remaining=item.Amount-total;
-const el=document.getElementById("remainingBalance");
-el.innerText="Remaining: $"+remaining.toFixed(2);
-el.style.color=Math.abs(remaining)<0.01?"green":remaining<0?"red":"orange";
-}
+if(!matches.length){ closeVendorModal(); return; }
 
-function saveSplit(){
-const item=data[currentIndex];
-let total=0,splits=[];
-categories.forEach((c,i)=>{
-const val=parseFloat(document.getElementById("split_"+i).value)||0;
-if(val>0){splits.push({Category:c.name,Amount:val});total+=val;}
-});
-if(Math.abs(total-item.Amount)>0.01){alert("Split must equal total.");return;}
-item.Splits=splits;
-item.Category="SPLIT";
-updateTotals();
-updateProgress();
-goNext();
-}
-
-function attachReceipt(e){
-const file=e.target.files[0];
-if(!file)return;
-const reader=new FileReader();
-reader.onload=function(ev){
-data[currentIndex].Receipt={name:file.name,data:ev.target.result};
-showCard();
+vendorOptions.innerHTML="";
+matches.forEach(v=>{
+const div=document.createElement("div");
+div.className="vendor-option";
+div.innerText=v;
+div.onclick=()=>{
+document.getElementById("searchVendor").value=v;
+closeVendorModal();
+searchTransaction();
 };
-reader.readAsDataURL(file);
-}
-
-function viewReceipt(){
-const receipt=data[currentIndex].Receipt;
-if(!receipt)return;
-fetch(receipt.data)
-.then(res=>res.blob())
-.then(blob=>{
-const url=URL.createObjectURL(blob);
-window.open(url,"_blank");
+vendorOptions.appendChild(div);
 });
+
+vendorModal.style.display="flex";
 }
 
-function showCard(){
-if(!data.length)return;
-const item=data[currentIndex];
-cardTitle.innerText=item.Title;
-cardMeta.innerHTML=
-(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-(item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}<br>`+
-(item.Receipt?`📎 Receipt Attached<br>
-<button class="viewBtn" onclick="viewReceipt()">View Receipt</button><br>`:"")+
-`<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">`;
-currentCategory.innerText=item.Splits.length?"Split into multiple categories":"Current: "+(item.Category||"—");
-splitContainer.innerHTML="";
+function closeVendorModal(){
+vendorModal.style.display="none";
+}
+
+function searchTransaction(){
+vendorFilterText=document.getElementById("searchVendor").value.toLowerCase().trim();
+amountFilter=parseFloat(document.getElementById("searchAmount").value);
+vendorFilterActive=!!vendorFilterText || !isNaN(amountFilter);
+currentIndex=0;
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
+showCard();
+}
+
+function clearSearch(){
+document.getElementById("searchVendor").value="";
+document.getElementById("searchAmount").value="";
+vendorFilterActive=false;
+vendorFilterText="";
+amountFilter=null;
+showCard();
+}
+
+function resetAllFilters(){
+filterUncategorized=false;
+filterAttachment=false;
+vendorFilterActive=false;
+vendorFilterText="";
+amountFilter=null;
+document.getElementById("searchVendor").value="";
+document.getElementById("searchAmount").value="";
+uncatToggle.classList.remove("toggleActive");
+attachmentToggle.classList.remove("toggleActive");
+currentIndex=0;
+showCard();
 }
 
 function passesFilters(item){
 if(filterUncategorized && item.Category) return false;
 if(filterAttachment && !item.Receipt) return false;
 if(vendorFilterActive){
-if(!item.Vendor.toLowerCase().includes(vendorFilterText)) return false;
-if(amountFilter!=null && Math.abs(item.Amount-amountFilter)>0.01) return false;
+if(vendorFilterText && !item.Vendor.toLowerCase().includes(vendorFilterText)) return false;
+if(!isNaN(amountFilter) && Math.abs(item.Amount-amountFilter)>0.01) return false;
 }
 return true;
 }
@@ -330,22 +307,16 @@ let prev=findNextIndex(currentIndex-1,-1);
 if(prev!==-1){currentIndex=prev;showCard();}
 }
 
-function toggleUncategorized(){
-filterUncategorized=!filterUncategorized;
-uncatToggle.classList.toggle("toggleActive");
-currentIndex=0;
-let first=findNextIndex(0,1);
-if(first!==-1) currentIndex=first;
-showCard();
-}
-
-function toggleAttachment(){
-filterAttachment=!filterAttachment;
-attachmentToggle.classList.toggle("toggleActive");
-currentIndex=0;
-let first=findNextIndex(0,1);
-if(first!==-1) currentIndex=first;
-showCard();
+function showCard(){
+if(!data.length)return;
+const item=data[currentIndex];
+cardTitle.innerText=item.Title;
+cardMeta.innerHTML=
+(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+(item.Date?`Date: ${item.Date}<br>`:"")+
+`Amount: $${item.Amount.toFixed(2)}<br>`;
+currentCategory.innerText=item.Splits.length?"Split into multiple categories":"Current: "+(item.Category||"—");
+splitContainer.innerHTML="";
 }
 
 function updateTotals(){
