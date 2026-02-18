@@ -1,4 +1,4 @@
-latest 20
+latest 21 
 
 <!DOCTYPE html>
 <html>
@@ -7,21 +7,65 @@ latest 20
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bathhouse Categorizer</title>
 
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 <style>
-body {font-family:-apple-system,BlinkMacSystemFont,sans-serif;margin:0;padding:20px;background:#f4f4f4;}
-.panel {background:white;padding:16px;border-radius:14px;box-shadow:0 6px 25px rgba(0,0,0,.08);margin-bottom:15px;}
-button {cursor:pointer;border:none;border-radius:10px;padding:10px 14px;font-weight:600;}
-.category-row {display:flex;margin-bottom:6px;}
-.category-btn {flex:1;color:white;}
+body {
+  font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+  margin:0;
+  padding:20px;
+  background:#f4f4f4;
+}
+h2 { text-align:center; }
+.panel {
+  background:white;
+  padding:16px;
+  border-radius:14px;
+  box-shadow:0 6px 25px rgba(0,0,0,.08);
+  margin-bottom:15px;
+}
+button {
+  cursor:pointer;
+  border:none;
+  border-radius:10px;
+  padding:12px;
+  font-weight:600;
+}
+input[type="number"], input[type="text"]{
+  padding:10px;
+  border-radius:10px;
+  border:1px solid #ddd;
+}
+.navBtn { width:48%; background:#444; color:white; }
+.category-row { display:flex; align-items:center; margin-bottom:6px; }
+.category-btn { flex:1; color:white; }
+.info-btn { width:40px; margin-left:6px; background:#ddd; font-weight:bold; }
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
-.progress-bar-container {background:#eee;border-radius:999px;overflow:hidden;height:16px;margin-bottom:8px;}
-.progress-bar {height:100%;background:#2e7d32;width:0%;}
-.totalRow {display:flex;justify-content:space-between;font-size:13px;padding:4px 0;}
+.progress-bar-container { background:#eee; border-radius:999px; overflow:hidden; height:16px; margin-bottom:8px; }
+.progress-bar { height:100%; background:#2e7d32; width:0%; }
+.small { font-size:13px; color:#555; }
+.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
+.modal {
+  display:none;
+  position:fixed;
+  z-index:1000;
+  left:0; top:0;
+  width:100%; height:100%;
+  background:rgba(0,0,0,.6);
+}
+.modal-content {
+  background:white;
+  margin:10% auto;
+  padding:20px;
+  width:95%;
+  max-width:600px;
+  border-radius:14px;
+  max-height:90vh;
+  overflow:auto;
+}
 </style>
 </head>
 
@@ -32,22 +76,27 @@ button {cursor:pointer;border:none;border-radius:10px;padding:10px 14px;font-wei
 <input type="file" id="csvFile" accept=".csv">
 
 <div id="mappingPanel" class="panel" style="display:none;"></div>
-<div id="app" style="display:none;">
 
+<div id="app" style="display:none;">
 <div class="panel">
 <div class="progress-bar-container">
 <div id="progressBar" class="progress-bar"></div>
 </div>
-<div id="progressText"></div>
+<div id="progressText" class="small"></div>
 </div>
 
 <div class="panel">
 <div id="cardTitle">Upload CSV to begin</div>
-<div id="cardMeta"></div>
-<div id="currentCategory"></div>
+<div id="cardMeta" class="small"></div>
+<div id="currentCategory" class="small" style="margin-top:6px;"></div>
+
 <hr>
-<button onclick="goBack()">⬅ Back</button>
-<button onclick="goNext()">Next ➡</button>
+
+<div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+<button class="navBtn" onclick="goBack()">⬅ Back</button>
+<button class="navBtn" onclick="goNext()">Next ➡</button>
+</div>
+
 <div id="categoryButtons"></div>
 </div>
 
@@ -57,20 +106,22 @@ button {cursor:pointer;border:none;border-radius:10px;padding:10px 14px;font-wei
 </div>
 
 <button onclick="exportExcel()">Export to Excel</button>
-
+<button onclick="clearProgress()" style="background:#c62828;color:white;margin-top:10px;">Reset Saved Progress</button>
 </div>
 
 <script>
+
+const STORAGE_KEY = "bathhouse_categorizer_v12";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
 
 const categories = [
-{name:"COGS – Ingredients",class:"cogs"},
-{name:"COGS – Packaging",class:"cogs"},
-{name:"COGS – Resale Inventory",class:"cogs"},
-{name:"COGS – Production Supplies",class:"cogs"},
-{name:"COGS – Shipping from Suppliers",class:"cogs"},
+{name:"COGS - Ingredients",class:"cogs"},
+{name:"COGS - Packaging",class:"cogs"},
+{name:"COGS - Resale Inventory",class:"cogs"},
+{name:"COGS - Production Supplies",class:"cogs"},
+{name:"COGS - Shipping from Suppliers",class:"cogs"},
 {name:"Equipment",class:"expense"},
 {name:"Advertising & Marketing",class:"expense"},
 {name:"Website & Software",class:"expense"},
@@ -81,12 +132,8 @@ const categories = [
 {name:"Needs Review",class:"special"}
 ];
 
-/* ===========================
-   CSV Upload
-=========================== */
-
 document.getElementById("csvFile").addEventListener("change",function(e){
-
+  localStorage.removeItem(STORAGE_KEY);
   const file=e.target.files[0];
   if(!file)return;
 
@@ -94,48 +141,25 @@ document.getElementById("csvFile").addEventListener("change",function(e){
     header:true,
     skipEmptyLines:true,
     complete:function(res){
-
-      rawRows = res.data.filter(row =>
-        Object.values(row).some(v => v !== null && v !== "")
-      );
-
-      if(!rawRows.length){
-        alert("No valid data found.");
-        return;
-      }
-
-      headers = Object.keys(rawRows[0]);
-
+      rawRows=res.data;
+      headers=Object.keys(rawRows[0]||{});
       showMapping();
     }
   });
 });
 
-/* ===========================
-   Mapping
-=========================== */
-
 function showMapping(){
-
   const panel=document.getElementById("mappingPanel");
   panel.style.display="block";
-
-  const hasCategory=headers.some(h=>h.toLowerCase()==="category");
-
   panel.innerHTML=`
     <h4>Map Columns</h4>
     Title:<br>${dropdown("mapTitle")}<br><br>
     Amount:<br>${dropdown("mapAmount")}<br><br>
-    Vendor:<br>${dropdown("mapVendor",true)}<br><br>
-    Date:<br>${dropdown("mapDate",true)}<br><br>
-    ${hasCategory?`Category:<br>${dropdown("mapCategory",true)}<br><br>`:""}
+    Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
+    Date (optional):<br>${dropdown("mapDate",true)}<br><br>
+    Existing Category (optional):<br>${dropdown("mapExistingCategory",true)}<br><br>
     <button onclick="confirmMapping()">Confirm</button>
   `;
-
-  if(hasCategory){
-    const actual=headers.find(h=>h.toLowerCase()==="category");
-    document.getElementById("mapCategory").value=actual;
-  }
 }
 
 function dropdown(id,allowEmpty=false){
@@ -145,32 +169,28 @@ function dropdown(id,allowEmpty=false){
   return html+="</select>";
 }
 
-function confirmMapping(){
+function normalizeCategory(cat){
+  if(!cat) return "";
+  return String(cat)
+    .replace(/–/g,"-")
+    .replace(/\s+/g," ")
+    .trim();
+}
 
+function confirmMapping(){
   const t=document.getElementById("mapTitle").value;
   const a=document.getElementById("mapAmount").value;
   const v=document.getElementById("mapVendor").value;
   const d=document.getElementById("mapDate").value;
-  const cSelect=document.getElementById("mapCategory");
-  const c=cSelect?cSelect.value:"";
+  const c=document.getElementById("mapExistingCategory").value;
 
-  data = rawRows.map(r=>{
-
-    let categoryValue="";
-    if(c){
-      const value=r[c]||"";
-      const valid=categories.find(cat=>cat.name===value);
-      if(valid) categoryValue=value;
-    }
-
-    return{
-      Title:r[t]||"",
-      Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
-      Vendor:v?r[v]||"":"",
-      Date:d?r[d]||"",
-      Category:categoryValue
-    };
-  });
+  data=rawRows.map(r=>({
+    Title:r[t]||"",
+    Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
+    Vendor:v?r[v]||"":"",
+    Date:d?r[d]||"",
+    Category: normalizeCategory(c ? r[c] : "")
+  }));
 
   document.getElementById("mappingPanel").style.display="none";
   document.getElementById("app").style.display="block";
@@ -179,24 +199,18 @@ function confirmMapping(){
   showCard();
   updateTotals();
   updateProgress();
+  saveProgress();
 }
-
-/* ===========================
-   Core App
-=========================== */
 
 function renderCategories(){
   const div=document.getElementById("categoryButtons");
   div.innerHTML="";
   categories.forEach(c=>{
-    const row=document.createElement("div");
-    row.className="category-row";
     const btn=document.createElement("button");
     btn.className="category-btn "+c.class;
     btn.innerText=c.name;
     btn.onclick=()=>categorize(c.name);
-    row.appendChild(btn);
-    div.appendChild(row);
+    div.appendChild(btn);
   });
 }
 
@@ -206,24 +220,20 @@ function categorize(name){
   showCard();
   updateTotals();
   updateProgress();
+  saveProgress();
 }
 
-function goBack(){
-  if(currentIndex>0){currentIndex--;showCard();}
-}
-
-function goNext(){
-  if(currentIndex<data.length-1){currentIndex++;showCard();}
-}
+function goBack(){ if(currentIndex>0){currentIndex--; showCard(); saveProgress();} }
+function goNext(){ if(currentIndex<data.length-1){currentIndex++; showCard(); saveProgress();} }
 
 function showCard(){
-  if(!data.length)return;
+  if(!data.length) return;
   const item=data[currentIndex];
   document.getElementById("cardTitle").innerText=item.Title;
   document.getElementById("cardMeta").innerHTML=
     (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
     (item.Date?`Date: ${item.Date}<br>`:"")+
-    `Amount: $${item.Amount.toFixed(2)}`;
+    `Amount: $${Number(item.Amount).toFixed(2)}`;
   document.getElementById("currentCategory").innerText=
     "Current: "+(item.Category||"—");
 }
@@ -233,7 +243,7 @@ function updateTotals(){
   categories.forEach(c=>totals[c.name]=0);
   data.forEach(d=>{
     if(d.Category && totals[d.Category]!=null){
-      totals[d.Category]+=d.Amount;
+      totals[d.Category]+=Number(d.Amount||0);
     }
   });
   const div=document.getElementById("totals");
@@ -249,7 +259,31 @@ function updateProgress(){
   const percent=total?Math.round((done/total)*100):0;
   document.getElementById("progressBar").style.width=percent+"%";
   document.getElementById("progressText").innerText=
-    `${done} of ${total} categorized (${percent}%)`;
+  `${done} of ${total} categorized (${percent}%)`;
+}
+
+function saveProgress(){
+  localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
+}
+
+function loadProgress(){
+  const saved=localStorage.getItem(STORAGE_KEY);
+  if(!saved)return;
+  const parsed=JSON.parse(saved);
+  data=parsed.data||[];
+  currentIndex=parsed.currentIndex||0;
+  if(data.length){
+    document.getElementById("app").style.display="block";
+    renderCategories();
+    showCard();
+    updateTotals();
+    updateProgress();
+  }
+}
+
+function clearProgress(){
+  localStorage.removeItem(STORAGE_KEY);
+  location.reload();
 }
 
 function exportExcel(){
@@ -258,6 +292,8 @@ function exportExcel(){
   XLSX.utils.book_append_sheet(wb,ws,"Categorized");
   XLSX.writeFile(wb,"Categorized.xlsx");
 }
+
+window.onload=loadProgress;
 
 </script>
 </body>
