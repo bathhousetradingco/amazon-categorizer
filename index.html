@@ -1,4 +1,4 @@
-latest 15
+latest 16
 
 <!DOCTYPE html>
 <html>
@@ -36,14 +36,6 @@ button {
   font-weight:600;
 }
 
-input[type="number"], input[type="text"]{
-  padding:10px;
-  border-radius:10px;
-  border:1px solid #ddd;
-}
-
-label { user-select:none; }
-
 .navBtn {
   width:48%;
   background:#444;
@@ -59,13 +51,6 @@ label { user-select:none; }
 .category-btn {
   flex:1;
   color:white;
-}
-
-.info-btn {
-  width:40px;
-  margin-left:6px;
-  background:#ddd;
-  font-weight:bold;
 }
 
 .cogs{background:#2e7d32;}
@@ -94,26 +79,6 @@ label { user-select:none; }
   font-size:13px;
   padding:4px 0;
 }
-
-.modal {
-  display:none;
-  position:fixed;
-  z-index:1000;
-  left:0; top:0;
-  width:100%; height:100%;
-  background:rgba(0,0,0,.6);
-}
-
-.modal-content {
-  background:white;
-  margin:10% auto;
-  padding:20px;
-  width:95%;
-  max-width:600px;
-  border-radius:14px;
-  max-height:90vh;
-  overflow:auto;
-}
 </style>
 </head>
 
@@ -124,85 +89,62 @@ label { user-select:none; }
 <input type="file" id="csvFile" accept=".csv">
 
 <div id="mappingPanel" class="panel" style="display:none;"></div>
-
-<div id="app" style="display:none;">
-
-  <div class="panel">
-    <div class="progress-bar-container">
-      <div id="progressBar" class="progress-bar"></div>
-    </div>
-    <div id="progressText" class="small"></div>
-  </div>
-
-  <div class="panel">
-
-    <div id="cardTitle">Upload CSV to begin</div>
-    <div id="cardMeta" class="small"></div>
-    <div id="currentCategory" class="small" style="margin-top:6px;"></div>
-
-    <hr>
-
-    <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
-      <button class="navBtn" onclick="goBack()">⬅ Back</button>
-      <button class="navBtn" onclick="goNext()">Next ➡</button>
-    </div>
-
-    <div id="categoryButtons"></div>
-
-  </div>
-
-  <div class="panel">
-    <h4>Totals</h4>
-    <div id="totals"></div>
-  </div>
-
-  <button onclick="exportExcel()">Export to Excel</button>
-  <button onclick="clearProgress()" style="background:#c62828;color:white;margin-top:10px;">Reset Saved Progress</button>
-
-</div>
+<div id="app" style="display:none;"></div>
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v12";
+const STORAGE_KEY = "bathhouse_categorizer_v13";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
 
-const categories = [
-{name:"COGS – Ingredients",class:"cogs"},
-{name:"COGS – Packaging",class:"cogs"},
-{name:"COGS – Resale Inventory",class:"cogs"},
-{name:"COGS – Production Supplies",class:"cogs"},
-{name:"COGS – Shipping from Suppliers",class:"cogs"},
-{name:"Equipment",class:"expense"},
-{name:"Advertising & Marketing",class:"expense"},
-{name:"Website & Software",class:"expense"},
-{name:"Merchant Processing Fees",class:"expense"},
-{name:"Insurance",class:"expense"},
-{name:"Utilities",class:"expense"},
-{name:"Professional Services",class:"expense"},
-{name:"Needs Review",class:"special"}
-];
+/* ================= CSV Upload (HARDENED) ================= */
 
-/* ================= CSV Upload ================= */
+document.getElementById("csvFile").addEventListener("change", function(e){
 
-document.getElementById("csvFile").addEventListener("change",function(e){
-  localStorage.removeItem(STORAGE_KEY);
-  const file=e.target.files[0];
-  if(!file)return;
+  const file = e.target.files[0];
+  if(!file) return;
 
   Papa.parse(file,{
     header:true,
     skipEmptyLines:true,
-    complete:function(res){
-      rawRows=res.data;
-      headers=Object.keys(rawRows[0]||{});
+    dynamicTyping:false,
+    complete:function(results){
+
+      if(results.errors && results.errors.length){
+        console.error("CSV Parse Errors:", results.errors);
+        alert("There was an issue reading this CSV file.");
+        return;
+      }
+
+      if(!results.data || !results.data.length){
+        alert("CSV file appears empty or improperly formatted.");
+        return;
+      }
+
+      rawRows = results.data;
+
+      // Safely extract headers from first non-empty row
+      const firstValidRow = rawRows.find(r => r && Object.keys(r).length);
+      if(!firstValidRow){
+        alert("Unable to detect CSV headers.");
+        return;
+      }
+
+      headers = Object.keys(firstValidRow).filter(h => h && h.trim() !== "");
+
+      if(!headers.length){
+        alert("No valid column headers detected.");
+        return;
+      }
+
       showMapping();
     }
   });
+
 });
 
-/* ================= Mapping ================= */
+/* ================= Mapping UI ================= */
 
 function showMapping(){
   const panel=document.getElementById("mappingPanel");
@@ -222,19 +164,29 @@ function showMapping(){
 function dropdown(id,allowEmpty=false){
   let html=`<select id="${id}">`;
   if(allowEmpty) html+=`<option value="">--None--</option>`;
-  headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+  headers.forEach(h=>{
+    html+=`<option value="${h}">${h}</option>`;
+  });
   html+="</select>";
   return html;
 }
 
+/* ================= Confirm Mapping ================= */
+
 function confirmMapping(){
+
   const t=document.getElementById("mapTitle").value;
   const a=document.getElementById("mapAmount").value;
   const v=document.getElementById("mapVendor").value;
   const d=document.getElementById("mapDate").value;
   const c=document.getElementById("mapExistingCategory").value;
 
-  data=rawRows.map(r=>({
+  if(!t || !a){
+    alert("Title and Amount are required.");
+    return;
+  }
+
+  data = rawRows.map(r=>({
     Title:r[t]||"",
     Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
     Vendor:v?r[v]||"":"",
@@ -243,134 +195,8 @@ function confirmMapping(){
   }));
 
   document.getElementById("mappingPanel").style.display="none";
-  document.getElementById("app").style.display="block";
-
-  renderCategories();
-  showCard();
-  updateTotals();
-  updateProgress();
-  saveProgress();
+  alert("CSV loaded successfully. Ready to categorize.");
 }
-
-/* ================= Core App ================= */
-
-function renderCategories(){
-  const div=document.getElementById("categoryButtons");
-  div.innerHTML="";
-  categories.forEach(c=>{
-    const row=document.createElement("div");
-    row.className="category-row";
-
-    const btn=document.createElement("button");
-    btn.className="category-btn "+c.class;
-    btn.innerText=c.name;
-    btn.onclick=()=>categorize(c.name);
-
-    row.appendChild(btn);
-    div.appendChild(row);
-  });
-}
-
-function categorize(name){
-  data[currentIndex].Category=name;
-  if(currentIndex<data.length-1) currentIndex++;
-  showCard();
-  updateTotals();
-  updateProgress();
-  saveProgress();
-}
-
-function goBack(){
-  if(currentIndex>0){
-    currentIndex--;
-    showCard();
-    saveProgress();
-  }
-}
-
-function goNext(){
-  if(currentIndex<data.length-1){
-    currentIndex++;
-    showCard();
-    saveProgress();
-  }
-}
-
-function showCard(){
-  if(!data.length)return;
-  const item=data[currentIndex];
-
-  document.getElementById("cardTitle").innerText=item.Title;
-
-  document.getElementById("cardMeta").innerHTML=
-    (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-    (item.Date?`Date: ${item.Date}<br>`:"")+
-    `Amount: $${item.Amount.toFixed(2)}`;
-
-  document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
-}
-
-function updateTotals(){
-  let totals={};
-  categories.forEach(c=>totals[c.name]=0);
-
-  data.forEach(d=>{
-    if(d.Category && totals[d.Category]!=null){
-      totals[d.Category]+=d.Amount;
-    }
-  });
-
-  const div=document.getElementById("totals");
-  div.innerHTML="";
-  Object.keys(totals).forEach(k=>{
-    div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
-  });
-}
-
-function updateProgress(){
-  const total=data.length;
-  const done=data.filter(d=>d.Category).length;
-  const percent=total?Math.round((done/total)*100):0;
-  document.getElementById("progressBar").style.width=percent+"%";
-  document.getElementById("progressText").innerText=
-    `${done} of ${total} categorized (${percent}%)`;
-}
-
-/* ================= Persistence ================= */
-
-function saveProgress(){
-  localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
-}
-
-function loadProgress(){
-  const saved=localStorage.getItem(STORAGE_KEY);
-  if(!saved)return;
-  const parsed=JSON.parse(saved);
-  data=parsed.data||[];
-  currentIndex=parsed.currentIndex||0;
-
-  if(data.length){
-    document.getElementById("app").style.display="block";
-    renderCategories();
-    showCard();
-    updateTotals();
-    updateProgress();
-  }
-}
-
-function clearProgress(){
-  localStorage.removeItem(STORAGE_KEY);
-  location.reload();
-}
-
-function exportExcel(){
-  const ws=XLSX.utils.json_to_sheet(data);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"Categorized");
-  XLSX.writeFile(wb,"Categorized.xlsx");
-}
-
-window.onload=loadProgress;
 
 </script>
 </body>
