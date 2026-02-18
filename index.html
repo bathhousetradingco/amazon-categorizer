@@ -1,4 +1,4 @@
-the latest 2 
+the latest 3 
 
 <!DOCTYPE html>
 <html>
@@ -76,7 +76,6 @@ button {
   height:100%;
   background:#2e7d32;
   width:0%;
-  transition:width .3s ease;
 }
 
 .small { font-size:13px; color:#555; }
@@ -88,6 +87,7 @@ button {
   padding:4px 0;
 }
 
+/* Modal */
 .modal {
   display:none;
   position:fixed;
@@ -99,10 +99,10 @@ button {
 
 .modal-content {
   background:white;
-  margin:5% auto;
+  margin:10% auto;
   padding:20px;
   width:95%;
-  max-width:800px;
+  max-width:600px;
   border-radius:14px;
   max-height:90vh;
   overflow:auto;
@@ -132,9 +132,10 @@ button {
 <div id="cardTitle">Upload CSV to begin</div>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
+
 <div id="suggestionBox" class="small" style="margin-top:10px;"></div>
 
-<!-- Receipt + Split Controls -->
+<!-- ✅ NEW: Receipt + Split Controls -->
 <div style="margin-top:10px;">
   <input type="file" id="receiptUpload" accept="image/*" style="display:none;">
   <button onclick="triggerReceiptUpload()">📎 Upload Receipt</button>
@@ -163,7 +164,7 @@ button {
 
 </div>
 
-<!-- Info Modal -->
+<!-- INFO MODAL -->
 <div id="infoModal" class="modal">
   <div class="modal-content">
     <h3 id="modalTitle"></h3>
@@ -172,7 +173,7 @@ button {
   </div>
 </div>
 
-<!-- Split Modal -->
+<!-- SPLIT MODAL -->
 <div id="splitModal" class="modal">
   <div class="modal-content">
     <h3>Split Transaction</h3>
@@ -193,7 +194,7 @@ button {
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v8";
+const STORAGE_KEY = "bathhouse_categorizer_v7";
 
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
@@ -214,18 +215,14 @@ document.getElementById("receiptUpload").addEventListener("change", function(e){
     img.onload = function(){
       const canvas = document.createElement("canvas");
       const maxWidth = 1000;
-      const scale = maxWidth / img.width;
-
-      canvas.width = maxWidth;
+      const scale = Math.min(1, maxWidth / img.width);
+      canvas.width = img.width * scale;
       canvas.height = img.height * scale;
-
       const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-      const compressed = canvas.toDataURL("image/jpeg", 0.7);
-      data[currentIndex].Receipt = compressed;
+      data[currentIndex].Receipt = canvas.toDataURL("image/jpeg", 0.7);
       saveProgress();
-      alert("Receipt saved.");
+      showCard();
     };
     img.src = evt.target.result;
   };
@@ -235,20 +232,20 @@ document.getElementById("receiptUpload").addEventListener("change", function(e){
 function viewReceipt(){
   const item = data[currentIndex];
   if(!item.Receipt){
-    alert("No receipt uploaded for this transaction.");
+    alert("No receipt uploaded.");
     return;
   }
 
-  document.getElementById("modalTitle").innerText = "Receipt";
-  document.getElementById("modalBody").innerHTML =
-    `<img id="receiptImage" src="${item.Receipt}" style="max-width:100%;cursor:zoom-in;transition:transform .2s ease;">`;
+  document.getElementById("modalTitle").innerText="Receipt";
+  document.getElementById("modalBody").innerHTML=
+  `<img id="receiptImage" src="${item.Receipt}" style="max-width:100%;cursor:zoom-in;">`;
 
-  document.getElementById("infoModal").style.display = "block";
+  document.getElementById("infoModal").style.display="block";
 
   let zoom=false;
   document.getElementById("receiptImage").onclick=function(){
     zoom=!zoom;
-    this.style.transform = zoom ? "scale(2)" : "scale(1)";
+    this.style.transform=zoom?"scale(2)":"scale(1)";
   };
 }
 
@@ -270,12 +267,14 @@ function openSplitEditor(){
 
 function renderSplitList(){
   const item=data[currentIndex];
+  if(!item.Splits) item.Splits=[];
   let html="";
   let total=0;
 
   item.Splits.forEach((s,i)=>{
     total+=s.amount;
-    html+=`<div style="display:flex;justify-content:space-between;margin-bottom:5px;">
+    html+=`
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
       <div>${s.category}</div>
       <div>$${s.amount.toFixed(2)}</div>
       <button onclick="removeSplit(${i})">X</button>
@@ -290,7 +289,7 @@ function addSplit(){
   const amt=parseFloat(document.getElementById("splitAmount").value);
   const cat=document.getElementById("splitCategory").value;
   if(!amt || amt<=0) return;
-
+  if(!data[currentIndex].Splits) data[currentIndex].Splits=[];
   data[currentIndex].Splits.push({amount:amt,category:cat});
   document.getElementById("splitAmount").value="";
   renderSplitList();
@@ -304,23 +303,56 @@ function removeSplit(i){
 function saveSplits(){
   const item=data[currentIndex];
   const splitTotal=item.Splits.reduce((a,b)=>a+b.amount,0);
-
   if(Math.abs(splitTotal-item.Amount)>0.01){
-    alert("Split total must equal original amount.");
+    alert("Split must equal original amount.");
     return;
   }
-
-  item.Category="SPLIT";
-  closeSplit();
+  saveProgress();
   updateTotals();
   updateProgress();
-  saveProgress();
+  closeSplit();
   showCard();
 }
 
 function closeSplit(){
   document.getElementById("splitModal").style.display="none";
 }
+
+/* ================= MODIFY TOTALS + PROGRESS ================= */
+
+const originalUpdateTotals = updateTotals;
+updateTotals = function(){
+  let totals={};
+  categories.forEach(c=>totals[c.name]=0);
+
+  data.forEach(d=>{
+    if(d.Splits && d.Splits.length){
+      d.Splits.forEach(s=>{
+        if(totals[s.category]!=null){
+          totals[s.category]+=s.amount;
+        }
+      });
+    } else if(d.Category){
+      totals[d.Category]+=d.Amount;
+    }
+  });
+
+  const div=document.getElementById("totals");
+  div.innerHTML="";
+  Object.keys(totals).forEach(k=>{
+    div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+  });
+};
+
+const originalUpdateProgress = updateProgress;
+updateProgress = function(){
+  const total=data.length;
+  const done=data.filter(d=>d.Category || (d.Splits && d.Splits.length)).length;
+  const percent=total?Math.round((done/total)*100):0;
+  document.getElementById("progressBar").style.width=percent+"%";
+  document.getElementById("progressText").innerText=
+  `${done} of ${total} categorized (${percent}%)`;
+};
 
 </script>
 </body>
