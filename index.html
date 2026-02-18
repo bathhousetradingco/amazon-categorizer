@@ -1,4 +1,4 @@
-latest 8
+Latest 9
 
 <!DOCTYPE html>
 <html>
@@ -17,9 +17,7 @@ body {
   padding:20px;
   background:#f4f4f4;
 }
-
 h2 { text-align:center; }
-
 .panel {
   background:white;
   padding:16px;
@@ -27,7 +25,6 @@ h2 { text-align:center; }
   box-shadow:0 6px 25px rgba(0,0,0,.08);
   margin-bottom:15px;
 }
-
 button {
   cursor:pointer;
   border:none;
@@ -35,43 +32,28 @@ button {
   padding:12px;
   font-weight:600;
 }
-
-input[type="number"], input[type="text"]{
+input, select {
   padding:10px;
   border-radius:10px;
   border:1px solid #ddd;
 }
-
-label { user-select:none; }
-
 .navBtn {
   width:48%;
   background:#444;
   color:white;
 }
-
 .category-row {
   display:flex;
   align-items:center;
   margin-bottom:6px;
 }
-
 .category-btn {
   flex:1;
   color:white;
 }
-
-.info-btn {
-  width:40px;
-  margin-left:6px;
-  background:#ddd;
-  font-weight:bold;
-}
-
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
-
 .progress-bar-container {
   background:#eee;
   border-radius:999px;
@@ -79,41 +61,24 @@ label { user-select:none; }
   height:16px;
   margin-bottom:8px;
 }
-
 .progress-bar {
   height:100%;
   background:#2e7d32;
   width:0%;
 }
-
 .small { font-size:13px; color:#555; }
-
 .totalRow {
   display:flex;
   justify-content:space-between;
   font-size:13px;
   padding:4px 0;
 }
-
-/* Modal */
-.modal {
-  display:none;
-  position:fixed;
-  z-index:1000;
-  left:0; top:0;
-  width:100%; height:100%;
-  background:rgba(0,0,0,.6);
-}
-
-.modal-content {
-  background:white;
-  margin:10% auto;
-  padding:20px;
-  width:95%;
-  max-width:600px;
-  border-radius:14px;
-  max-height:90vh;
-  overflow:auto;
+.previewRow {
+  display:flex;
+  justify-content:space-between;
+  font-size:13px;
+  padding:4px 0;
+  background:#f3f9ff;
 }
 </style>
 </head>
@@ -123,894 +88,243 @@ label { user-select:none; }
 <h2>Bathhouse Categorizer</h2>
 
 <input type="file" id="csvFile" accept=".csv">
-
 <div id="mappingPanel" class="panel" style="display:none;"></div>
 
 <div id="app" style="display:none;">
 
-  <!-- ✅ NEW: SEARCH / FILTER PANEL -->
-  <div class="panel">
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-      <b>Find:</b>
-      <input id="searchAmount" type="number" step="0.01" placeholder="Amount (e.g. 187.42)">
-      <button onclick="searchByAmount()">Go</button>
-      <button onclick="jumpToNextReceipt()">Next With Receipt</button>
-      <label style="display:flex;gap:8px;align-items:center;margin-left:auto;">
-        <input id="receiptOnlyToggle" type="checkbox" onchange="onReceiptFilterChange()">
-        Navigate receipts only
-      </label>
-    </div>
-    <div class="small" style="margin-top:8px;">
-      Tip: Turn on “Navigate receipts only” to jump through just the 📎 items using Back/Next.
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="progress-bar-container">
-      <div id="progressBar" class="progress-bar"></div>
-    </div>
-    <div id="progressText" class="small"></div>
-  </div>
-
-  <div class="panel">
-
-    <div id="cardTitle">Upload CSV to begin</div>
-    <div id="cardMeta" class="small"></div>
-    <div id="currentCategory" class="small" style="margin-top:6px;"></div>
-
-    <!-- ✅ suggestion box -->
-    <div id="suggestionBox" class="small" style="margin-top:10px;"></div>
-
-    <!-- ✅ Receipt + Split Controls -->
-    <div style="margin-top:10px;">
-      <input type="file" id="receiptUpload" accept="image/*" style="display:none;">
-      <button onclick="triggerReceiptUpload()">📎 Upload Receipt</button>
-      <button onclick="viewReceipt()">👁 View Receipt</button>
-      <button onclick="openSplitEditor()">🧾 Split Transaction</button>
-    </div>
-
-    <hr>
-
-    <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
-      <button class="navBtn" onclick="goBack()">⬅ Back</button>
-      <button class="navBtn" onclick="goNext()">Next ➡</button>
-    </div>
-
-    <div id="categoryButtons"></div>
-
-  </div>
-
-  <div class="panel">
-    <h4>Totals</h4>
-    <div id="totals"></div>
-  </div>
-
-  <button onclick="exportExcel()">Export to Excel</button>
-  <button onclick="clearProgress()" style="background:#c62828;color:white;margin-top:10px;">Reset Saved Progress</button>
-
+<div class="panel">
+<label><input type="checkbox" id="uncategorizedToggle"> Navigate only Uncategorized</label>
+<button onclick="jumpToFirstUncategorized()">Jump to First Uncategorized</button>
 </div>
 
-<!-- INFO MODAL -->
-<div id="infoModal" class="modal">
-  <div class="modal-content">
-    <h3 id="modalTitle"></h3>
-    <div id="modalBody"></div>
-    <button onclick="closeModal()" style="margin-top:15px;background:#444;color:white;width:100%;">Close</button>
-  </div>
+<div class="panel">
+<div class="progress-bar-container">
+<div id="progressBar" class="progress-bar"></div>
+</div>
+<div id="progressText" class="small"></div>
 </div>
 
-<!-- SPLIT MODAL -->
-<div id="splitModal" class="modal">
-  <div class="modal-content">
-    <h3>Split Transaction</h3>
-    <div id="splitList"></div>
+<div class="panel">
+<div id="cardTitle"></div>
+<div id="cardMeta" class="small"></div>
+<div id="currentCategory" class="small" style="margin-top:6px;"></div>
 
-    <div style="margin-top:10px;">
-      <input id="splitAmount" type="number" step="0.01" placeholder="Amount">
-      <select id="splitCategory"></select>
-      <button onclick="addSplit()">Add</button>
-    </div>
+<hr>
 
-    <div style="margin-top:15px;">
-      <button onclick="saveSplits()">Save Splits</button>
-      <button onclick="closeSplit()">Cancel</button>
-    </div>
-  </div>
+<div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+<button class="navBtn" onclick="goBack()">⬅ Back</button>
+<button class="navBtn" onclick="goNext()">Next ➡</button>
+</div>
+
+<div id="categoryButtons"></div>
+</div>
+
+<div class="panel">
+<h4>Totals (Live Preview)</h4>
+<div id="totals"></div>
+</div>
+
 </div>
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v11";
-
+const STORAGE_KEY="bathhouse_categorizer_v13";
 let rawRows=[], data=[], headers=[];
 let currentIndex=0;
+let previewCategory=null;
 
-const categories = [
-{
-name:"COGS – Ingredients",
-class:"cogs",
-info:`This includes all raw materials that physically go into your products.
-
-Examples for Bathhouse Trading Co:
-• Oils (olive, coconut, castor)
-• Butters (shea, mango)
-• Lye
-• Fragrance oils
-• Essential oils
-• Colorants, mica, oxides
-• Extracts (green tea, birch, chamomile)
-• Wax for melts
-• Preservatives
-
-If it becomes part of the product itself, it belongs here.`
-},
-{
-name:"COGS – Packaging",
-class:"cogs",
-info:`This includes packaging that goes WITH the product or is used to ship customer orders.
-
-Examples:
-• Soap boxes
-• Lotion bottles & jars
-• Lids, pumps, droppers
-• Product labels
-• Tissue paper in orders
-• Shipping boxes
-• Mailers
-• Thank-you cards inside orders
-
-If it’s used to package or ship finished goods, it belongs here.`
-},
-{
-name:"COGS – Resale Inventory",
-class:"cogs",
-info:`Finished goods purchased and resold without modifying.
-
-Examples:
-• Retail accessories bought wholesale
-• Items purchased to resell at events
-• Merchandise not manufactured by you`
-},
-{
-name:"COGS – Production Supplies",
-class:"cogs",
-info:`Items used in production but not part of the final product.
-
-Examples:
-• Gloves
-• Paper towels in production
-• Mold liners
-• Disposable tools
-• Alcohol for sanitizing equipment`
-},
-{
-name:"COGS – Shipping from Suppliers",
-class:"cogs",
-info:`Freight or shipping costs paid to vendors.
-
-Examples:
-• UPS charges from Bramble Berry
-• Freight for pallet deliveries
-• Shipping added to ingredient invoices`
-},
-{
-name:"Equipment",
-class:"expense",
-info:`Large or durable items used for business operations.
-
-Examples:
-• Soap molds
-• Mixers
-• Shelving
-• Display racks
-• Label printers
-• Production tables
-
-These are NOT COGS — they are business equipment.`
-},
-{
-name:"Advertising & Marketing",
-class:"expense",
-info:`Money spent to promote Bathhouse Trading Co.
-
-Examples:
-• Facebook ads
-• Event banners
-• Printed flyers
-• Promo giveaways
-• Booth fees for markets`
-},
-{
-name:"Website & Software",
-class:"expense",
-info:`Digital tools and subscriptions.
-
-Examples:
-• Shopify
-• TaxJar
-• Canva
-• QuickBooks
-• Email marketing software`
-},
-{
-name:"Merchant Processing Fees",
-class:"expense",
-info:`Payment processing fees.
-
-Examples:
-• Shopify Payments fees
-• Stripe fees
-• Square fees`
-},
-{
-name:"Insurance",
-class:"expense",
-info:`Business insurance policies.
-
-Examples:
-• Product liability insurance
-• General liability
-• Property insurance`
-},
-{
-name:"Utilities",
-class:"expense",
-info:`Operational utilities.
-
-Examples:
-• Electricity
-• Water
-• Internet`
-},
-{
-name:"Professional Services",
-class:"expense",
-info:`Professional help.
-
-Examples:
-• CPA
-• Bookkeeper
-• Legal services`
-},
-{
-name:"Needs Review",
-class:"special",
-info:`Unclear transactions.
-
-Use when:
-• You’re unsure
-• You want Steven’s input
-• Something looks suspicious`
-}
+const categories=[
+{name:"COGS – Ingredients",class:"cogs"},
+{name:"COGS – Packaging",class:"cogs"},
+{name:"COGS – Resale Inventory",class:"cogs"},
+{name:"COGS – Production Supplies",class:"cogs"},
+{name:"COGS – Shipping from Suppliers",class:"cogs"},
+{name:"Equipment",class:"expense"},
+{name:"Advertising & Marketing",class:"expense"},
+{name:"Website & Software",class:"expense"},
+{name:"Merchant Processing Fees",class:"expense"},
+{name:"Insurance",class:"expense"},
+{name:"Utilities",class:"expense"},
+{name:"Professional Services",class:"expense"},
+{name:"Needs Review",class:"special"}
 ];
 
-/* =========================================================
-   Suggestion logic (unchanged)
-========================================================= */
-
-function normalize(text){
-  return String(text||"").toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
-}
-
-function generateSuggestion(title, vendor){
-  const text = normalize(title + " " + vendor);
-
-  const rules = [
-    {cat:"COGS – Ingredients", words:["oil","butter","lye","fragrance","essential","mica","oxide","colorant","extract","wax","preservative","shea","mango","coconut","olive","castor"]},
-    {cat:"COGS – Packaging", words:["box","boxes","jar","jars","bottle","bottles","label","labels","mailer","mailers","tissue","lid","lids","pump","pumps","dropper","droppers","shrink","wrap","bag","bags"]},
-    {cat:"COGS – Production Supplies", words:["gloves","alcohol","isopropyl","paper towel","sanitizer","liner","liners","disposable","mask"]},
-    {cat:"COGS – Shipping from Suppliers", words:["shipping","freight","ups","fedex","dhl"]},
-    {cat:"Website & Software", words:["shopify","taxjar","quickbooks","canva","subscription","domain","hosting","app fee"]},
-    {cat:"Merchant Processing Fees", words:["processing","processor","stripe","square","shopify payments"]},
-    {cat:"Advertising & Marketing", words:["ad","ads","facebook","instagram","banner","banners","flyer","flyers","booth","market fee","vendor fee","promo","promotion"]},
-    {cat:"Utilities", words:["electric","electricity","water","internet","utility"]},
-    {cat:"Insurance", words:["insurance","liability","policy"]},
-    {cat:"Professional Services", words:["cpa","accountant","bookkeeper","legal","attorney","law"]},
-    {cat:"Equipment", words:["mold","molds","mixer","shelving","shelf","printer","label printer","table","rack","scale","dehumidifier","heat gun"]}
-  ];
-
-  function whyNotOthers(chosen){
-    const commonNot = [];
-
-    if(chosen.startsWith("COGS")){
-      commonNot.push(`• Not "Equipment": COGS items are typically used up (or become part of a sold unit). Equipment is durable/reusable for months+.`);
-    } else if(chosen === "Equipment"){
-      commonNot.push(`• Not "COGS": durable tools/machines aren’t consumed per unit sold; they support production over time.`);
-    }
-
-    if(chosen === "COGS – Packaging"){
-      commonNot.push(`• Not "COGS – Production Supplies": packaging goes with the product or ships the order; production supplies are used during making/cleanup and don’t leave with the customer.`);
-    }
-    if(chosen === "COGS – Production Supplies"){
-      commonNot.push(`• Not "COGS – Packaging": production supplies are used behind-the-scenes and don’t ship out with customer orders.`);
-    }
-
-    if(chosen.startsWith("COGS")){
-      commonNot.push(`• Not an operating expense (like Utilities/Insurance/Software): those keep the business running but don’t tie directly to producing/fulfilling a sellable item.`);
-    } else {
-      commonNot.push(`• Not COGS: operating expenses support the business overall rather than being tied to a specific product or shipment.`);
-    }
-
-    if(chosen !== "Merchant Processing Fees"){
-      commonNot.push(`• Not "Merchant Processing Fees": those usually appear as Stripe/Square/Shopify Payments fee language rather than a product/material description.`);
-    }
-
-    return commonNot.join("\n");
-  }
-
-  for(const r of rules){
-    for(const w of r.words){
-      if(text.includes(w)){
-        const confidence =
-          (w.includes("shopify payments") || w.includes("label printer") || w.includes("isopropyl") || w.includes("taxjar"))
-          ? "High"
-          : (w.length >= 6 ? "Medium-High" : "Medium");
-
-        return {
-          category: r.cat,
-          explanation:
-`Matched keyword "${w}" in the title/vendor.
-
-Why this category fits:
-• "${w}" is a strong clue this purchase is typically used as: ${r.cat}.
-• This suggestion is based on the description text (title/vendor), not the dollar amount.
-
-Why it's NOT other categories:
-${whyNotOthers(r.cat)}
-
-Confidence: ${confidence}`
-        };
-      }
-    }
-  }
-
-  return {
-    category: "Needs Review",
-    explanation:
-`No strong keyword match was detected in the title/vendor.
-
-Why this is "Needs Review":
-• The description doesn’t clearly indicate Ingredients vs Packaging vs Equipment vs an Operating Expense.
-• Some vendors (Amazon/Walmart) often contain mixed purchases that need a receipt to split correctly.
-
-What to do next:
-• If you can, open the receipt/line-item detail.
-• If it’s clearly a material that goes into product → Ingredients.
-• If it’s something customers receive (container/label/shipping supplies) → Packaging.
-• If it’s durable/reusable (mixer, printer, shelving) → Equipment.
-
-Confidence: Low`
-  };
-}
-
-function renderSuggestion(item){
-  const box = document.getElementById("suggestionBox");
-  if(!box) return;
-
-  if(!item){
-    box.innerHTML = "";
-    return;
-  }
-
-  const s = generateSuggestion(item.Title, item.Vendor);
-
-  box.innerHTML = `
-    <div style="border:1px solid #ddd;padding:10px;border-radius:10px;">
-      <b>Suggested:</b> ${s.category}
-      <br><br>
-      <button onclick="acceptSuggestion('${s.category.replace(/'/g,"&#39;")}')">Accept Suggestion</button>
-      <button onclick="toggleExplanation()">▶ Show detailed reasoning</button>
-      <div id="explanationPanel" style="display:none;margin-top:10px;font-size:13px;line-height:1.35;">
-        ${s.explanation.replace(/\n/g,"<br>")}
-      </div>
-    </div>
-  `;
-}
-
-function toggleExplanation(){
-  const p = document.getElementById("explanationPanel");
-  if(!p) return;
-  p.style.display = (p.style.display === "none" || !p.style.display) ? "block" : "none";
-}
-
-function acceptSuggestion(catName){
-  if(!data.length) return;
-
-  if(data[currentIndex].Splits && data[currentIndex].Splits.length){
-    const ok = confirm("This transaction has splits. Accepting a single category will clear the splits. Continue?");
-    if(!ok) return;
-    data[currentIndex].Splits = [];
-  }
-
-  data[currentIndex].Category = catName;
-  showCard();
-  updateTotals();
-  updateProgress();
-  saveProgress();
-}
-
-/* =========================================================
-   NEW: Search / Receipt filter
-========================================================= */
-
-function onReceiptFilterChange(){
-  // Optional: if turning on and current item doesn't have a receipt, jump to next receipt
-  const on = document.getElementById("receiptOnlyToggle").checked;
-  if(on && data.length && !data[currentIndex].Receipt){
-    // try to find nearest receipt (forward first, then backward)
-    for(let i=currentIndex+1;i<data.length;i++){
-      if(data[i].Receipt){ currentIndex=i; showCard(); return; }
-    }
-    for(let i=currentIndex-1;i>=0;i--){
-      if(data[i].Receipt){ currentIndex=i; showCard(); return; }
-    }
-    alert("No receipts found in this dataset yet.");
-    document.getElementById("receiptOnlyToggle").checked = false;
-  }
-}
-
-function searchByAmount(){
-  if(!data.length) return;
-  const raw = document.getElementById("searchAmount").value;
-  const amt = parseFloat(raw);
-  if(isNaN(amt)){
-    alert("Enter a valid amount (e.g. 187.42).");
-    return;
-  }
-
-  for(let i=0;i<data.length;i++){
-    if(Math.abs(Number(data[i].Amount||0) - amt) < 0.01){
-      currentIndex = i;
-      showCard();
-      saveProgress();
-      return;
-    }
-  }
-  alert("No transaction found with that amount.");
-}
-
-function jumpToNextReceipt(){
-  if(!data.length) return;
-  for(let i=currentIndex+1;i<data.length;i++){
-    if(data[i].Receipt){
-      currentIndex = i;
-      showCard();
-      saveProgress();
-      return;
-    }
-  }
-  alert("No more receipts found after this transaction.");
-}
-
-/* =========================================================
-   CSV upload + mapping (unchanged)
-========================================================= */
+/* ================= CSV IMPORT ================= */
 
 document.getElementById("csvFile").addEventListener("change",function(e){
-  localStorage.removeItem(STORAGE_KEY);
-  const file=e.target.files[0];
-  if(!file)return;
+const file=e.target.files[0];
+if(!file)return;
 
-  Papa.parse(file,{
-    header:true,
-    skipEmptyLines:true,
-    complete:function(res){
-      rawRows=res.data;
-      headers=Object.keys(rawRows[0]||{});
-      showMapping();
-    }
-  });
+Papa.parse(file,{
+header:true,
+skipEmptyLines:true,
+complete:function(res){
+rawRows=res.data;
+headers=Object.keys(rawRows[0]||{});
+showMapping();
+}
+});
 });
 
 function showMapping(){
-  const panel=document.getElementById("mappingPanel");
-  panel.style.display="block";
-
-  panel.innerHTML=`
-    <h4>Map Columns</h4>
-    Title:<br>${dropdown("mapTitle")}<br><br>
-    Amount:<br>${dropdown("mapAmount")}<br><br>
-    Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
-    Date (optional):<br>${dropdown("mapDate",true)}<br><br>
-    <button onclick="confirmMapping()">Confirm</button>
-  `;
+const panel=document.getElementById("mappingPanel");
+panel.style.display="block";
+panel.innerHTML=`
+<h4>Map Columns</h4>
+Title:<br>${dropdown("mapTitle")}<br><br>
+Amount:<br>${dropdown("mapAmount")}<br><br>
+Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
+Date (optional):<br>${dropdown("mapDate",true)}<br><br>
+Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
+<button onclick="confirmMapping()">Confirm</button>
+`;
 }
 
 function dropdown(id,allowEmpty=false){
-  let html=`<select id="${id}">`;
-  if(allowEmpty) html+=`<option value="">--None--</option>`;
-  headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
-  return html+="</select>";
+let html=`<select id="${id}">`;
+if(allowEmpty)html+=`<option value="">--None--</option>`;
+headers.forEach(h=>html+=`<option value="${h}">${h}</option>`);
+return html+="</select>";
 }
 
 function confirmMapping(){
-  const t=document.getElementById("mapTitle").value;
-  const a=document.getElementById("mapAmount").value;
-  const v=document.getElementById("mapVendor").value;
-  const d=document.getElementById("mapDate").value;
+const t=document.getElementById("mapTitle").value;
+const a=document.getElementById("mapAmount").value;
+const v=document.getElementById("mapVendor").value;
+const d=document.getElementById("mapDate").value;
+const c=document.getElementById("mapCategory").value;
 
-  data=rawRows.map(r=>({
-    Title:r[t]||"",
-    Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
-    Vendor:v?r[v]||"":"",
-    Date:d?r[d]||"":"",
-    Category:"",
-    Receipt:"",
-    Splits:[]
-  }));
+data=rawRows.map(r=>({
+Title:r[t]||"",
+Amount:parseFloat(String(r[a]).replace(/[$,]/g,""))||0,
+Vendor:v?r[v]||"":"",
+Date:d?r[d]||"",
+Category:c?(r[c]||""):"",
+Splits:[]
+}));
 
-  document.getElementById("mappingPanel").style.display="none";
-  document.getElementById("app").style.display="block";
+document.getElementById("mappingPanel").style.display="none";
+document.getElementById("app").style.display="block";
 
-  renderCategories();
-  showCard();
-  updateTotals();
-  updateProgress();
-  saveProgress();
+renderCategories();
+showCard();
+updateTotals();
+updateProgress();
 }
 
-/* =========================================================
-   Receipt logic
-========================================================= */
+/* ================= NAVIGATION ================= */
 
-function triggerReceiptUpload(){
-  if(!data.length) return;
-  const input = document.getElementById("receiptUpload");
-  input.value = ""; // allow re-upload same file
-  input.click();
+function passesFilter(index){
+if(document.getElementById("uncategorizedToggle").checked){
+if(data[index].Category)return false;
 }
-
-document.getElementById("receiptUpload").addEventListener("change", function(e){
-  if(!data.length) return;
-  const file = e.target.files[0];
-  if(!file) return;
-
-  const reader = new FileReader();
-  reader.onload = function(evt){
-    const img = new Image();
-    img.onload = function(){
-      const canvas = document.createElement("canvas");
-      const maxWidth = 1000;
-      const scale = Math.min(1, maxWidth / img.width);
-
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-      data[currentIndex].Receipt = canvas.toDataURL("image/jpeg", 0.7);
-      saveProgress();
-      showCard();
-      alert("Receipt saved.");
-    };
-    img.src = evt.target.result;
-  };
-  reader.readAsDataURL(file);
-});
-
-function viewReceipt(){
-  if(!data.length) return;
-  const item = data[currentIndex];
-  if(!item.Receipt){
-    alert("No receipt uploaded.");
-    return;
-  }
-
-  document.getElementById("modalTitle").innerText="Receipt";
-  document.getElementById("modalBody").innerHTML=
-    `<img id="receiptImage" src="${item.Receipt}" style="max-width:100%;cursor:zoom-in;transition:transform .2s ease;">`;
-
-  document.getElementById("infoModal").style.display="block";
-
-  let zoom=false;
-  const img=document.getElementById("receiptImage");
-  img.onclick=function(){
-    zoom=!zoom;
-    img.style.transform=zoom?"scale(2)":"scale(1)";
-    img.style.cursor=zoom?"zoom-out":"zoom-in";
-  };
-}
-
-/* =========================================================
-   Split logic
-========================================================= */
-
-function openSplitEditor(){
-  if(!data.length) return;
-  const item = data[currentIndex];
-  if(!item.Splits) item.Splits = [];
-
-  const select=document.getElementById("splitCategory");
-  select.innerHTML="";
-  categories.forEach(c=>{
-    const opt=document.createElement("option");
-    opt.value=c.name;
-    opt.innerText=c.name;
-    select.appendChild(opt);
-  });
-
-  document.getElementById("splitAmount").value="";
-  renderSplitList();
-  document.getElementById("splitModal").style.display="block";
-}
-
-function renderSplitList(){
-  const item=data[currentIndex];
-  if(!item.Splits) item.Splits=[];
-  let html="";
-  let total=0;
-
-  item.Splits.forEach((s,i)=>{
-    total+=Number(s.amount||0);
-    html+=`
-    <div style="display:flex;justify-content:space-between;margin-bottom:6px;align-items:center;">
-      <div>${s.category}</div>
-      <div>$${Number(s.amount||0).toFixed(2)}</div>
-      <button onclick="removeSplit(${i})">X</button>
-    </div>`;
-  });
-
-  html+=`<hr>Split Total: $${total.toFixed(2)}<br>Original: $${Number(item.Amount||0).toFixed(2)}`;
-  document.getElementById("splitList").innerHTML=html;
-}
-
-function addSplit(){
-  if(!data.length) return;
-  const amt=parseFloat(document.getElementById("splitAmount").value);
-  const cat=document.getElementById("splitCategory").value;
-  if(!amt || amt<=0) return;
-
-  if(!data[currentIndex].Splits) data[currentIndex].Splits=[];
-  data[currentIndex].Splits.push({amount:amt,category:cat});
-  document.getElementById("splitAmount").value="";
-  renderSplitList();
-}
-
-function removeSplit(i){
-  data[currentIndex].Splits.splice(i,1);
-  renderSplitList();
-}
-
-function saveSplits(){
-  const item=data[currentIndex];
-  if(!item.Splits) item.Splits=[];
-  const splitTotal=item.Splits.reduce((a,b)=>a+Number(b.amount||0),0);
-
-  if(Math.abs(splitTotal-Number(item.Amount||0))>0.01){
-    alert("Split must equal original amount.");
-    return;
-  }
-
-  saveProgress();
-  updateTotals();
-  updateProgress();
-  closeSplit();
-  showCard();
-}
-
-function closeSplit(){
-  document.getElementById("splitModal").style.display="none";
-}
-
-/* =========================================================
-   Category buttons + modal info
-========================================================= */
-
-function renderCategories(){
-  const div=document.getElementById("categoryButtons");
-  div.innerHTML="";
-  categories.forEach(c=>{
-    const row=document.createElement("div");
-    row.className="category-row";
-
-    const btn=document.createElement("button");
-    btn.className="category-btn "+c.class;
-    btn.innerText=c.name;
-    btn.onclick=()=>categorize(c.name);
-
-    const info=document.createElement("button");
-    info.className="info-btn";
-    info.innerText="ⓘ";
-    info.onclick=()=>showInfo(c);
-
-    row.appendChild(btn);
-    row.appendChild(info);
-    div.appendChild(row);
-  });
-}
-
-function showInfo(cat){
-  document.getElementById("modalTitle").innerText=cat.name;
-  document.getElementById("modalBody").innerText=cat.info;
-  document.getElementById("infoModal").style.display="block";
-}
-
-function closeModal(){
-  document.getElementById("infoModal").style.display="none";
-}
-
-/* =========================================================
-   Navigation + card rendering
-========================================================= */
-
-function categorize(name){
-  const item = data[currentIndex];
-
-  if(item.Splits && item.Splits.length){
-    const ok = confirm("This transaction has splits. Assigning a single category will clear the splits. Continue?");
-    if(!ok) return;
-    item.Splits = [];
-  }
-
-  item.Category=name;
-
-  if(currentIndex<data.length-1) currentIndex++;
-  showCard();
-  updateTotals();
-  updateProgress();
-  saveProgress();
-}
-
-function goBack(){
-  if(!data.length) return;
-  const receiptsOnly = document.getElementById("receiptOnlyToggle").checked;
-
-  if(!receiptsOnly){
-    if(currentIndex>0){
-      currentIndex--;
-      showCard();
-      saveProgress();
-    }
-    return;
-  }
-
-  // receipts-only navigation
-  for(let i=currentIndex-1;i>=0;i--){
-    if(data[i].Receipt){
-      currentIndex=i;
-      showCard();
-      saveProgress();
-      return;
-    }
-  }
-  alert("No earlier receipts found.");
+return true;
 }
 
 function goNext(){
-  if(!data.length) return;
-  const receiptsOnly = document.getElementById("receiptOnlyToggle").checked;
+for(let i=currentIndex+1;i<data.length;i++){
+if(passesFilter(i)){
+currentIndex=i;
+showCard();
+return;
+}}
+}
 
-  if(!receiptsOnly){
-    if(currentIndex<data.length-1){
-      currentIndex++;
-      showCard();
-      saveProgress();
-    }
-    return;
-  }
+function goBack(){
+for(let i=currentIndex-1;i>=0;i--){
+if(passesFilter(i)){
+currentIndex=i;
+showCard();
+return;
+}}
+}
 
-  // receipts-only navigation
-  for(let i=currentIndex+1;i<data.length;i++){
-    if(data[i].Receipt){
-      currentIndex=i;
-      showCard();
-      saveProgress();
-      return;
-    }
-  }
-  alert("No more receipts found.");
+function jumpToFirstUncategorized(){
+for(let i=0;i<data.length;i++){
+if(!data[i].Category){
+currentIndex=i;
+showCard();
+return;
+}}
+alert("No Uncategorized transactions found.");
+}
+
+/* ================= DISPLAY ================= */
+
+function renderCategories(){
+const div=document.getElementById("categoryButtons");
+div.innerHTML="";
+categories.forEach(c=>{
+const row=document.createElement("div");
+row.className="category-row";
+
+const btn=document.createElement("button");
+btn.className="category-btn "+c.class;
+btn.innerText=c.name;
+btn.onclick=()=>categorize(c.name);
+btn.onmouseenter=()=>previewCategory=c.name,updateTotals();
+btn.onmouseleave=()=>previewCategory=null,updateTotals();
+
+row.appendChild(btn);
+div.appendChild(row);
+});
+}
+
+function categorize(name){
+data[currentIndex].Category=name;
+previewCategory=null;
+updateTotals();
+updateProgress();
+showCard();
 }
 
 function showCard(){
-  if(!data.length){
-    renderSuggestion(null);
-    return;
-  }
-
-  const item=data[currentIndex];
-
-  // normalize older saves
-  if(!("Receipt" in item)) item.Receipt="";
-  if(!("Splits" in item) || !Array.isArray(item.Splits)) item.Splits=[];
-
-  const receiptBadge = item.Receipt ? " 📎" : "";
-  const splitBadge = item.Splits.length ? " (SPLIT)" : "";
-
-  document.getElementById("cardTitle").innerText=item.Title + receiptBadge + splitBadge;
-
-  document.getElementById("cardMeta").innerHTML=
-    (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-    (item.Date?`Date: ${item.Date}<br>`:"")+
-    `Amount: $${Number(item.Amount||0).toFixed(2)}`;
-
-  document.getElementById("currentCategory").innerText =
-    item.Splits.length ? "Current: SPLIT" : ("Current: "+(item.Category||"—"));
-
-  renderSuggestion(item);
+if(!data.length)return;
+const item=data[currentIndex];
+document.getElementById("cardTitle").innerText=item.Title;
+document.getElementById("cardMeta").innerHTML=
+(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+(item.Date?`Date: ${item.Date}<br>`:"")+
+`Amount: $${item.Amount.toFixed(2)}`;
+document.getElementById("currentCategory").innerText="Current: "+(item.Category||"—");
 }
 
-/* =========================================================
-   Totals + progress (respect splits)
-========================================================= */
+/* ================= TOTALS (LIVE PREVIEW) ================= */
 
 function updateTotals(){
-  let totals={};
-  categories.forEach(c=>totals[c.name]=0);
+let totals={};
+categories.forEach(c=>totals[c.name]=0);
 
-  data.forEach(d=>{
-    if(d.Splits && d.Splits.length){
-      d.Splits.forEach(s=>{
-        if(totals[s.category]!=null){
-          totals[s.category]+=Number(s.amount||0);
-        }
-      });
-    } else if(d.Category){
-      if(totals[d.Category]!=null){
-        totals[d.Category]+=Number(d.Amount||0);
-      }
-    }
-  });
+data.forEach((d,i)=>{
+if(d.Category){
+totals[d.Category]+=d.Amount;
+}
+});
 
-  const div=document.getElementById("totals");
-  div.innerHTML="";
-  Object.keys(totals).forEach(k=>{
-    div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
-  });
+// preview logic
+if(previewCategory && !data[currentIndex].Category){
+totals[previewCategory]+=data[currentIndex].Amount;
+}
+
+const div=document.getElementById("totals");
+div.innerHTML="";
+Object.keys(totals).forEach(k=>{
+if(previewCategory===k && !data[currentIndex].Category){
+div.innerHTML+=`<div class="previewRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+}else{
+div.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totals[k].toFixed(2)}</div></div>`;
+}
+});
 }
 
 function updateProgress(){
-  const total=data.length;
-  const done=data.filter(d=>d.Category || (d.Splits && d.Splits.length)).length;
-  const percent=total?Math.round((done/total)*100):0;
-  document.getElementById("progressBar").style.width=percent+"%";
-  document.getElementById("progressText").innerText=
-    `${done} of ${total} categorized (${percent}%)`;
+const total=data.length;
+const done=data.filter(d=>d.Category).length;
+const percent=total?Math.round((done/total)*100):0;
+document.getElementById("progressBar").style.width=percent+"%";
+document.getElementById("progressText").innerText=
+`${done} of ${total} categorized (${percent}%)`;
 }
-
-/* =========================================================
-   Persistence
-========================================================= */
-
-function saveProgress(){
-  localStorage.setItem(STORAGE_KEY,JSON.stringify({data,currentIndex}));
-}
-
-function loadProgress(){
-  const saved=localStorage.getItem(STORAGE_KEY);
-  if(!saved)return;
-  const parsed=JSON.parse(saved);
-  data=parsed.data||[];
-  currentIndex=parsed.currentIndex||0;
-
-  // normalize older saves
-  data.forEach(r=>{
-    if(!("Receipt" in r)) r.Receipt="";
-    if(!("Splits" in r) || !Array.isArray(r.Splits)) r.Splits=[];
-  });
-
-  if(data.length){
-    document.getElementById("app").style.display="block";
-    renderCategories();
-    showCard();
-    updateTotals();
-    updateProgress();
-  }
-}
-
-function clearProgress(){
-  localStorage.removeItem(STORAGE_KEY);
-  location.reload();
-}
-
-function exportExcel(){
-  const ws=XLSX.utils.json_to_sheet(data);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"Categorized");
-  XLSX.writeFile(wb,"Categorized.xlsx");
-}
-
-window.onload=loadProgress;
 
 </script>
 </body>
