@@ -1,4 +1,4 @@
-22
+23
 
 <!DOCTYPE html>
 <html>
@@ -93,7 +93,7 @@ input[type="number"], input[type="text"]{
 
 <script>
 
-const STORAGE_KEY = "bathhouse_categorizer_v13";
+const STORAGE_KEY = "bathhouse_categorizer_v14";
 
 let rawRows = [];
 let data = [];
@@ -126,26 +126,10 @@ document.getElementById("csvFile").addEventListener("change", function(e){
   Papa.parse(file,{
     header:true,
     skipEmptyLines:true,
-    worker:true,
     complete:function(res){
-
-      if(!res.data || !res.data.length){
-        alert("CSV failed to parse.");
-        return;
-      }
-
       rawRows = res.data;
       headers = Object.keys(rawRows[0]);
-
-      if(!headers.length){
-        alert("No headers detected.");
-        return;
-      }
-
       showMapping();
-    },
-    error:function(err){
-      alert("Parse error: " + err.message);
     }
   });
 
@@ -159,9 +143,9 @@ function showMapping(){
     <h4>Map Columns</h4>
     Title:<br>${dropdown("mapTitle")}<br><br>
     Amount:<br>${dropdown("mapAmount")}<br><br>
-    Vendor (optional):<br>${dropdown("mapVendor",true)}<br><br>
-    Date (optional):<br>${dropdown("mapDate",true)}<br><br>
-    Existing Category (optional):<br>${dropdown("mapExistingCategory",true)}<br><br>
+    Vendor:<br>${dropdown("mapVendor",true)}<br><br>
+    Date:<br>${dropdown("mapDate",true)}<br><br>
+    Existing Category:<br>${dropdown("mapExistingCategory",true)}<br><br>
     <button onclick="confirmMapping()">Confirm</button>
   `;
 }
@@ -169,39 +153,30 @@ function showMapping(){
 function dropdown(id, allowEmpty=false){
   let html = `<select id="${id}">`;
   if(allowEmpty) html += `<option value="">--None--</option>`;
-  headers.forEach(h => {
-    html += `<option value="${h}">${h}</option>`;
-  });
+  headers.forEach(h => html += `<option value="${h}">${h}</option>`);
   html += `</select>`;
   return html;
 }
 
-function normalizeCategory(cat){
-  if(!cat) return "";
-  return String(cat)
-    .replace(/–/g,"-")
-    .replace(/\s+/g," ")
-    .trim();
-}
-
 function confirmMapping(){
 
-  const t = document.getElementById("mapTitle").value;
-  const a = document.getElementById("mapAmount").value;
-  const v = document.getElementById("mapVendor").value;
-  const d = document.getElementById("mapDate").value;
-  const c = document.getElementById("mapExistingCategory").value;
+  const t = mapTitle.value;
+  const a = mapAmount.value;
+  const v = mapVendor.value;
+  const d = mapDate.value;
+  const c = mapExistingCategory.value;
 
   data = rawRows.map(r => ({
     Title: r[t] || "",
     Amount: parseFloat(String(r[a] || "").replace(/[$,]/g,"")) || 0,
-    Vendor: v ? (r[v] || "") : "",
-    Date: d ? (r[d] || "") : "",
-    Category: normalizeCategory(c ? r[c] : "")
+    Vendor: v ? r[v] : "",
+    Date: d ? r[d] : "",
+    Category: c ? r[c] : "",
+    Splits: []
   }));
 
-  document.getElementById("mappingPanel").style.display = "none";
-  document.getElementById("app").style.display = "block";
+  mappingPanel.style.display="none";
+  app.style.display="block";
 
   renderCategories();
   showCard();
@@ -211,8 +186,10 @@ function confirmMapping(){
 }
 
 function renderCategories(){
-  const div = document.getElementById("categoryButtons");
+  const div = categoryButtons;
   div.innerHTML = "";
+
+  // Regular categories
   categories.forEach(c => {
     const btn = document.createElement("button");
     btn.className = "category-btn " + c.class;
@@ -220,10 +197,80 @@ function renderCategories(){
     btn.onclick = () => categorize(c.name);
     div.appendChild(btn);
   });
+
+  // Not Categorized button
+  const nc = document.createElement("button");
+  nc.className = "category-btn special";
+  nc.style.background = "#999";
+  nc.innerText = "Not Categorized";
+  nc.onclick = () => categorize("");
+  div.appendChild(nc);
+
+  // Split button
+  const splitBtn = document.createElement("button");
+  splitBtn.className = "category-btn expense";
+  splitBtn.style.background="#ff9800";
+  splitBtn.innerText = "Split Transaction";
+  splitBtn.onclick = showSplitUI;
+  div.appendChild(splitBtn);
 }
 
 function categorize(name){
-  data[currentIndex].Category = name;
+  const item = data[currentIndex];
+  item.Category = name;
+  item.Splits = [];
+  nextItem();
+}
+
+function showSplitUI(){
+
+  const item = data[currentIndex];
+
+  let html = `
+  <div style="margin-top:10px;">
+  <strong>Split Total: $${item.Amount.toFixed(2)}</strong><br><br>
+  `;
+
+  categories.forEach((c,i)=>{
+    html += `
+      <div style="margin-bottom:6px;">
+        ${c.name}<br>
+        <input type="number" step="0.01" id="split_${i}" placeholder="0.00">
+      </div>
+    `;
+  });
+
+  html += `<button onclick="saveSplit()">Save Split</button></div>`;
+
+  document.getElementById("cardMeta").innerHTML += html;
+}
+
+function saveSplit(){
+
+  const item = data[currentIndex];
+  let total = 0;
+  let splits = [];
+
+  categories.forEach((c,i)=>{
+    const val = parseFloat(document.getElementById("split_"+i).value) || 0;
+    if(val > 0){
+      splits.push({Category:c.name, Amount:val});
+      total += val;
+    }
+  });
+
+  if(Math.abs(total - item.Amount) > 0.01){
+    alert("Split total must equal original amount.");
+    return;
+  }
+
+  item.Splits = splits;
+  item.Category = "SPLIT";
+
+  nextItem();
+}
+
+function nextItem(){
   if(currentIndex < data.length-1) currentIndex++;
   showCard();
   updateTotals();
@@ -232,72 +279,77 @@ function categorize(name){
 }
 
 function goBack(){
-  if(currentIndex > 0){
+  if(currentIndex>0){
     currentIndex--;
     showCard();
-    saveProgress();
   }
 }
 
 function goNext(){
-  if(currentIndex < data.length-1){
+  if(currentIndex<data.length-1){
     currentIndex++;
     showCard();
-    saveProgress();
   }
 }
 
 function showCard(){
-  if(!data.length) return;
 
   const item = data[currentIndex];
 
-  document.getElementById("cardTitle").innerText = item.Title;
+  cardTitle.innerText = item.Title;
 
-  document.getElementById("cardMeta").innerHTML =
+  cardMeta.innerHTML =
     (item.Vendor ? `Vendor: ${item.Vendor}<br>` : "") +
     (item.Date ? `Date: ${item.Date}<br>` : "") +
-    `Amount: $${Number(item.Amount).toFixed(2)}`;
+    `Amount: $${item.Amount.toFixed(2)}`;
 
-  document.getElementById("currentCategory").innerText =
-    "Current: " + (item.Category || "—");
+  currentCategory.innerText =
+    item.Splits.length
+      ? "Split into multiple categories"
+      : "Current: " + (item.Category || "—");
 }
 
 function updateTotals(){
+
   let totals = {};
   categories.forEach(c => totals[c.name] = 0);
 
-  data.forEach(d => {
-    if(d.Category && totals[d.Category] != null){
-      totals[d.Category] += Number(d.Amount || 0);
+  data.forEach(d=>{
+
+    if(d.Splits.length){
+      d.Splits.forEach(s=>{
+        totals[s.Category] += s.Amount;
+      });
     }
+    else if(d.Category && totals[d.Category] != null){
+      totals[d.Category] += d.Amount;
+    }
+
   });
 
-  const div = document.getElementById("totals");
-  div.innerHTML = "";
+  totalsDiv = document.getElementById("totals");
+  totalsDiv.innerHTML = "";
 
-  Object.keys(totals).forEach(k => {
-    div.innerHTML += `
-      <div class="totalRow">
-        <div>${k}</div>
-        <div>$${totals[k].toFixed(2)}</div>
-      </div>
-    `;
+  Object.keys(totals).forEach(k=>{
+    totalsDiv.innerHTML += `
+    <div class="totalRow">
+      <div>${k}</div>
+      <div>$${totals[k].toFixed(2)}</div>
+    </div>`;
   });
 }
 
 function updateProgress(){
   const total = data.length;
-  const done = data.filter(d => d.Category).length;
+  const done = data.filter(d => d.Category && d.Category !== "").length;
   const percent = total ? Math.round((done/total)*100) : 0;
 
-  document.getElementById("progressBar").style.width = percent + "%";
-  document.getElementById("progressText").innerText =
-    `${done} of ${total} categorized (${percent}%)`;
+  progressBar.style.width = percent+"%";
+  progressText.innerText = `${done} of ${total} categorized (${percent}%)`;
 }
 
 function saveProgress(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({data, currentIndex}));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({data,currentIndex}));
 }
 
 function loadProgress(){
@@ -309,7 +361,7 @@ function loadProgress(){
   currentIndex = parsed.currentIndex || 0;
 
   if(data.length){
-    document.getElementById("app").style.display = "block";
+    app.style.display="block";
     renderCategories();
     showCard();
     updateTotals();
@@ -323,7 +375,26 @@ function clearProgress(){
 }
 
 function exportExcel(){
-  const ws = XLSX.utils.json_to_sheet(data);
+
+  let exportData = [];
+
+  data.forEach(d=>{
+    if(d.Splits.length){
+      d.Splits.forEach(s=>{
+        exportData.push({
+          Title:d.Title,
+          Vendor:d.Vendor,
+          Date:d.Date,
+          Category:s.Category,
+          Amount:s.Amount
+        });
+      });
+    } else {
+      exportData.push(d);
+    }
+  });
+
+  const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Categorized");
   XLSX.writeFile(wb, "Categorized.xlsx");
