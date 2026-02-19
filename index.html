@@ -1,4 +1,5 @@
-54
+55
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -14,8 +15,9 @@ body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; margin:0; paddin
 h2 { text-align:center; }
 .panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px;}
 button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-weight:600;}
-input { padding:10px; border-radius:10px; border:1px solid #ddd; width:100%; margin-bottom:8px;}
-.navBtn { width:32%; background:#444; color:white;}
+input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:100%;}
+.navBtn { width:30%; background:#444; color:white;}
+.searchBtn { background:#1565c0; color:white; width:30%;}
 .category-btn { width:100%; margin-bottom:6px; color:white;}
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
@@ -38,7 +40,7 @@ z-index:9999;
 .modalBox {
 background:white;
 width:95%;
-max-width:1100px;
+max-width:900px;
 max-height:90%;
 overflow:auto;
 border-radius:14px;
@@ -56,13 +58,10 @@ border-bottom:1px solid #eee;
 cursor:pointer;
 }
 .modalItem:hover { background:#f5f5f5; }
-.searchBtn {
-background:#1565c0;
-color:white;
-}
 .clearBtn {
 background:#c62828;
 color:white;
+margin-top:10px;
 }
 </style>
 </head>
@@ -94,7 +93,7 @@ color:white;
 <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
 <button class="navBtn" onclick="goBack()">⬅ Back</button>
 <button class="navBtn" onclick="goNext()">Next ➡</button>
-<button class="navBtn searchBtn" onclick="openSearchModal()">Search</button>
+<button class="searchBtn" onclick="openSearchModal()">Search</button>
 </div>
 
 <h4>Choose Category</h4>
@@ -124,16 +123,34 @@ let rawRows=[];
 let headers=[];
 let data=[];
 let currentIndex=0;
-let searchResults=null;
+let previousIndex=null;
 
-/* ---------- SEARCH ---------- */
+const categories=[
+{name:"COGS - Ingredients",class:"cogs"},
+{name:"COGS - Packaging",class:"cogs"},
+{name:"COGS - Resale Inventory",class:"cogs"},
+{name:"COGS - Production Supplies",class:"cogs"},
+{name:"COGS - Shipping from Suppliers",class:"cogs"},
+{name:"Equipment",class:"expense"},
+{name:"Advertising & Marketing",class:"expense"},
+{name:"Website & Software",class:"expense"},
+{name:"Merchant Processing Fees",class:"expense"},
+{name:"Insurance",class:"expense"},
+{name:"Utilities",class:"expense"},
+{name:"Professional Services",class:"expense"},
+{name:"Needs Review",class:"special"}
+];
+
+/* SEARCH MODAL */
 
 function openSearchModal(){
+previousIndex=currentIndex;
+
 modalTitle.innerText="Search Transactions";
 
 modalContent.innerHTML=`
-<input type="text" id="searchInput" placeholder="Search by Vendor or Title..." oninput="performSearch()">
-<input type="number" id="searchAmount" placeholder="Search by Amount..." oninput="performSearch()">
+<input type="text" id="searchVendor" placeholder="Search Vendor or Title..." oninput="runSearch()">
+<input type="number" id="searchAmount" placeholder="Search Amount..." oninput="runSearch()">
 <div id="searchResults"></div>
 <button class="clearBtn" onclick="clearSearch()">Clear Search</button>
 `;
@@ -141,14 +158,14 @@ modalContent.innerHTML=`
 openModal();
 }
 
-function performSearch(){
-const text=document.getElementById("searchInput").value.toLowerCase();
+function runSearch(){
+const text=document.getElementById("searchVendor").value.toLowerCase();
 const amount=document.getElementById("searchAmount").value;
 
-searchResults=data.map((d,i)=>({d,i})).filter(obj=>{
-let matchText = text ? 
-(obj.d.Title.toLowerCase().includes(text) || 
-(obj.d.Vendor && obj.d.Vendor.toLowerCase().includes(text))) 
+const results=data.map((d,i)=>({d,i})).filter(obj=>{
+let matchText = text ?
+(obj.d.Title.toLowerCase().includes(text) ||
+(obj.d.Vendor && obj.d.Vendor.toLowerCase().includes(text)))
 : true;
 
 let matchAmount = amount ? obj.d.Amount==parseFloat(amount) : true;
@@ -159,20 +176,29 @@ return matchText && matchAmount;
 const resultsDiv=document.getElementById("searchResults");
 resultsDiv.innerHTML="";
 
-searchResults.slice(0,50).forEach(obj=>{
+results.slice(0,50).forEach(obj=>{
 resultsDiv.innerHTML+=`
-<div class="modalItem" onclick="jumpToItem(${obj.i}); closeModal();">
+<div class="modalItem" onclick="selectSearchResult(${obj.i})">
 ${obj.d.Title} — ${obj.d.Vendor || ""} — $${obj.d.Amount.toFixed(2)}
 </div>`;
 });
 }
 
-function clearSearch(){
-searchResults=null;
+function selectSearchResult(index){
+currentIndex=index;
 closeModal();
+showCard();
 }
 
-/* ---------- CSV ---------- */
+function clearSearch(){
+if(previousIndex!==null){
+currentIndex=previousIndex;
+}
+closeModal();
+showCard();
+}
+
+/* CSV */
 
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
@@ -189,7 +215,7 @@ showMapping();
 });
 });
 
-/* ---------- Mapping ---------- */
+/* Mapping */
 
 function showMapping(){
 mappingPanel.style.display="block";
@@ -240,40 +266,38 @@ updateProgress();
 showCard();
 }
 
-/* ---------- BASIC FUNCTIONS ---------- */
-
-function jumpToItem(index){
-currentIndex=index;
-showCard();
-}
-
-function openModal(){
-modalOverlay.style.display="flex";
-}
-
-function closeModal(){
-modalOverlay.style.display="none";
-modalContent.innerHTML="";
-}
-
-modalOverlay.addEventListener("click",function(e){
-if(e.target===modalOverlay) closeModal();
-});
-
-document.addEventListener("keydown",function(e){
-if(e.key==="Escape") closeModal();
-});
-
-/* ---------- NAVIGATION ---------- */
+/* NAVIGATION */
 
 function goNext(){ if(currentIndex<data.length-1){currentIndex++;showCard();}}
 function goBack(){ if(currentIndex>0){currentIndex--;showCard();}}
 
-/* ---------- SHOW CARD ---------- */
+/* CATEGORY BUTTONS */
+
+function renderCategories(){
+const div=document.getElementById("categoryButtons");
+div.innerHTML="";
+categories.forEach(cat=>{
+const btn=document.createElement("button");
+btn.className="category-btn "+cat.class;
+btn.innerText=cat.name;
+btn.onclick=()=>categorize(cat.name);
+div.appendChild(btn);
+});
+}
+
+/* CATEGORIZE */
+
+function categorize(name){
+data[currentIndex].Category=name;
+updateTotals();
+updateProgress();
+goNext();
+}
+
+/* SHOW CARD */
 
 function showCard(){
 if(!data.length)return;
-
 const item=data[currentIndex];
 cardTitle.innerText=item.Title;
 
@@ -285,7 +309,7 @@ cardMeta.innerHTML=
 currentCategory.innerText="Current: "+(item.Category||"—");
 }
 
-/* ---------- TOTALS ---------- */
+/* TOTALS */
 
 function updateTotals(){
 let totalsObj={};
@@ -306,7 +330,7 @@ totals.innerHTML+=`<div class="totalRow">
 });
 }
 
-/* ---------- PROGRESS ---------- */
+/* PROGRESS */
 
 function updateProgress(){
 const total=data.length;
@@ -316,7 +340,7 @@ progressBar.style.width=percent+"%";
 progressText.innerText=`${done} of ${total} categorized (${percent}%)`;
 }
 
-/* ---------- EXPORT ---------- */
+/* EXPORT */
 
 function exportExcel(){
 const ws=XLSX.utils.json_to_sheet(data);
@@ -324,6 +348,25 @@ const wb=XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb,ws,"Categorized");
 XLSX.writeFile(wb,"Categorized.xlsx");
 }
+
+/* MODAL CONTROLS */
+
+function openModal(){
+modalOverlay.style.display="flex";
+}
+
+function closeModal(){
+modalOverlay.style.display="none";
+modalContent.innerHTML="";
+}
+
+modalOverlay.addEventListener("click",function(e){
+if(e.target===modalOverlay) closeModal();
+});
+
+document.addEventListener("keydown",function(e){
+if(e.key==="Escape") closeModal();
+});
 
 </script>
 </body>
