@@ -1,4 +1,4 @@
-66
+67
 <!DOCTYPE html>
 <html>
 <head>
@@ -14,7 +14,14 @@ body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; margin:0; paddin
 h2 { text-align:center; }
 .panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px;}
 button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-weight:600;}
-input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:100%;}
+input, select {
+padding:10px;
+border-radius:10px;
+border:1px solid #ddd;
+width:100%;
+font-size:16px;
+}
+
 .navBtn { width:48%; background:#444; color:white;}
 .category-btn { width:100%; margin-bottom:6px; color:white;}
 .cogs{background:#2e7d32;}
@@ -161,7 +168,7 @@ const categories=[
 {name:"COGS - Shipping from Suppliers",class:"cogs"},
 {name:"Equipment",class:"expense"},
 {name:"Advertising & Marketing",class:"expense"},
-{name:"Website & Software",class:"expense"},
+{name:"Software",class:"expense"},
 {name:"Merchant Processing Fees",class:"expense"},
 {name:"Insurance",class:"expense"},
 {name:"Utilities",class:"expense"},
@@ -526,10 +533,27 @@ openModal();
 }
 
 function jumpToItem(index){
-currentIndex=index;
+
+// Clear search filter so the item is visible
+activeSearchFilter = null;
+const clearBtn = document.getElementById("clearSearchBtn");
+if(clearBtn) clearBtn.style.display = "none";
+
+// Ensure we are not restricted by Uncategorized filter
+if(showOnlyUncategorized && data[index].Category){
+showOnlyUncategorized = false;
+const toggleBtn = document.getElementById("filterToggle");
+if(toggleBtn) toggleBtn.innerText = "Show Only Uncategorized";
+}
+
+currentIndex = index;
 closeModal();
 showCard();
+
+// Scroll to top for clarity (optional but helpful UX)
+window.scrollTo({ top: 0, behavior: "smooth" });
 }
+
 
 /* Modal Controls */
 
