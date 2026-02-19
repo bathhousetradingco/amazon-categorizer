@@ -628,13 +628,35 @@ filterBtn.onclick=toggleFilter;
 div.appendChild(filterBtn);
 }
 
-function categorize(name){
-data[currentIndex].Category=name;
-data[currentIndex].Splits=[];
+async function categorize(name){
+
+const item = data[currentIndex];
+
+item.Category = name;
+item.Splits = [];
+
 updateTotals();
 updateProgress();
+
+if(item.id){
+  const { error } = await supabaseClient
+    .from("transactions")
+    .update({
+      category: name,
+      splits: []
+    })
+    .eq("id", item.id);
+
+  if(error){
+    console.error("Category save error:", error);
+    alert("Error saving category to database.");
+    return;
+  }
+}
+
 goNext();
 }
+
 
 /* Split Modal with Side by Side */
 
@@ -692,27 +714,52 @@ el.innerText="Remaining: $"+remaining.toFixed(2);
 el.style.color=Math.abs(remaining)<0.01?"green":remaining<0?"red":"orange";
 }
 
-function saveSplit(){
-const item=data[currentIndex];
-let total=0,splits=[];
+async function saveSplit(){
+
+const item = data[currentIndex];
+
+let total = 0;
+let splits = [];
+
 categories.forEach((c,i)=>{
-const val=parseFloat(document.getElementById("split_"+i).value)||0;
-if(val>0){
-splits.push({Category:c.name,Amount:val});
-total+=val;
-}
+  const val = parseFloat(document.getElementById("split_"+i).value) || 0;
+  if(val > 0){
+    splits.push({Category: c.name, Amount: val});
+    total += val;
+  }
 });
-if(Math.abs(total-item.Amount)>0.01){
-alert("Split must equal total.");
-return;
+
+if(Math.abs(total - item.Amount) > 0.01){
+  alert("Split must equal total.");
+  return;
 }
-item.Splits=splits;
-item.Category="SPLIT";
+
+item.Splits = splits;
+item.Category = "SPLIT";
+
 updateTotals();
 updateProgress();
+
+if(item.id){
+  const { error } = await supabaseClient
+    .from("transactions")
+    .update({
+      category: "SPLIT",
+      splits: splits
+    })
+    .eq("id", item.id);
+
+  if(error){
+    console.error("Split save error:", error);
+    alert("Error saving split to database.");
+    return;
+  }
+}
+
 closeModal();
 goNext();
 }
+
 
 /* Category Breakdown Modal */
 
