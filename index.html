@@ -188,6 +188,7 @@ async function loadTransactions() {
       Amount: r.amount,
       Category: r.category || "",
       Splits: r.splits || [],
+      receipt_url: r.receipt_url,
       Receipt: null
     }));
 
@@ -502,46 +503,118 @@ async function confirmMapping(){
 
 /* Receipt */
 
-function attachReceipt(e){
-const file=e.target.files[0];
-if(!file)return;
-const reader=new FileReader();
-reader.onload=function(ev){
-data[currentIndex].Receipt={
-name:file.name,
-data:ev.target.result,
-type:file.type
-};
-showCard();
-};
-reader.readAsDataURL(file);
+async function attachReceipt(e){
+
+const file = e.target.files[0];
+if(!file) return;
+
+const item = data[currentIndex];
+if(!item.id){
+  alert("Transaction must be saved before attaching receipt.");
+  return;
 }
 
-function removeReceipt(){
-data[currentIndex].Receipt=null;
-showCard();
+const fileExt = file.name.split('.').pop();
+const filePath = `${item.id}.${fileExt}`;
+
+const { error: uploadError } = await supabaseClient
+  .storage
+  .from("receipts")
+  .upload(filePath, file, {
+    upsert: true
+  });
+
+if(uploadError){
+  console.error("Upload error:", uploadError);
+  alert("Error uploading receipt.");
+  return;
 }
 
-function viewReceipt(){
-const receipt=data[currentIndex].Receipt;
-if(!receipt)return;
+const { data: publicUrlData } = supabaseClient
+  .storage
+  .from("receipts")
+  .getPublicUrl(filePath);
 
-modalTitle.innerText="Receipt Preview";
-let html=`<div class="receiptPreview">`;
+const publicUrl = publicUrlData.publicUrl;
 
-if(receipt.type.includes("image")){
-html+=`<img src="${receipt.data}">`;
-}
-else if(receipt.type==="application/pdf"){
-html+=`<iframe src="${receipt.data}"></iframe>`;
-}
-else{
-html+=`<p>Unsupported file type.</p>`;
+const { error: updateError } = await supabaseClient
+  .from("transactions")
+  .update({ receipt_url: filePath })
+  .eq("id", item.id);
+
+if(updateError){
+  console.error("DB update error:", updateError);
+  alert("Error saving receipt reference.");
+  return;
 }
 
-html+=`</div>`;
-modalContent.innerHTML=html;
+item.receipt_url = filePath;
+
+alert("Receipt saved successfully.");
+}
+
+async function viewReceipt(){
+
+const item = data[currentIndex];
+if(!item.id) return;
+
+if(!item.receipt_url){
+  alert("No receipt attached.");
+  return;
+}
+
+const { data: signedData, error } = await supabaseClient
+  .storage
+  .from("receipts")
+  .createSignedUrl(item.receipt_url, 60);
+
+if(error){
+  console.error(error);
+  alert("Unable to load receipt.");
+  return;
+}
+
+modalTitle.innerText = "Receipt Preview";
+
+modalContent.innerHTML = `
+<div class="receiptPreview">
+<iframe src="${signedData.signedUrl}"></iframe>
+</div>
+`;
+
 openModal();
+}
+async function removeReceipt(){
+
+const item = data[currentIndex];
+if(!item.id || !item.receipt_url) return;
+
+const { error: storageError } = await supabaseClient
+  .storage
+  .from("receipts")
+  .remove([item.receipt_url]);
+
+if(storageError){
+  console.error("Storage delete error:", storageError);
+  alert("Error deleting file from storage.");
+  return;
+}
+
+const { error: dbError } = await supabaseClient
+  .from("transactions")
+  .update({ receipt_url: null })
+  .eq("id", item.id);
+
+if(dbError){
+  console.error("DB update error:", dbError);
+  alert("Error clearing receipt reference.");
+  return;
+}
+
+item.receipt_url = null;
+
+showCard();
+alert("Receipt removed successfully.");
 }
 
 /* Filter */
@@ -660,27 +733,32 @@ goNext();
 
 /* Split Modal with Side by Side */
 
-function openSplitModal(){
+async function openSplitModal(){
 const item=data[currentIndex];
 modalTitle.innerText="Split Transaction";
 
-let html="";
+let html = receiptHTML;
+if(item.receipt_url){
 
-if(item.Receipt){
-html+=`<div class="splitSideBySide">`;
-html+=`<div class="splitLeft">`;
-html+=`<strong>Receipt Preview</strong><br><br>`;
+  const { data: signedData, error } = await supabaseClient
+    .storage
+    .from("receipts")
+    .createSignedUrl(item.receipt_url, 60);
 
-if(item.Receipt.type.includes("image")){
-html+=`<img src="${item.Receipt.data}" style="max-width:100%;">`;
-}
-else if(item.Receipt.type==="application/pdf"){
-html+=`<iframe src="${item.Receipt.data}" style="width:100%; height:70vh;"></iframe>`;
-}
+  if(!error && signedData?.signedUrl){
 
-html+=`</div>`;
-html+=`<div class="splitRight">`;
+    receiptHTML = `
+      <div class="splitSideBySide">
+        <div class="splitLeft">
+          <strong>Receipt Preview</strong><br><br>
+          <iframe src="${signedData.signedUrl}" style="width:100%; height:70vh; border:none;"></iframe>
+        </div>
+        <div class="splitRight">
+    `;
+
+  }
 }
+  let receiptHTML = "";
 
 html+=`<div class="splitBox">
 <strong>Total: $${item.Amount.toFixed(2)}</strong><br>
@@ -694,9 +772,10 @@ html+=`${c.name}<br>
 html+=`<button onclick="saveSplit()">Save Split</button>
 </div>`;
 
-if(item.Receipt){
-html+=`</div></div>`;
+if(item.receipt_url){
+  html += `</div></div>`;
 }
+
 
 modalContent.innerHTML=html;
 openModal();
@@ -860,7 +939,7 @@ cardMeta.innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
 `Amount: $${item.Amount.toFixed(2)}<br>`+
-(item.Receipt?`📎 Receipt Attached<br>
+(item.receipt_url?`📎 Receipt Attached<br>
 <button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
 <button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>`:"")+
 `<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
