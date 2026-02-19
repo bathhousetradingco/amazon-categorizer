@@ -1,4 +1,4 @@
-69
+70
 <!DOCTYPE html>
 <html>
 <head>
@@ -297,6 +297,12 @@ updateProgress();
 activeSearchFilter = null;
 const clearBtn = document.getElementById("clearSearchBtn");
 if(clearBtn) clearBtn.style.display = "none";
+// Ensure Uncategorized filter doesn't hide new item
+if(showOnlyUncategorized){
+showOnlyUncategorized = false;
+const toggleBtn = document.getElementById("filterToggle");
+if(toggleBtn) toggleBtn.innerText = "Show Only Uncategorized";
+}
 currentIndex = data.length - 1;
 showCard();
 }
@@ -660,11 +666,21 @@ function showCard(){
 if(!data.length)return;
 
 if(showOnlyUncategorized){
-const visible=getVisibleIndexes();
+const visible = getVisibleIndexes();
+
+if(visible.length === 0){
+cardTitle.innerText = "No Uncategorized Transactions";
+cardMeta.innerHTML = "";
+splitSummary.innerHTML = "";
+currentCategory.innerText = "";
+return;
+}
+
 if(!visible.includes(currentIndex)){
-currentIndex=visible[0] || 0;
+currentIndex = visible[0];
 }
 }
+
 
 const item=data[currentIndex];
 cardTitle.innerText=item.Title;
