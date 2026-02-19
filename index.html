@@ -1,4 +1,4 @@
-46
+47
 
 <!DOCTYPE html>
 <html>
@@ -32,6 +32,19 @@ input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:1
 .toggleActive { background:#4caf50 !important;}
 .clearBtn { background:#c62828; color:white; margin-top:8px;}
 .resetBtn { background:#444; color:white; margin-top:8px; width:100%;}
+#vendorDropdown {
+position:absolute;
+background:white;
+border:1px solid #ddd;
+border-radius:10px;
+box-shadow:0 6px 20px rgba(0,0,0,.1);
+max-height:200px;
+overflow:auto;
+display:none;
+z-index:999;
+}
+.vendor-option { padding:8px; cursor:pointer; }
+.vendor-option:hover { background:#f0f0f0; }
 
 .modalOverlay {
 position:fixed;
@@ -45,7 +58,6 @@ justify-content:center;
 align-items:center;
 z-index:9999;
 }
-
 .modalBox {
 background:white;
 width:90%;
@@ -55,7 +67,6 @@ overflow:auto;
 border-radius:14px;
 padding:20px;
 }
-
 .modalClose {
 background:#c62828;
 color:white;
@@ -100,6 +111,28 @@ width:100%;
 </div>
 
 <div class="panel">
+
+<button id="uncatToggle" class="toggleBtn" onclick="toggleUncategorized()">Show: Not Categorized Only</button>
+<button id="attachmentToggle" class="toggleBtn" onclick="toggleAttachment()">Show: Has Attachment Only</button>
+
+<h4>Search Transaction</h4>
+
+Vendor:<br>
+<div style="position:relative;">
+<input type="text" id="searchVendor" oninput="showVendorSuggestions()">
+<div id="vendorDropdown"></div>
+</div><br>
+
+Amount:<br>
+<input type="number" id="searchAmount" step="0.01"><br><br>
+
+<button onclick="applySearch()">Search</button>
+<button class="clearBtn" onclick="clearSearch()">Clear Search</button>
+<button class="resetBtn" onclick="resetAllFilters()">Reset All Filters</button>
+
+</div>
+
+<div class="panel">
 <h4>Totals</h4>
 <div id="totals"></div>
 </div>
@@ -124,20 +157,25 @@ let headers=[];
 let data=[];
 let currentIndex=0;
 
+let filterUncategorized=false;
+let filterAttachment=false;
+let vendorFilter="";
+let amountFilter=null;
+
 const categories=[
-{name:"COGS - Ingredients"},
-{name:"COGS - Packaging"},
-{name:"COGS - Resale Inventory"},
-{name:"COGS - Production Supplies"},
-{name:"COGS - Shipping from Suppliers"},
-{name:"Equipment"},
-{name:"Advertising & Marketing"},
-{name:"Website & Software"},
-{name:"Merchant Processing Fees"},
-{name:"Insurance"},
-{name:"Utilities"},
-{name:"Professional Services"},
-{name:"Needs Review"}
+{name:"COGS - Ingredients",class:"cogs"},
+{name:"COGS - Packaging",class:"cogs"},
+{name:"COGS - Resale Inventory",class:"cogs"},
+{name:"COGS - Production Supplies",class:"cogs"},
+{name:"COGS - Shipping from Suppliers",class:"cogs"},
+{name:"Equipment",class:"expense"},
+{name:"Advertising & Marketing",class:"expense"},
+{name:"Website & Software",class:"expense"},
+{name:"Merchant Processing Fees",class:"expense"},
+{name:"Insurance",class:"expense"},
+{name:"Utilities",class:"expense"},
+{name:"Professional Services",class:"expense"},
+{name:"Needs Review",class:"special"}
 ];
 
 document.getElementById("csvFile").addEventListener("change",e=>{
@@ -163,12 +201,14 @@ Title:<br>${dropdown("mapTitle")}<br><br>
 Amount:<br>${dropdown("mapAmount")}<br><br>
 Vendor:<br>${dropdown("mapVendor")}<br><br>
 Date:<br>${dropdown("mapDate")}<br><br>
+Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
 <button onclick="confirmMapping()">Confirm Mapping</button>
 `;
 }
 
-function dropdown(id){
+function dropdown(id,allowEmpty=false){
 let html=`<select id="${id}">`;
+if(allowEmpty) html+=`<option value="">--None--</option>`;
 headers.forEach((h,i)=>{
 html+=`<option value="${i}">${h}</option>`;
 });
@@ -181,23 +221,187 @@ const t=parseInt(mapTitle.value);
 const a=parseInt(mapAmount.value);
 const v=parseInt(mapVendor.value);
 const d=parseInt(mapDate.value);
+const c=mapCategory.value !== "" ? parseInt(mapCategory.value) : null;
 
 data = rawRows.map(row=>({
 Title: row[t] || "",
 Amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
 Vendor: row[v] || "",
 Date: row[d] || "",
-Category: "",
-Splits: []
+Category: c !== null ? (row[c] || "") : "",
+Splits: [],
+Receipt: null
 }));
 
 mappingPanel.style.display="none";
 app.style.display="block";
 
 renderCategories();
+resetToFirstMatch();
 updateTotals();
 updateProgress();
+}
+
+/* ---------------- TOTALS CLICKABLE ---------------- */
+
+function updateTotals(){
+let totalsObj={};
+categories.forEach(c=>totalsObj[c.name]=0);
+
+data.forEach(d=>{
+if(d.Splits.length){
+d.Splits.forEach(s=>{
+if(totalsObj[s.Category]!=null){
+totalsObj[s.Category]+=s.Amount;
+}
+});
+}else if(d.Category && totalsObj[d.Category]!=null){
+totalsObj[d.Category]+=d.Amount;
+}
+});
+
+totals.innerHTML="";
+Object.keys(totalsObj).forEach(k=>{
+const row=document.createElement("div");
+row.className="totalRow";
+row.innerHTML=`<div>${k}</div><div>$${totalsObj[k].toFixed(2)}</div>`;
+row.onclick=()=>showCategoryBreakdown(k);
+totals.appendChild(row);
+});
+}
+
+function showCategoryBreakdown(category){
+let total=0;
+let html="";
+
+data.forEach((d,i)=>{
+if(d.Splits.length){
+d.Splits.forEach(s=>{
+if(s.Category===category){
+total+=s.Amount;
+html+=renderBreakdownRow(d,i,s.Amount,true);
+}
+});
+}else if(d.Category===category){
+total+=d.Amount;
+html+=renderBreakdownRow(d,i,d.Amount,false);
+}
+});
+
+modalTitle.innerText = category + " — Total: $" + total.toFixed(2);
+modalContent.innerHTML = html || "No transactions found.";
+modalOverlay.style.display = "flex";
+}
+
+function renderBreakdownRow(d,index,amount,isSplit){
+return `
+<div style="border-bottom:1px solid #eee; padding:6px 0;">
+<strong>${d.Title}</strong><br>
+Vendor: ${d.Vendor || "—"}<br>
+Date: ${d.Date || "—"}<br>
+${isSplit?"Split ":""}Amount: $${amount.toFixed(2)}<br>
+<button onclick="jumpToTransaction(${index})" style="margin-top:4px;">Go To Transaction</button>
+</div>`;
+}
+
+function jumpToTransaction(index){
+currentIndex=index;
+closeModal();
 showCard();
+}
+
+function closeModal(){
+modalOverlay.style.display="none";
+}
+
+/* ---------------- ORIGINAL FUNCTIONS ---------------- */
+
+function passesFilters(item){
+if(filterUncategorized && item.Category) return false;
+if(filterAttachment && !item.Receipt) return false;
+if(vendorFilter && !item.Vendor.toLowerCase().includes(vendorFilter)) return false;
+if(amountFilter!==null && Math.abs(item.Amount-amountFilter)>0.01) return false;
+return true;
+}
+
+function resetToFirstMatch(){
+currentIndex=0;
+let first=findNextIndex(0,1);
+if(first!==-1) currentIndex=first;
+showCard();
+}
+
+function findNextIndex(start,dir){
+let i=start;
+while(i>=0 && i<data.length){
+if(passesFilters(data[i])) return i;
+i+=dir;
+}
+return -1;
+}
+
+function toggleUncategorized(){
+filterUncategorized=!filterUncategorized;
+uncatToggle.classList.toggle("toggleActive");
+resetToFirstMatch();
+}
+
+function toggleAttachment(){
+filterAttachment=!filterAttachment;
+attachmentToggle.classList.toggle("toggleActive");
+resetToFirstMatch();
+}
+
+function applySearch(){
+vendorFilter=document.getElementById("searchVendor").value.toLowerCase().trim();
+amountFilter=parseFloat(document.getElementById("searchAmount").value);
+if(isNaN(amountFilter)) amountFilter=null;
+resetToFirstMatch();
+}
+
+function clearSearch(){
+document.getElementById("searchVendor").value="";
+document.getElementById("searchAmount").value="";
+vendorFilter="";
+amountFilter=null;
+resetToFirstMatch();
+}
+
+function resetAllFilters(){
+filterUncategorized=false;
+filterAttachment=false;
+vendorFilter="";
+amountFilter=null;
+document.getElementById("searchVendor").value="";
+document.getElementById("searchAmount").value="";
+uncatToggle.classList.remove("toggleActive");
+attachmentToggle.classList.remove("toggleActive");
+resetToFirstMatch();
+}
+
+function showVendorSuggestions(){
+const input=document.getElementById("searchVendor").value.toLowerCase().trim();
+const dropdown=document.getElementById("vendorDropdown");
+if(!input){ dropdown.style.display="none"; return; }
+
+const unique=[...new Set(data.map(d=>d.Vendor).filter(v=>v))];
+const matches=unique.filter(v=>v.toLowerCase().includes(input)).slice(0,8);
+
+if(!matches.length){ dropdown.style.display="none"; return; }
+
+dropdown.innerHTML="";
+matches.forEach(v=>{
+const div=document.createElement("div");
+div.className="vendor-option";
+div.innerText=v;
+div.onclick=()=>{
+document.getElementById("searchVendor").value=v;
+dropdown.style.display="none";
+applySearch();
+};
+dropdown.appendChild(div);
+});
+dropdown.style.display="block";
 }
 
 function renderCategories(){
@@ -205,8 +409,7 @@ const div=document.getElementById("categoryButtons");
 div.innerHTML="";
 categories.forEach(cat=>{
 const btn=document.createElement("button");
-btn.className="category-btn";
-btn.style.background="#2e7d32";
+btn.className="category-btn "+cat.class;
 btn.innerText=cat.name;
 btn.onclick=()=>categorize(cat.name);
 div.appendChild(btn);
@@ -232,69 +435,8 @@ cardMeta.innerHTML=
 currentCategory.innerText="Current: "+(item.Category||"—");
 }
 
-function goNext(){ if(currentIndex<data.length-1){currentIndex++;showCard();}}
-function goBack(){ if(currentIndex>0){currentIndex--;showCard();}}
-
-function updateTotals(){
-let totalsObj={};
-categories.forEach(c=>totalsObj[c.name]=0);
-
-data.forEach(d=>{
-if(d.Splits.length){
-d.Splits.forEach(s=>totalsObj[s.Category]+=s.Amount);
-}else if(d.Category && totalsObj[d.Category]!=null){
-totalsObj[d.Category]+=d.Amount;
-}
-});
-
-totals.innerHTML="";
-Object.keys(totalsObj).forEach(k=>{
-const row=document.createElement("div");
-row.className="totalRow";
-row.innerHTML=`<div>${k}</div><div>$${totalsObj[k].toFixed(2)}</div>`;
-row.onclick=()=>showCategoryBreakdown(k);
-totals.appendChild(row);
-});
-}
-
-function showCategoryBreakdown(category){
-let total=0;
-let html="";
-
-data.forEach(d=>{
-if(d.Splits.length){
-d.Splits.forEach(s=>{
-if(s.Category===category){
-total+=s.Amount;
-html+=`
-<div style="border-bottom:1px solid #eee; padding:6px 0;">
-<strong>${d.Title}</strong><br>
-Vendor: ${d.Vendor}<br>
-Date: ${d.Date}<br>
-Split Amount: $${s.Amount.toFixed(2)}
-</div>`;
-}
-});
-}else if(d.Category===category){
-total+=d.Amount;
-html+=`
-<div style="border-bottom:1px solid #eee; padding:6px 0;">
-<strong>${d.Title}</strong><br>
-Vendor: ${d.Vendor}<br>
-Date: ${d.Date}<br>
-Amount: $${d.Amount.toFixed(2)}
-</div>`;
-}
-});
-
-modalTitle.innerText=category+" — Total: $"+total.toFixed(2);
-modalContent.innerHTML=html || "No transactions found.";
-modalOverlay.style.display="flex";
-}
-
-function closeModal(){
-modalOverlay.style.display="none";
-}
+function goNext(){ let next=findNextIndex(currentIndex+1,1); if(next!==-1){currentIndex=next;showCard();}}
+function goBack(){ let prev=findNextIndex(currentIndex-1,-1); if(prev!==-1){currentIndex=prev;showCard();}}
 
 function updateProgress(){
 const total=data.length;
