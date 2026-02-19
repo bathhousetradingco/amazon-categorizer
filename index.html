@@ -1,4 +1,4 @@
-51
+52
 <!DOCTYPE html>
 <html>
 <head>
@@ -40,8 +40,8 @@ z-index:9999;
 .modalBox {
 background:white;
 width:90%;
-max-width:800px;
-max-height:85%;
+max-width:900px;
+max-height:90%;
 overflow:auto;
 border-radius:14px;
 padding:20px;
@@ -61,8 +61,16 @@ cursor:pointer;
 .filterBtn {
 background:#ff9800;
 color:white;
-margin-bottom:10px;
+margin-top:8px;
+}
+.receiptPreview img {
+max-width:100%;
+height:auto;
+}
+.receiptPreview iframe {
 width:100%;
+height:75vh;
+border:none;
 }
 </style>
 </head>
@@ -77,10 +85,6 @@ width:100%;
 <div id="app" style="display:none;">
 
 <div class="panel">
-<button class="filterBtn" onclick="toggleFilter()" id="filterToggle">
-Show Only Uncategorized
-</button>
-
 <div class="progress-bar-container">
 <div id="progressBar" class="progress-bar"></div>
 </div>
@@ -145,7 +149,7 @@ const categories=[
 {name:"Needs Review",class:"special"}
 ];
 
-/* ---------- CSV ---------- */
+/* CSV */
 
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
@@ -162,7 +166,7 @@ showMapping();
 });
 });
 
-/* ---------- Mapping ---------- */
+/* Mapping */
 
 function showMapping(){
 mappingPanel.style.display="block";
@@ -213,14 +217,18 @@ updateProgress();
 showCard();
 }
 
-/* ---------- Receipt ---------- */
+/* Receipt */
 
 function attachReceipt(e){
 const file=e.target.files[0];
 if(!file)return;
 const reader=new FileReader();
 reader.onload=function(ev){
-data[currentIndex].Receipt={name:file.name,data:ev.target.result};
+data[currentIndex].Receipt={
+name:file.name,
+data:ev.target.result,
+type:file.type
+};
 showCard();
 };
 reader.readAsDataURL(file);
@@ -229,10 +237,26 @@ reader.readAsDataURL(file);
 function viewReceipt(){
 const receipt=data[currentIndex].Receipt;
 if(!receipt)return;
-window.open(receipt.data);
+
+modalTitle.innerText="Receipt Preview";
+let html=`<div class="receiptPreview">`;
+
+if(receipt.type.includes("image")){
+html+=`<img src="${receipt.data}">`;
+}
+else if(receipt.type==="application/pdf"){
+html+=`<iframe src="${receipt.data}"></iframe>`;
+}
+else{
+html+=`<p>Unsupported file type.</p>`;
 }
 
-/* ---------- Filter ---------- */
+html+=`</div>`;
+modalContent.innerHTML=html;
+openModal();
+}
+
+/* Filter */
 
 function toggleFilter(){
 showOnlyUncategorized=!showOnlyUncategorized;
@@ -246,7 +270,7 @@ if(!showOnlyUncategorized) return data.map((_,i)=>i);
 return data.map((d,i)=>!d.Category?i:null).filter(i=>i!==null);
 }
 
-/* ---------- Navigation ---------- */
+/* Navigation */
 
 function goNext(){
 const visible=getVisibleIndexes();
@@ -266,7 +290,7 @@ showCard();
 }
 }
 
-/* ---------- Category Buttons ---------- */
+/* Category Buttons */
 
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
@@ -284,6 +308,13 @@ splitBtn.style.background="#ff9800";
 splitBtn.innerText="Split Transaction";
 splitBtn.onclick=openSplitModal;
 div.appendChild(splitBtn);
+
+const filterBtn=document.createElement("button");
+filterBtn.id="filterToggle";
+filterBtn.className="category-btn filterBtn";
+filterBtn.innerText="Show Only Uncategorized";
+filterBtn.onclick=toggleFilter;
+div.appendChild(filterBtn);
 }
 
 function categorize(name){
@@ -294,7 +325,7 @@ updateProgress();
 goNext();
 }
 
-/* ---------- Split Modal ---------- */
+/* Split Modal */
 
 function openSplitModal(){
 const item=data[currentIndex];
@@ -310,7 +341,6 @@ html+=`${c.name}<br>
 });
 
 html+=`<button onclick="saveSplit()">Save Split</button></div>`;
-
 modalContent.innerHTML=html;
 openModal();
 }
@@ -349,7 +379,7 @@ closeModal();
 goNext();
 }
 
-/* ---------- Category Breakdown Modal ---------- */
+/* Category Breakdown Modal */
 
 function showCategoryBreakdown(categoryName){
 modalTitle.innerText=categoryName+" Transactions";
@@ -373,7 +403,6 @@ ${d.Title} (Split) — $${s.Amount.toFixed(2)}
 });
 
 if(!html) html="No transactions in this category.";
-
 modalContent.innerHTML=html;
 openModal();
 }
@@ -384,7 +413,7 @@ closeModal();
 showCard();
 }
 
-/* ---------- Modal Controls ---------- */
+/* Modal Controls */
 
 function openModal(){
 modalOverlay.style.display="flex";
@@ -403,7 +432,7 @@ document.addEventListener("keydown",function(e){
 if(e.key==="Escape") closeModal();
 });
 
-/* ---------- Show Card ---------- */
+/* Show Card */
 
 function showCard(){
 if(!data.length)return;
@@ -439,7 +468,7 @@ splitSummary.innerHTML="";
 currentCategory.innerText=item.Splits.length?"Split into multiple categories":"Current: "+(item.Category||"—");
 }
 
-/* ---------- Totals ---------- */
+/* Totals */
 
 function updateTotals(){
 let totalsObj={};
@@ -466,7 +495,7 @@ totals.innerHTML+=`<div class="totalRow" onclick="showCategoryBreakdown('${k}')"
 });
 }
 
-/* ---------- Progress ---------- */
+/* Progress */
 
 function updateProgress(){
 const total=data.length;
@@ -476,7 +505,7 @@ progressBar.style.width=percent+"%";
 progressText.innerText=`${done} of ${total} categorized (${percent}%)`;
 }
 
-/* ---------- Export ---------- */
+/* Export */
 
 function exportExcel(){
 const ws=XLSX.utils.json_to_sheet(data);
