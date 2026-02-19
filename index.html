@@ -577,10 +577,11 @@ if(error){
 modalTitle.innerText = "Receipt Preview";
 
 modalContent.innerHTML = `
-<div class="receiptPreview">
-<iframe src="${signedData.signedUrl}"></iframe>
+<div class="receiptPreview" style="max-height:75vh; overflow:auto;">
+  <iframe src="${signedData.signedUrl}" style="width:100%; height:600px; border:none; border-radius:10px;"></iframe>
 </div>
 `;
+
 
 openModal();
 }
@@ -754,7 +755,7 @@ if(item.receipt_url){
       <div class="splitSideBySide">
         <div class="splitLeft">
           <strong>Receipt Preview</strong><br><br>
-          <iframe src="${signedData.signedUrl}" style="width:100%; height:70vh; border:none;"></iframe>
+          <iframe src="${signedData.signedUrl}" style="width:100%; height:420px; border:none; border-radius:8px;"></iframe>
         </div>
         <div class="splitRight">
     `;
