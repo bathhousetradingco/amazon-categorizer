@@ -1,4 +1,4 @@
-71
+72
 <!DOCTYPE html>
 <html>
 <head>
@@ -392,7 +392,13 @@ Title: row[t] || "",
 Amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
 Vendor: row[v] || "",
 Date: row[d] || "",
-Category: c !== null ? (row[c] || "").replace(/[–—]/g,"-").trim() : "",
+Category: c !== null 
+  ? (row[c] || "")
+      .normalize("NFKD")
+      .replace(/[^\x00-\x7F]/g, "")   // remove all non-ASCII characters
+      .replace(/[–—]/g,"-")
+      .trim()
+  : "",
 Splits: [],
 Receipt: null
 }));
