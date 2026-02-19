@@ -2,6 +2,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bathhouse Categorizer</title>
@@ -165,7 +166,16 @@ let data=[];
 let currentIndex=0;
 let showOnlyUncategorized=false;
 let activeSearchFilter=null;
+/* ================= SUPABASE ================= */
 
+const SUPABASE_URL = "https://xbayklklcdohevvnbglq.supabase.co";
+
+const SUPABASE_ANON_KEY = "sb_publishable_p1RkNo_H5YlnxG7W4l1LJw_kIMAd1Jx";
+
+const supabase = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY
+);
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
 {name:"COGS - Packaging",class:"cogs"},
