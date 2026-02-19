@@ -462,24 +462,21 @@ return html;
 }
 
 async function confirmMapping(){
-  const t=parseInt(mapTitle.value);
-  const a=parseInt(mapAmount.value);
-  const v=parseInt(mapVendor.value);
-  const d=parseInt(mapDate.value);
-  const c=mapCategory.value !== "" ? parseInt(mapCategory.value) : null;
+
+  const t = parseInt(document.getElementById("mapTitle").value);
+  const a = parseInt(document.getElementById("mapAmount").value);
+  const v = parseInt(document.getElementById("mapVendor").value);
+  const d = parseInt(document.getElementById("mapDate").value);
+  const c = document.getElementById("mapCategory").value !== "" 
+    ? parseInt(document.getElementById("mapCategory").value) 
+    : null;
 
   const rowsToInsert = rawRows.map(row => ({
     title: row[t] || "",
     amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
     vendor: row[v] || "",
     date: row[d] || "",
-    category: c !== null 
-      ? (row[c] || "")
-          .normalize("NFKD")
-          .replace(/[^\x00-\x7F]/g, "")
-          .replace(/[–—]/g,"-")
-          .trim()
-      : "",
+    category: c !== null ? row[c] || "" : "",
     splits: []
   }));
 
@@ -493,20 +490,15 @@ async function confirmMapping(){
     return;
   }
 
-  mappingPanel.style.display="none";
+  mappingPanel.style.display = "none";
+  app.style.display = "block";
 
-  await loadTransactions(); // reload from database
+  await loadTransactions();
+
 }
 
 
-mappingPanel.style.display="none";
-app.style.display="block";
 
-renderCategories();
-updateTotals();
-updateProgress();
-showCard();
-}
 
 /* Receipt */
 
