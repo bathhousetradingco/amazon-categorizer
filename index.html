@@ -1,4 +1,4 @@
-52
+53
 <!DOCTYPE html>
 <html>
 <head>
@@ -25,8 +25,9 @@ input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:1
 .small { font-size:13px; color:#555;}
 .totalRow { display:flex; justify-content:space-between; font-size:13px; padding:6px 0; cursor:pointer; border-bottom:1px solid #eee;}
 .totalRow:hover { background:#f5f5f5; }
-.splitBox { background:#fafafa; padding:10px; border-radius:10px; margin-top:10px;}
+.splitBox { background:#fafafa; padding:10px; border-radius:10px;}
 .viewBtn { background:#1565c0; color:white; margin-top:6px;}
+.removeBtn { background:#c62828; color:white; margin-top:6px;}
 .modalOverlay {
 position:fixed;
 top:0; left:0;
@@ -39,8 +40,8 @@ z-index:9999;
 }
 .modalBox {
 background:white;
-width:90%;
-max-width:900px;
+width:95%;
+max-width:1100px;
 max-height:90%;
 overflow:auto;
 border-radius:14px;
@@ -71,6 +72,18 @@ height:auto;
 width:100%;
 height:75vh;
 border:none;
+}
+.splitSideBySide {
+display:flex;
+gap:20px;
+}
+.splitLeft {
+flex:1;
+border-right:1px solid #eee;
+padding-right:10px;
+}
+.splitRight {
+flex:1;
 }
 </style>
 </head>
@@ -234,6 +247,11 @@ showCard();
 reader.readAsDataURL(file);
 }
 
+function removeReceipt(){
+data[currentIndex].Receipt=null;
+showCard();
+}
+
 function viewReceipt(){
 const receipt=data[currentIndex].Receipt;
 if(!receipt)return;
@@ -325,13 +343,31 @@ updateProgress();
 goNext();
 }
 
-/* Split Modal */
+/* Split Modal with Side by Side */
 
 function openSplitModal(){
 const item=data[currentIndex];
 modalTitle.innerText="Split Transaction";
 
-let html=`<div class="splitBox">
+let html="";
+
+if(item.Receipt){
+html+=`<div class="splitSideBySide">`;
+html+=`<div class="splitLeft">`;
+html+=`<strong>Receipt Preview</strong><br><br>`;
+
+if(item.Receipt.type.includes("image")){
+html+=`<img src="${item.Receipt.data}" style="max-width:100%;">`;
+}
+else if(item.Receipt.type==="application/pdf"){
+html+=`<iframe src="${item.Receipt.data}" style="width:100%; height:70vh;"></iframe>`;
+}
+
+html+=`</div>`;
+html+=`<div class="splitRight">`;
+}
+
+html+=`<div class="splitBox">
 <strong>Total: $${item.Amount.toFixed(2)}</strong><br>
 <div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div><br>`;
 
@@ -340,7 +376,13 @@ html+=`${c.name}<br>
 <input type="number" step="0.01" id="split_${i}" oninput="updateRemaining()"><br><br>`;
 });
 
-html+=`<button onclick="saveSplit()">Save Split</button></div>`;
+html+=`<button onclick="saveSplit()">Save Split</button>
+</div>`;
+
+if(item.Receipt){
+html+=`</div></div>`;
+}
+
 modalContent.innerHTML=html;
 openModal();
 }
@@ -452,7 +494,8 @@ cardMeta.innerHTML=
 (item.Date?`Date: ${item.Date}<br>`:"")+
 `Amount: $${item.Amount.toFixed(2)}<br>`+
 (item.Receipt?`📎 Receipt Attached<br>
-<button class="viewBtn" onclick="viewReceipt()">View Receipt</button><br>`:"")+
+<button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
+<button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>`:"")+
 `<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">`;
 
 if(item.Splits.length){
