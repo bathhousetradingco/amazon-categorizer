@@ -1,4 +1,4 @@
-68
+69
 <!DOCTYPE html>
 <html>
 <head>
@@ -193,6 +193,9 @@ modalContent.innerHTML=`
 `;
 document.getElementById("searchInput").addEventListener("input",updateSearchResults);
 openModal();
+setTimeout(() => {
+document.getElementById("searchInput").focus();
+}, 50);
 }
 
 function updateSearchResults(){
@@ -291,6 +294,9 @@ updateTotals();
 updateProgress();
 
 // Jump to new transaction
+activeSearchFilter = null;
+const clearBtn = document.getElementById("clearSearchBtn");
+if(clearBtn) clearBtn.style.display = "none";
 currentIndex = data.length - 1;
 showCard();
 }
