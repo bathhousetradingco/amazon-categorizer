@@ -1,5 +1,4 @@
-60
-
+62
 <!DOCTYPE html>
 <html>
 <head>
@@ -22,7 +21,7 @@ input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:1
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
 .searchBtn { background:#000; color:white; margin-bottom:8px; }
-.clearFilterBtn { background:#c62828; color:white; margin-bottom:8px; }
+.clearFilterBtn { background:#c62828; color:white; margin-bottom:8px; display:none; }
 .progress-bar-container { background:#eee; border-radius:999px; overflow:hidden; height:16px; margin-bottom:8px;}
 .progress-bar { height:100%; background:#2e7d32; width:0%;}
 .small { font-size:13px; color:#555;}
@@ -67,6 +66,11 @@ background:#ff9800;
 color:white;
 margin-top:8px;
 }
+.receiptPreview img { max-width:100%; height:auto; }
+.receiptPreview iframe { width:100%; height:75vh; border:none; }
+.splitSideBySide { display:flex; gap:20px; }
+.splitLeft { flex:1; border-right:1px solid #eee; padding-right:10px; }
+.splitRight { flex:1; }
 </style>
 </head>
 
@@ -80,8 +84,8 @@ margin-top:8px;
 <div id="app" style="display:none;">
 
 <div class="panel">
-<button class="searchBtn" onclick="openVendorSearch()">🔎 Search by Vendor</button>
-<button id="clearVendorBtn" class="clearFilterBtn" style="display:none;" onclick="clearVendorFilter()">Clear Vendor Filter</button>
+<button class="searchBtn" onclick="openSearch()">🔎 Search Vendor or Amount</button>
+<button id="clearFilterBtn" class="clearFilterBtn" onclick="clearSearchFilter()">Clear Search Filter</button>
 
 <div class="progress-bar-container">
 <div id="progressBar" class="progress-bar"></div>
@@ -130,7 +134,7 @@ let headers=[];
 let data=[];
 let currentIndex=0;
 let showOnlyUncategorized=false;
-let activeVendorFilter=null;
+let activeSearchFilter=null;
 
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
@@ -149,61 +153,71 @@ const categories=[
 ];
 
 /* CSV */
-
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
 if(!file)return;
-
 Papa.parse(file,{
 header:false,
 skipEmptyLines:true,
 complete:res=>{
-headers = res.data[0].map(h=>String(h).trim());
-rawRows = res.data.slice(1);
+headers=res.data[0].map(h=>String(h).trim());
+rawRows=res.data.slice(1);
 showMapping();
 }
 });
 });
 
-/* Vendor Filter */
+/* Search */
 
-function openVendorSearch(){
-modalTitle.innerText="Select Vendor";
-let vendors=[...new Set(data.map(d=>d.Vendor).filter(v=>v))].sort();
-let html=`<input type="text" id="vendorSearchInput" placeholder="Type vendor..." oninput="filterVendorList()">`;
-html+=`<div id="vendorList">`;
-vendors.forEach(v=>{
-html+=`<div class="modalItem" onclick="applyVendorFilter('${v.replace(/'/g,"\\'")}')">${v}</div>`;
-});
-html+=`</div>`;
-modalContent.innerHTML=html;
+function openSearch(){
+modalTitle.innerText="Search Vendor or Amount";
+modalContent.innerHTML=`
+<input type="text" id="searchInput" placeholder="Type vendor or amount..." oninput="renderSearchResults()">
+<div id="searchResults"></div>
+`;
 openModal();
 }
 
-function filterVendorList(){
-const query=document.getElementById("vendorSearchInput").value.toLowerCase();
-let vendors=[...new Set(data.map(d=>d.Vendor).filter(v=>v))].sort();
-let list=document.getElementById("vendorList");
-list.innerHTML="";
-vendors.filter(v=>v.toLowerCase().includes(query))
-.forEach(v=>{
-list.innerHTML+=`<div class="modalItem" onclick="applyVendorFilter('${v.replace(/'/g,"\\'")}')">${v}</div>`;
+function renderSearchResults(){
+const query=document.getElementById("searchInput").value.toLowerCase().trim();
+const results=document.getElementById("searchResults");
+results.innerHTML="";
+if(!query) return;
+
+data.forEach((d,i)=>{
+const vendorMatch=d.Vendor && d.Vendor.toLowerCase().includes(query);
+const amountMatch=d.Amount.toFixed(2).includes(query);
+if(vendorMatch || amountMatch){
+results.innerHTML+=`
+<div class="modalItem" onclick="applySearchFilter('${d.Vendor||""}', ${d.Amount})">
+${d.Vendor||"Unknown"} — $${d.Amount.toFixed(2)}
+</div>`;
+}
 });
 }
 
-function applyVendorFilter(vendor){
-activeVendorFilter=vendor;
-document.getElementById("clearVendorBtn").style.display="block";
+function applySearchFilter(vendor, amount){
+activeSearchFilter={vendor,amount};
+document.getElementById("clearFilterBtn").style.display="block";
 closeModal();
 let visible=getVisibleIndexes();
 currentIndex=visible.length?visible[0]:0;
 showCard();
 }
 
-function clearVendorFilter(){
-activeVendorFilter=null;
-document.getElementById("clearVendorBtn").style.display="none";
+function clearSearchFilter(){
+activeSearchFilter=null;
+document.getElementById("clearFilterBtn").style.display="none";
 currentIndex=0;
+showCard();
+}
+
+/* Filter */
+
+function toggleFilter(){
+showOnlyUncategorized=!showOnlyUncategorized;
+filterToggle.innerText=showOnlyUncategorized?"Show All Transactions":"Show Only Uncategorized";
+updateProgress();
 showCard();
 }
 
@@ -212,68 +226,35 @@ let indexes=data.map((_,i)=>i);
 if(showOnlyUncategorized){
 indexes=indexes.filter(i=>!data[i].Category);
 }
-if(activeVendorFilter){
-indexes=indexes.filter(i=>data[i].Vendor===activeVendorFilter);
+if(activeSearchFilter){
+indexes=indexes.filter(i=>{
+let match=true;
+if(activeSearchFilter.vendor)
+match=match && data[i].Vendor===activeSearchFilter.vendor;
+if(activeSearchFilter.amount)
+match=match && data[i].Amount===activeSearchFilter.amount;
+return match;
+});
 }
 return indexes;
 }
 
-/* KEEPING ALL YOUR ORIGINAL LOGIC BELOW UNCHANGED */
+/* Navigation */
 
-function showMapping(){ /* unchanged */ 
-mappingPanel.style.display="block";
-mappingPanel.innerHTML=`
-<h4>Map Columns</h4>
-Title:<br>${dropdown("mapTitle")}<br><br>
-Amount:<br>${dropdown("mapAmount")}<br><br>
-Vendor:<br>${dropdown("mapVendor")}<br><br>
-Date:<br>${dropdown("mapDate")}<br><br>
-Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
-<button onclick="confirmMapping()">Confirm Mapping</button>
-`;
-}
-
-function dropdown(id,allowEmpty=false){
-let html=`<select id="${id}">`;
-if(allowEmpty) html+=`<option value="">--None--</option>`;
-headers.forEach((h,i)=>{ html+=`<option value="${i}">${h}</option>`; });
-html+=`</select>`;
-return html;
-}
-
-function confirmMapping(){
-const t=parseInt(mapTitle.value);
-const a=parseInt(mapAmount.value);
-const v=parseInt(mapVendor.value);
-const d=parseInt(mapDate.value);
-const c=mapCategory.value !== "" ? parseInt(mapCategory.value) : null;
-
-data = rawRows.map(row=>({
-Title: row[t] || "",
-Amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
-Vendor: row[v] || "",
-Date: row[d] || "",
-Category: c !== null ? (row[c] || "") : "",
-Splits: [],
-Receipt: null
-}));
-
-mappingPanel.style.display="none";
-app.style.display="block";
-
-renderCategories();
-updateTotals();
-updateProgress();
+function goNext(){
+const visible=getVisibleIndexes();
+let pos=visible.indexOf(currentIndex);
+if(pos<visible.length-1){
+currentIndex=visible[pos+1];
 showCard();
 }
+}
 
-/* Modal Controls */
-
-function openModal(){ modalOverlay.style.display="flex"; }
-function closeModal(){ modalOverlay.style.display="none"; modalContent.innerHTML=""; }
-modalOverlay.addEventListener("click",function(e){ if(e.target===modalOverlay) closeModal(); });
-document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeModal(); });
-
-</script>
-</body>
-</html>
+function goBack(){
+const visible=getVisibleIndexes();
+let pos=visible.indexOf(currentIndex);
+if(pos>0){
+currentIndex=visible[pos-1];
+showCard();
+}
+}
