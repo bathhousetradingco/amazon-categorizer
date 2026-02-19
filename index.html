@@ -1,5 +1,4 @@
-57
-
+58
 <!DOCTYPE html>
 <html>
 <head>
@@ -21,7 +20,8 @@ input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:1
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
-.searchBtn { width:100%; background:#000; color:white; margin-bottom:10px; }
+.searchBtn { background:#000; color:white; margin-bottom:10px; }
+.clearFilterBtn { background:#c62828; color:white; margin-bottom:10px; }
 .progress-bar-container { background:#eee; border-radius:999px; overflow:hidden; height:16px; margin-bottom:8px;}
 .progress-bar { height:100%; background:#2e7d32; width:0%;}
 .small { font-size:13px; color:#555;}
@@ -61,35 +61,6 @@ border-bottom:1px solid #eee;
 cursor:pointer;
 }
 .modalItem:hover { background:#f5f5f5; }
-.filterBtn {
-background:#ff9800;
-color:white;
-margin-top:8px;
-}
-.receiptPreview img {
-max-width:100%;
-height:auto;
-}
-.receiptPreview iframe {
-width:100%;
-height:75vh;
-border:none;
-}
-.splitSideBySide {
-display:flex;
-gap:20px;
-}
-.splitLeft {
-flex:1;
-border-right:1px solid #eee;
-padding-right:10px;
-}
-.splitRight {
-flex:1;
-}
-.searchInput {
-margin-bottom:12px;
-}
 </style>
 </head>
 
@@ -103,7 +74,8 @@ margin-bottom:12px;
 <div id="app" style="display:none;">
 
 <div class="panel">
-<button class="searchBtn" onclick="openSearchModal()">🔎 Search Transactions</button>
+<button class="searchBtn" onclick="openVendorSearch()">🔎 Search by Vendor</button>
+<button id="clearVendorBtn" class="clearFilterBtn" style="display:none;" onclick="clearVendorFilter()">Clear Vendor Filter</button>
 
 <div class="progress-bar-container">
 <div id="progressBar" class="progress-bar"></div>
@@ -152,6 +124,7 @@ let headers=[];
 let data=[];
 let currentIndex=0;
 let showOnlyUncategorized=false;
+let activeVendorFilter=null;
 
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
@@ -170,6 +143,7 @@ const categories=[
 ];
 
 /* CSV */
+
 document.getElementById("csvFile").addEventListener("change",e=>{
 const file=e.target.files[0];
 if(!file)return;
@@ -185,48 +159,89 @@ showMapping();
 });
 });
 
-/* SEARCH FEATURE */
-function openSearchModal(){
-modalTitle.innerText="Search Transactions";
-modalContent.innerHTML=`
-<input type="text" id="searchInput" class="searchInput"
-placeholder="Search vendor or amount (ex: Walmart or 55.83)"
-oninput="performSearch()">
-<div id="searchResults"></div>
-`;
+/* Vendor Search */
+
+function openVendorSearch(){
+modalTitle.innerText="Select Vendor";
+let uniqueVendors=[...new Set(data.map(d=>d.Vendor).filter(v=>v))].sort();
+
+let html=`<input type="text" id="vendorSearchInput" placeholder="Type vendor name..." oninput="filterVendorList()">`;
+html+=`<div id="vendorList">`;
+uniqueVendors.forEach(v=>{
+html+=`<div class="modalItem" onclick="applyVendorFilter('${v.replace(/'/g,"\\'")}')">${v}</div>`;
+});
+html+=`</div>`;
+
+modalContent.innerHTML=html;
 openModal();
-document.getElementById("searchInput").focus();
 }
 
-function performSearch(){
-const query=document.getElementById("searchInput").value.toLowerCase().trim();
-const resultsDiv=document.getElementById("searchResults");
-resultsDiv.innerHTML="";
-if(!query)return;
+function filterVendorList(){
+const query=document.getElementById("vendorSearchInput").value.toLowerCase();
+const list=document.getElementById("vendorList");
+let uniqueVendors=[...new Set(data.map(d=>d.Vendor).filter(v=>v))].sort();
 
-data.forEach((d,i)=>{
-if(
-(d.Vendor && d.Vendor.toLowerCase().includes(query)) ||
-d.Amount.toFixed(2).includes(query)
-){
-resultsDiv.innerHTML+=`
-<div class="modalItem" onclick="jumpToSearch(${i})">
-<strong>${d.Vendor || d.Title}</strong><br>
-$${d.Amount.toFixed(2)} — ${d.Date || ""}
-</div>`;
-}
+list.innerHTML="";
+uniqueVendors
+.filter(v=>v.toLowerCase().includes(query))
+.forEach(v=>{
+list.innerHTML+=`<div class="modalItem" onclick="applyVendorFilter('${v.replace(/'/g,"\\'")}')">${v}</div>`;
 });
 }
 
-function jumpToSearch(index){
-currentIndex=index;
+function applyVendorFilter(vendor){
+activeVendorFilter=vendor;
+document.getElementById("clearVendorBtn").style.display="block";
 closeModal();
+currentIndex=getVisibleIndexes()[0] || 0;
 showCard();
 }
 
-/* (ALL ORIGINAL APP LOGIC CONTINUES UNCHANGED BELOW) */
+function clearVendorFilter(){
+activeVendorFilter=null;
+document.getElementById("clearVendorBtn").style.display="none";
+currentIndex=0;
+showCard();
+}
 
-/* Mapping */
+/* Filter Logic */
+
+function getVisibleIndexes(){
+let indexes=data.map((_,i)=>i);
+
+if(showOnlyUncategorized){
+indexes=indexes.filter(i=>!data[i].Category);
+}
+
+if(activeVendorFilter){
+indexes=indexes.filter(i=>data[i].Vendor===activeVendorFilter);
+}
+
+return indexes;
+}
+
+/* Navigation */
+
+function goNext(){
+const visible=getVisibleIndexes();
+let pos=visible.indexOf(currentIndex);
+if(pos<visible.length-1){
+currentIndex=visible[pos+1];
+showCard();
+}
+}
+
+function goBack(){
+const visible=getVisibleIndexes();
+let pos=visible.indexOf(currentIndex);
+if(pos>0){
+currentIndex=visible[pos-1];
+showCard();
+}
+}
+
+/* Mapping + rest of your original logic remains exactly unchanged below */
+
 function showMapping(){
 mappingPanel.style.display="block";
 mappingPanel.innerHTML=`
@@ -276,9 +291,8 @@ updateProgress();
 showCard();
 }
 
-/* (ALL REMAINING ORIGINAL CODE CONTINUES EXACTLY AS YOU PROVIDED IT) */
+/* ALL remaining original logic unchanged */
 
-/* Modal Controls */
 function openModal(){ modalOverlay.style.display="flex"; }
 function closeModal(){ modalOverlay.style.display="none"; modalContent.innerHTML=""; }
 modalOverlay.addEventListener("click",function(e){ if(e.target===modalOverlay) closeModal(); });
