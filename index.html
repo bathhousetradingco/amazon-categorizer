@@ -166,6 +166,43 @@ let data=[];
 let currentIndex=0;
 let showOnlyUncategorized=false;
 let activeSearchFilter=null;
+/* ================= LOAD FROM SUPABASE ================= */
+
+async function loadTransactions() {
+  const { data: rows, error } = await supabaseClient
+    .from("transactions")
+    .select("*")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("Load error:", error);
+    return;
+  }
+
+  if (rows) {
+    data = rows.map(r => ({
+      id: r.id,
+      Title: r.title,
+      Vendor: r.vendor,
+      Date: r.date,
+      Amount: r.amount,
+      Category: r.category || "",
+      Splits: r.splits || [],
+      Receipt: null
+    }));
+
+    if (data.length > 0) {
+      app.style.display = "block";
+      renderCategories();
+      updateTotals();
+      updateProgress();
+      showCard();
+    }
+  }
+}
+
+
+
 /* ================= SUPABASE ================= */
 
 const SUPABASE_URL = "https://xbayklklcdohevvnbglq.supabase.co";
@@ -176,6 +213,8 @@ const supabaseClient = window.supabase.createClient(
   SUPABASE_URL,
   SUPABASE_ANON_KEY
 );
+  /* Auto-load on startup */
+loadTransactions();
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
 {name:"COGS - Packaging",class:"cogs"},
@@ -275,7 +314,8 @@ Save Transaction
 openModal();
 }
 
-function saveNewTransaction(){
+async function saveNewTransaction(){
+
 
 const vendor = document.getElementById("newVendor").value.trim();
 const rawDate = document.getElementById("newDate").value;
@@ -302,7 +342,28 @@ Splits: [],
 Receipt: null
 };
 
+const { data: inserted, error } = await supabaseClient
+  .from("transactions")
+  .insert([{
+    title: vendor,
+    vendor: vendor,
+    date: formattedDate,
+    amount: amount,
+    category: "",
+    splits: []
+  }])
+  .select()
+  .single();
+
+if (error) {
+  alert("Error saving to database");
+  console.error(error);
+  return;
+}
+
+newTransaction.id = inserted.id;
 data.push(newTransaction);
+
 
 closeModal();
 
@@ -323,11 +384,21 @@ currentIndex = data.length - 1;
 showCard();
 }
 
-function deleteTransaction(){
+async function deleteTransaction(){
 
 if(!confirm("Are you sure you want to delete this transaction?")) return;
 
+const id = data[currentIndex].id;
+
+if (id) {
+  await supabaseClient
+    .from("transactions")
+    .delete()
+    .eq("id", id);
+}
+
 data.splice(currentIndex,1);
+
 
 if(currentIndex >= data.length){
 currentIndex = data.length - 1;
