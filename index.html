@@ -1,4 +1,4 @@
-64
+65
 
 <!DOCTYPE html>
 <html>
@@ -26,8 +26,9 @@ input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:1
 .small { font-size:13px; color:#555;}
 .totalRow { display:flex; justify-content:space-between; font-size:13px; padding:6px 0; cursor:pointer; border-bottom:1px solid #eee;}
 .totalRow:hover { background:#f5f5f5; }
-.searchBtn { background:#ff9800; color:white; margin-bottom:10px; width:100%; }
-.clearSearchBtn { background:#c62828; color:white; margin-top:8px; width:100%; }
+.splitBox { background:#fafafa; padding:10px; border-radius:10px;}
+.viewBtn { background:#1565c0; color:white; margin-top:6px;}
+.removeBtn { background:#c62828; color:white; margin-top:6px;}
 .modalOverlay {
 position:fixed;
 top:0; left:0;
@@ -41,7 +42,7 @@ z-index:9999;
 .modalBox {
 background:white;
 width:95%;
-max-width:700px;
+max-width:1100px;
 max-height:90%;
 overflow:auto;
 border-radius:14px;
@@ -59,6 +60,44 @@ border-bottom:1px solid #eee;
 cursor:pointer;
 }
 .modalItem:hover { background:#f5f5f5; }
+.filterBtn {
+background:#ff9800;
+color:white;
+margin-top:8px;
+}
+.searchBtn {
+background:#ff9800;
+color:white;
+margin-bottom:8px;
+width:100%;
+}
+.clearSearchBtn {
+background:#c62828;
+color:white;
+margin-bottom:8px;
+width:100%;
+}
+.receiptPreview img {
+max-width:100%;
+height:auto;
+}
+.receiptPreview iframe {
+width:100%;
+height:75vh;
+border:none;
+}
+.splitSideBySide {
+display:flex;
+gap:20px;
+}
+.splitLeft {
+flex:1;
+border-right:1px solid #eee;
+padding-right:10px;
+}
+.splitRight {
+flex:1;
+}
 </style>
 </head>
 
@@ -72,8 +111,11 @@ cursor:pointer;
 <div id="app" style="display:none;">
 
 <div class="panel">
-<button class="searchBtn" onclick="openSearchModal()">🔎 Search Transaction</button>
+
+<!-- 🔎 SEARCH BUTTON INJECTED -->
+<button class="searchBtn" onclick="openSearchModal()">🔎 Search</button>
 <button id="clearSearchBtn" class="clearSearchBtn" style="display:none;" onclick="clearSearchFilter()">Clear Search Filter</button>
+
 <div class="progress-bar-container">
 <div id="progressBar" class="progress-bar"></div>
 </div>
@@ -84,6 +126,7 @@ cursor:pointer;
 <h3 id="cardTitle"></h3>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
+<div id="splitSummary"></div>
 
 <hr>
 
@@ -102,6 +145,7 @@ cursor:pointer;
 </div>
 
 <button onclick="exportExcel()">Export to Excel</button>
+
 </div>
 
 <div id="modalOverlay" class="modalOverlay">
@@ -118,248 +162,8 @@ let rawRows=[];
 let headers=[];
 let data=[];
 let currentIndex=0;
+let showOnlyUncategorized=false;
+
+/* 🔎 SEARCH STATE INJECTED */
 let activeSearchFilter=null;
 
-const categories=[
-{name:"COGS - Ingredients",class:"cogs"},
-{name:"COGS - Packaging",class:"cogs"},
-{name:"COGS - Resale Inventory",class:"cogs"},
-{name:"COGS - Production Supplies",class:"cogs"},
-{name:"COGS - Shipping from Suppliers",class:"cogs"},
-{name:"Equipment",class:"expense"},
-{name:"Advertising & Marketing",class:"expense"},
-{name:"Software",class:"expense"},
-{name:"Merchant Processing Fees",class:"expense"},
-{name:"Insurance",class:"expense"},
-{name:"Utilities",class:"expense"},
-{name:"Professional Services",class:"expense"},
-{name:"Needs Review",class:"special"}
-];
-
-/* SEARCH */
-
-function openSearchModal(){
-modalTitle.innerText="Search Transactions";
-modalContent.innerHTML=`
-<input type="text" id="searchInput" placeholder="Search vendor or amount...">
-<div id="searchResults"></div>
-`;
-document.getElementById("searchInput").addEventListener("input",updateSearchResults);
-openModal();
-}
-
-function updateSearchResults(){
-const query=document.getElementById("searchInput").value.trim().toLowerCase();
-const resultsDiv=document.getElementById("searchResults");
-resultsDiv.innerHTML="";
-if(!query) return;
-
-const numeric=parseFloat(query);
-data.forEach((d,i)=>{
-let vendorMatch=d.Vendor && d.Vendor.toLowerCase().includes(query);
-let amountMatch=!isNaN(numeric) && d.Amount===numeric;
-if(vendorMatch || amountMatch){
-resultsDiv.innerHTML+=`
-<div class="modalItem" onclick="applySearchFilter(${i})">
-${d.Vendor || d.Title} — $${d.Amount.toFixed(2)}
-</div>`;
-}
-});
-}
-
-function applySearchFilter(index){
-const item=data[index];
-activeSearchFilter={
-vendor:item.Vendor,
-amount:item.Amount
-};
-currentIndex=index;
-document.getElementById("clearSearchBtn").style.display="block";
-closeModal();
-showCard();
-}
-
-function clearSearchFilter(){
-activeSearchFilter=null;
-document.getElementById("clearSearchBtn").style.display="none";
-showCard();
-}
-
-function getVisibleIndexes(){
-if(!activeSearchFilter) return data.map((_,i)=>i);
-
-return data.map((d,i)=>{
-if(
-(activeSearchFilter.vendor && d.Vendor===activeSearchFilter.vendor) ||
-(activeSearchFilter.amount && d.Amount===activeSearchFilter.amount)
-){
-return i;
-}
-return null;
-}).filter(i=>i!==null);
-}
-
-/* CSV */
-
-document.getElementById("csvFile").addEventListener("change",e=>{
-const file=e.target.files[0];
-if(!file)return;
-Papa.parse(file,{
-header:false,
-skipEmptyLines:true,
-complete:res=>{
-headers=res.data[0].map(h=>String(h).trim());
-rawRows=res.data.slice(1);
-showMapping();
-}
-});
-});
-
-function showMapping(){
-mappingPanel.style.display="block";
-mappingPanel.innerHTML=`
-<h4>Map Columns</h4>
-Title:<br>${dropdown("mapTitle")}<br><br>
-Amount:<br>${dropdown("mapAmount")}<br><br>
-Vendor:<br>${dropdown("mapVendor")}<br><br>
-Date:<br>${dropdown("mapDate")}<br><br>
-Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
-<button onclick="confirmMapping()">Confirm Mapping</button>
-`;
-}
-
-function dropdown(id,allowEmpty=false){
-let html=`<select id="${id}">`;
-if(allowEmpty) html+=`<option value="">--None--</option>`;
-headers.forEach((h,i)=>{
-html+=`<option value="${i}">${h}</option>`;
-});
-html+=`</select>`;
-return html;
-}
-
-function confirmMapping(){
-const t=parseInt(mapTitle.value);
-const a=parseInt(mapAmount.value);
-const v=parseInt(mapVendor.value);
-const d=parseInt(mapDate.value);
-const c=mapCategory.value!==""?parseInt(mapCategory.value):null;
-
-data=rawRows.map(row=>({
-Title:row[t]||"",
-Amount:parseFloat(String(row[a]||"").replace(/[$,]/g,""))||0,
-Vendor:row[v]||"",
-Date:row[d]||"",
-Category:c!==null?(row[c]||""):"",
-Splits:[]
-}));
-
-mappingPanel.style.display="none";
-app.style.display="block";
-renderCategories();
-updateTotals();
-updateProgress();
-showCard();
-}
-
-/* Remaining functions unchanged */
-
-function renderCategories(){
-const div=document.getElementById("categoryButtons");
-div.innerHTML="";
-categories.forEach(cat=>{
-const btn=document.createElement("button");
-btn.className="category-btn "+cat.class;
-btn.innerText=cat.name;
-btn.onclick=()=>categorize(cat.name);
-div.appendChild(btn);
-});
-}
-
-function categorize(name){
-data[currentIndex].Category=name;
-updateTotals();
-updateProgress();
-goNext();
-}
-
-function goNext(){
-const visible=getVisibleIndexes();
-let pos=visible.indexOf(currentIndex);
-if(pos<visible.length-1){
-currentIndex=visible[pos+1];
-showCard();
-}
-}
-
-function goBack(){
-const visible=getVisibleIndexes();
-let pos=visible.indexOf(currentIndex);
-if(pos>0){
-currentIndex=visible[pos-1];
-showCard();
-}
-}
-
-function showCard(){
-if(!data.length)return;
-const visible=getVisibleIndexes();
-if(!visible.includes(currentIndex)){
-currentIndex=visible[0]||0;
-}
-const item=data[currentIndex];
-cardTitle.innerText=item.Title;
-cardMeta.innerHTML=
-(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-(item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}`;
-currentCategory.innerText="Current: "+(item.Category||"—");
-}
-
-function updateTotals(){
-let totalsObj={};
-categories.forEach(c=>totalsObj[c.name]=0);
-data.forEach(d=>{
-if(d.Category && totalsObj[d.Category]!=null){
-totalsObj[d.Category]+=d.Amount;
-}
-});
-totals.innerHTML="";
-Object.keys(totalsObj).forEach(k=>{
-totals.innerHTML+=`
-<div class="totalRow">
-<div>${k}</div>
-<div>$${totalsObj[k].toFixed(2)}</div>
-</div>`;
-});
-}
-
-function updateProgress(){
-const total=data.length;
-const done=data.filter(d=>d.Category).length;
-const percent=total?Math.round((done/total)*100):0;
-progressBar.style.width=percent+"%";
-progressText.innerText=`${done} of ${total} categorized (${percent}%)`;
-}
-
-function exportExcel(){
-const ws=XLSX.utils.json_to_sheet(data);
-const wb=XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb,ws,"Categorized");
-XLSX.writeFile(wb,"Categorized.xlsx");
-}
-
-function openModal(){ modalOverlay.style.display="flex"; }
-function closeModal(){ modalOverlay.style.display="none"; modalContent.innerHTML=""; }
-
-modalOverlay.addEventListener("click",function(e){
-if(e.target===modalOverlay) closeModal();
-});
-
-document.addEventListener("keydown",function(e){
-if(e.key==="Escape") closeModal();
-});
-
-</script>
-</body>
-</html>
