@@ -431,10 +431,16 @@ if(!activeSearchFilter) return baseList;
 
 return baseList.filter(i=>{
 const d=data[i];
-return (
-(activeSearchFilter.vendor && d.Vendor===activeSearchFilter.vendor) ||
-(activeSearchFilter.amount && d.Amount===activeSearchFilter.amount)
-);
+
+const vendorMatch =
+activeSearchFilter.vendor &&
+d.Vendor === activeSearchFilter.vendor;
+
+const amountMatch =
+activeSearchFilter.amount != null &&
+d.Amount === activeSearchFilter.amount;
+
+return vendorMatch || amountMatch;
 });
 }
 
