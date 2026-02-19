@@ -1,4 +1,4 @@
-67
+68
 <!DOCTYPE html>
 <html>
 <head>
@@ -108,6 +108,12 @@ flex:1;
 
 <button id="searchBtn" class="category-btn" style="background:#ff9800; margin-bottom:8px;" onclick="openSearchModal()">🔎 Search</button>
 <button id="clearSearchBtn" class="category-btn" style="background:#c62828; margin-bottom:8px; display:none;" onclick="clearSearchFilter()">Clear Search Filter</button>
+<button id="createTransactionBtn"
+class="category-btn"
+style="background:#1565c0; margin-bottom:8px;"
+onclick="openCreateTransactionModal()">
+➕ Create Transaction
+</button>
 
 <div class="progress-bar-container">
 <div id="progressBar" class="progress-bar"></div>
@@ -173,6 +179,7 @@ const categories=[
 {name:"Insurance",class:"expense"},
 {name:"Utilities",class:"expense"},
 {name:"Professional Services",class:"expense"},
+{name:"Fuel",class:"expense"},
 {name:"Needs Review",class:"special"}
 ];
 
@@ -224,6 +231,67 @@ showCard();
 function clearSearchFilter(){
 activeSearchFilter=null;
 document.getElementById("clearSearchBtn").style.display="none";
+showCard();
+}
+
+/* ================= CREATE TRANSACTION ================= */
+
+function openCreateTransactionModal(){
+
+modalTitle.innerText = "Create Transaction";
+
+modalContent.innerHTML = `
+<div style="display:flex; flex-direction:column; gap:12px;">
+
+<label>Vendor</label>
+<input type="text" id="newVendor">
+
+<label>Date</label>
+<input type="date" id="newDate">
+
+<label>Amount</label>
+<input type="number" step="0.01" id="newAmount">
+
+<button class="category-btn expense" onclick="saveNewTransaction()">
+Save Transaction
+</button>
+
+</div>
+`;
+
+openModal();
+}
+
+function saveNewTransaction(){
+
+const vendor = document.getElementById("newVendor").value.trim();
+const date = document.getElementById("newDate").value;
+const amount = parseFloat(document.getElementById("newAmount").value);
+
+if(!vendor || !date || isNaN(amount)){
+alert("Please complete all fields.");
+return;
+}
+
+const newTransaction = {
+Title: vendor,
+Vendor: vendor,
+Date: date,
+Amount: amount,
+Category: "",
+Splits: [],
+Receipt: null
+};
+
+data.push(newTransaction);
+
+closeModal();
+
+updateTotals();
+updateProgress();
+
+// Jump to new transaction
+currentIndex = data.length - 1;
 showCard();
 }
 
