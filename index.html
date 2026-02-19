@@ -1,4 +1,5 @@
-63
+64
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -127,7 +128,7 @@ const categories=[
 {name:"COGS - Shipping from Suppliers",class:"cogs"},
 {name:"Equipment",class:"expense"},
 {name:"Advertising & Marketing",class:"expense"},
-{name:"Website & Software",class:"expense"},
+{name:"Software",class:"expense"},
 {name:"Merchant Processing Fees",class:"expense"},
 {name:"Insurance",class:"expense"},
 {name:"Utilities",class:"expense"},
@@ -184,8 +185,6 @@ document.getElementById("clearSearchBtn").style.display="none";
 showCard();
 }
 
-/* NAVIGATION respects search filter */
-
 function getVisibleIndexes(){
 if(!activeSearchFilter) return data.map((_,i)=>i);
 
@@ -198,24 +197,6 @@ return i;
 }
 return null;
 }).filter(i=>i!==null);
-}
-
-function goNext(){
-const visible=getVisibleIndexes();
-let pos=visible.indexOf(currentIndex);
-if(pos<visible.length-1){
-currentIndex=visible[pos+1];
-showCard();
-}
-}
-
-function goBack(){
-const visible=getVisibleIndexes();
-let pos=visible.indexOf(currentIndex);
-if(pos>0){
-currentIndex=visible[pos-1];
-showCard();
-}
 }
 
 /* CSV */
@@ -242,12 +223,14 @@ Title:<br>${dropdown("mapTitle")}<br><br>
 Amount:<br>${dropdown("mapAmount")}<br><br>
 Vendor:<br>${dropdown("mapVendor")}<br><br>
 Date:<br>${dropdown("mapDate")}<br><br>
+Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
 <button onclick="confirmMapping()">Confirm Mapping</button>
 `;
 }
 
-function dropdown(id){
+function dropdown(id,allowEmpty=false){
 let html=`<select id="${id}">`;
+if(allowEmpty) html+=`<option value="">--None--</option>`;
 headers.forEach((h,i)=>{
 html+=`<option value="${i}">${h}</option>`;
 });
@@ -260,13 +243,14 @@ const t=parseInt(mapTitle.value);
 const a=parseInt(mapAmount.value);
 const v=parseInt(mapVendor.value);
 const d=parseInt(mapDate.value);
+const c=mapCategory.value!==""?parseInt(mapCategory.value):null;
 
 data=rawRows.map(row=>({
 Title:row[t]||"",
 Amount:parseFloat(String(row[a]||"").replace(/[$,]/g,""))||0,
 Vendor:row[v]||"",
 Date:row[d]||"",
-Category:"",
+Category:c!==null?(row[c]||""):"",
 Splits:[]
 }));
 
@@ -278,7 +262,7 @@ updateProgress();
 showCard();
 }
 
-/* CATEGORY */
+/* Remaining functions unchanged */
 
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
@@ -299,11 +283,26 @@ updateProgress();
 goNext();
 }
 
-/* SHOW CARD */
+function goNext(){
+const visible=getVisibleIndexes();
+let pos=visible.indexOf(currentIndex);
+if(pos<visible.length-1){
+currentIndex=visible[pos+1];
+showCard();
+}
+}
+
+function goBack(){
+const visible=getVisibleIndexes();
+let pos=visible.indexOf(currentIndex);
+if(pos>0){
+currentIndex=visible[pos-1];
+showCard();
+}
+}
 
 function showCard(){
 if(!data.length)return;
-
 const visible=getVisibleIndexes();
 if(!visible.includes(currentIndex)){
 currentIndex=visible[0]||0;
@@ -314,22 +313,17 @@ cardMeta.innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
 `Amount: $${item.Amount.toFixed(2)}`;
-
 currentCategory.innerText="Current: "+(item.Category||"—");
 }
-
-/* TOTALS */
 
 function updateTotals(){
 let totalsObj={};
 categories.forEach(c=>totalsObj[c.name]=0);
-
 data.forEach(d=>{
 if(d.Category && totalsObj[d.Category]!=null){
 totalsObj[d.Category]+=d.Amount;
 }
 });
-
 totals.innerHTML="";
 Object.keys(totalsObj).forEach(k=>{
 totals.innerHTML+=`
@@ -340,8 +334,6 @@ totals.innerHTML+=`
 });
 }
 
-/* PROGRESS */
-
 function updateProgress(){
 const total=data.length;
 const done=data.filter(d=>d.Category).length;
@@ -350,8 +342,6 @@ progressBar.style.width=percent+"%";
 progressText.innerText=`${done} of ${total} categorized (${percent}%)`;
 }
 
-/* EXPORT */
-
 function exportExcel(){
 const ws=XLSX.utils.json_to_sheet(data);
 const wb=XLSX.utils.book_new();
@@ -359,16 +349,8 @@ XLSX.utils.book_append_sheet(wb,ws,"Categorized");
 XLSX.writeFile(wb,"Categorized.xlsx");
 }
 
-/* MODAL */
-
-function openModal(){
-modalOverlay.style.display="flex";
-}
-
-function closeModal(){
-modalOverlay.style.display="none";
-modalContent.innerHTML="";
-}
+function openModal(){ modalOverlay.style.display="flex"; }
+function closeModal(){ modalOverlay.style.display="none"; modalContent.innerHTML=""; }
 
 modalOverlay.addEventListener("click",function(e){
 if(e.target===modalOverlay) closeModal();
