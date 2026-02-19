@@ -1,4 +1,5 @@
-45
+46
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -23,26 +24,44 @@ input, select { padding:10px; border-radius:10px; border:1px solid #ddd; width:1
 .progress-bar-container { background:#eee; border-radius:999px; overflow:hidden; height:16px; margin-bottom:8px;}
 .progress-bar { height:100%; background:#2e7d32; width:0%;}
 .small { font-size:13px; color:#555;}
-.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:4px 0;}
+.totalRow { display:flex; justify-content:space-between; font-size:13px; padding:6px 0; cursor:pointer; border-bottom:1px solid #eee;}
+.totalRow:hover { background:#f5f5f5; }
 .splitBox { background:#fafafa; padding:10px; border-radius:10px; margin-top:10px;}
 .viewBtn { background:#1565c0; color:white; margin-top:6px;}
 .toggleBtn { background:#777; color:white; width:100%; margin-bottom:8px;}
 .toggleActive { background:#4caf50 !important;}
 .clearBtn { background:#c62828; color:white; margin-top:8px;}
 .resetBtn { background:#444; color:white; margin-top:8px; width:100%;}
-#vendorDropdown {
-position:absolute;
-background:white;
-border:1px solid #ddd;
-border-radius:10px;
-box-shadow:0 6px 20px rgba(0,0,0,.1);
-max-height:200px;
-overflow:auto;
+
+.modalOverlay {
+position:fixed;
+top:0;
+left:0;
+width:100%;
+height:100%;
+background:rgba(0,0,0,.6);
 display:none;
-z-index:999;
+justify-content:center;
+align-items:center;
+z-index:9999;
 }
-.vendor-option { padding:8px; cursor:pointer; }
-.vendor-option:hover { background:#f0f0f0; }
+
+.modalBox {
+background:white;
+width:90%;
+max-width:800px;
+max-height:85%;
+overflow:auto;
+border-radius:14px;
+padding:20px;
+}
+
+.modalClose {
+background:#c62828;
+color:white;
+margin-top:10px;
+width:100%;
+}
 </style>
 </head>
 
@@ -81,34 +100,21 @@ z-index:999;
 </div>
 
 <div class="panel">
-
-<button id="uncatToggle" class="toggleBtn" onclick="toggleUncategorized()">Show: Not Categorized Only</button>
-<button id="attachmentToggle" class="toggleBtn" onclick="toggleAttachment()">Show: Has Attachment Only</button>
-
-<h4>Search Transaction</h4>
-
-Vendor:<br>
-<div style="position:relative;">
-<input type="text" id="searchVendor" oninput="showVendorSuggestions()">
-<div id="vendorDropdown"></div>
-</div><br>
-
-Amount:<br>
-<input type="number" id="searchAmount" step="0.01"><br><br>
-
-<button onclick="applySearch()">Search</button>
-<button class="clearBtn" onclick="clearSearch()">Clear Search</button>
-<button class="resetBtn" onclick="resetAllFilters()">Reset All Filters</button>
-
-</div>
-
-<div class="panel">
 <h4>Totals</h4>
 <div id="totals"></div>
 </div>
 
 <button onclick="exportExcel()">Export to Excel</button>
 
+</div>
+
+<!-- Modal -->
+<div id="modalOverlay" class="modalOverlay">
+<div class="modalBox">
+<h3 id="modalTitle"></h3>
+<div id="modalContent"></div>
+<button class="modalClose" onclick="closeModal()">Close</button>
+</div>
 </div>
 
 <script>
@@ -118,25 +124,20 @@ let headers=[];
 let data=[];
 let currentIndex=0;
 
-let filterUncategorized=false;
-let filterAttachment=false;
-let vendorFilter="";
-let amountFilter=null;
-
 const categories=[
-{name:"COGS - Ingredients",class:"cogs"},
-{name:"COGS - Packaging",class:"cogs"},
-{name:"COGS - Resale Inventory",class:"cogs"},
-{name:"COGS - Production Supplies",class:"cogs"},
-{name:"COGS - Shipping from Suppliers",class:"cogs"},
-{name:"Equipment",class:"expense"},
-{name:"Advertising & Marketing",class:"expense"},
-{name:"Website & Software",class:"expense"},
-{name:"Merchant Processing Fees",class:"expense"},
-{name:"Insurance",class:"expense"},
-{name:"Utilities",class:"expense"},
-{name:"Professional Services",class:"expense"},
-{name:"Needs Review",class:"special"}
+{name:"COGS - Ingredients"},
+{name:"COGS - Packaging"},
+{name:"COGS - Resale Inventory"},
+{name:"COGS - Production Supplies"},
+{name:"COGS - Shipping from Suppliers"},
+{name:"Equipment"},
+{name:"Advertising & Marketing"},
+{name:"Website & Software"},
+{name:"Merchant Processing Fees"},
+{name:"Insurance"},
+{name:"Utilities"},
+{name:"Professional Services"},
+{name:"Needs Review"}
 ];
 
 document.getElementById("csvFile").addEventListener("change",e=>{
@@ -162,14 +163,12 @@ Title:<br>${dropdown("mapTitle")}<br><br>
 Amount:<br>${dropdown("mapAmount")}<br><br>
 Vendor:<br>${dropdown("mapVendor")}<br><br>
 Date:<br>${dropdown("mapDate")}<br><br>
-Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
 <button onclick="confirmMapping()">Confirm Mapping</button>
 `;
 }
 
-function dropdown(id,allowEmpty=false){
+function dropdown(id){
 let html=`<select id="${id}">`;
-if(allowEmpty) html+=`<option value="">--None--</option>`;
 headers.forEach((h,i)=>{
 html+=`<option value="${i}">${h}</option>`;
 });
@@ -178,118 +177,27 @@ return html;
 }
 
 function confirmMapping(){
-
 const t=parseInt(mapTitle.value);
 const a=parseInt(mapAmount.value);
 const v=parseInt(mapVendor.value);
 const d=parseInt(mapDate.value);
-const c=mapCategory.value !== "" ? parseInt(mapCategory.value) : null;
 
 data = rawRows.map(row=>({
 Title: row[t] || "",
 Amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
 Vendor: row[v] || "",
 Date: row[d] || "",
-Category: c !== null ? (row[c] || "") : "",
-Splits: [],
-Receipt: null
+Category: "",
+Splits: []
 }));
 
 mappingPanel.style.display="none";
 app.style.display="block";
 
 renderCategories();
-resetToFirstMatch();
 updateTotals();
 updateProgress();
-}
-
-function passesFilters(item){
-if(filterUncategorized && item.Category) return false;
-if(filterAttachment && !item.Receipt) return false;
-if(vendorFilter && !item.Vendor.toLowerCase().includes(vendorFilter)) return false;
-if(amountFilter!==null && Math.abs(item.Amount-amountFilter)>0.01) return false;
-return true;
-}
-
-function resetToFirstMatch(){
-currentIndex=0;
-let first=findNextIndex(0,1);
-if(first!==-1) currentIndex=first;
 showCard();
-}
-
-function findNextIndex(start,dir){
-let i=start;
-while(i>=0 && i<data.length){
-if(passesFilters(data[i])) return i;
-i+=dir;
-}
-return -1;
-}
-
-function toggleUncategorized(){
-filterUncategorized=!filterUncategorized;
-uncatToggle.classList.toggle("toggleActive");
-resetToFirstMatch();
-}
-
-function toggleAttachment(){
-filterAttachment=!filterAttachment;
-attachmentToggle.classList.toggle("toggleActive");
-resetToFirstMatch();
-}
-
-function applySearch(){
-vendorFilter=document.getElementById("searchVendor").value.toLowerCase().trim();
-amountFilter=parseFloat(document.getElementById("searchAmount").value);
-if(isNaN(amountFilter)) amountFilter=null;
-resetToFirstMatch();
-}
-
-function clearSearch(){
-document.getElementById("searchVendor").value="";
-document.getElementById("searchAmount").value="";
-vendorFilter="";
-amountFilter=null;
-resetToFirstMatch();
-}
-
-function resetAllFilters(){
-filterUncategorized=false;
-filterAttachment=false;
-vendorFilter="";
-amountFilter=null;
-document.getElementById("searchVendor").value="";
-document.getElementById("searchAmount").value="";
-uncatToggle.classList.remove("toggleActive");
-attachmentToggle.classList.remove("toggleActive");
-resetToFirstMatch();
-}
-
-function showVendorSuggestions(){
-const input=document.getElementById("searchVendor").value.toLowerCase().trim();
-const dropdown=document.getElementById("vendorDropdown");
-if(!input){ dropdown.style.display="none"; return; }
-
-const unique=[...new Set(data.map(d=>d.Vendor).filter(v=>v))];
-const matches=unique.filter(v=>v.toLowerCase().includes(input)).slice(0,8);
-
-if(!matches.length){ dropdown.style.display="none"; return; }
-
-dropdown.innerHTML="";
-matches.forEach(v=>{
-const div=document.createElement("div");
-div.className="vendor-option";
-div.innerText=v;
-div.onclick=()=>{
-document.getElementById("searchVendor").value=v;
-dropdown.style.display="none";
-applySearch();
-};
-dropdown.appendChild(div);
-});
-dropdown.style.display="block";
 }
 
 function renderCategories(){
@@ -297,17 +205,12 @@ const div=document.getElementById("categoryButtons");
 div.innerHTML="";
 categories.forEach(cat=>{
 const btn=document.createElement("button");
-btn.className="category-btn "+cat.class;
+btn.className="category-btn";
+btn.style.background="#2e7d32";
 btn.innerText=cat.name;
 btn.onclick=()=>categorize(cat.name);
 div.appendChild(btn);
 });
-const splitBtn=document.createElement("button");
-splitBtn.className="category-btn";
-splitBtn.style.background="#ff9800";
-splitBtn.innerText="Split Transaction";
-splitBtn.onclick=showSplitUI;
-div.appendChild(splitBtn);
 }
 
 function categorize(name){
@@ -318,69 +221,6 @@ updateProgress();
 goNext();
 }
 
-function showSplitUI(){
-const item=data[currentIndex];
-let html=`<div class="splitBox">
-<strong>Total: $${item.Amount.toFixed(2)}</strong><br>
-<div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div><br>`;
-categories.forEach((c,i)=>{
-html+=`${c.name}<br>
-<input type="number" step="0.01" id="split_${i}" oninput="updateRemaining()"><br><br>`;
-});
-html+=`<button onclick="saveSplit()">Save Split</button></div>`;
-splitContainer.innerHTML=html;
-}
-
-function updateRemaining(){
-const item=data[currentIndex];
-let total=0;
-categories.forEach((c,i)=>{
-total+=parseFloat(document.getElementById("split_"+i).value)||0;
-});
-const remaining=item.Amount-total;
-const el=document.getElementById("remainingBalance");
-el.innerText="Remaining: $"+remaining.toFixed(2);
-el.style.color=Math.abs(remaining)<0.01?"green":remaining<0?"red":"orange";
-}
-
-function saveSplit(){
-const item=data[currentIndex];
-let total=0,splits=[];
-categories.forEach((c,i)=>{
-const val=parseFloat(document.getElementById("split_"+i).value)||0;
-if(val>0){splits.push({Category:c.name,Amount:val});total+=val;}
-});
-if(Math.abs(total-item.Amount)>0.01){alert("Split must equal total.");return;}
-item.Splits=splits;
-item.Category="SPLIT";
-updateTotals();
-updateProgress();
-goNext();
-}
-
-function attachReceipt(e){
-const file=e.target.files[0];
-if(!file)return;
-const reader=new FileReader();
-reader.onload=function(ev){
-data[currentIndex].Receipt={name:file.name,data:ev.target.result};
-showCard();
-};
-reader.readAsDataURL(file);
-}
-
-function viewReceipt(){
-const receipt=data[currentIndex].Receipt;
-if(!receipt)return;
-const byteString=atob(receipt.data.split(',')[1]);
-const mimeString=receipt.data.split(',')[0].split(':')[1].split(';')[0];
-const ab=new ArrayBuffer(byteString.length);
-const ia=new Uint8Array(ab);
-for(let i=0;i<byteString.length;i++) ia[i]=byteString.charCodeAt(i);
-const blob=new Blob([ab],{type:mimeString});
-window.open(URL.createObjectURL(blob));
-}
-
 function showCard(){
 if(!data.length)return;
 const item=data[currentIndex];
@@ -388,31 +228,17 @@ cardTitle.innerText=item.Title;
 cardMeta.innerHTML=
 (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
 (item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}<br>`+
-(item.Receipt?`📎 Receipt Attached<br>
-<button class="viewBtn" onclick="viewReceipt()">View Receipt</button><br>`:"")+
-`<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">`;
-
-if(item.Splits.length){
-let splitHTML="<strong>Split Allocation:</strong><br>";
-item.Splits.forEach(s=>{
-splitHTML+=`${s.Category}: $${s.Amount.toFixed(2)}<br>`;
-});
-splitSummary.innerHTML=splitHTML;
-}else{
-splitSummary.innerHTML="";
+`Amount: $${item.Amount.toFixed(2)}`;
+currentCategory.innerText="Current: "+(item.Category||"—");
 }
 
-currentCategory.innerText=item.Splits.length?"Split into multiple categories":"Current: "+(item.Category||"—");
-splitContainer.innerHTML="";
-}
-
-function goNext(){ let next=findNextIndex(currentIndex+1,1); if(next!==-1){currentIndex=next;showCard();}}
-function goBack(){ let prev=findNextIndex(currentIndex-1,-1); if(prev!==-1){currentIndex=prev;showCard();}}
+function goNext(){ if(currentIndex<data.length-1){currentIndex++;showCard();}}
+function goBack(){ if(currentIndex>0){currentIndex--;showCard();}}
 
 function updateTotals(){
 let totalsObj={};
 categories.forEach(c=>totalsObj[c.name]=0);
+
 data.forEach(d=>{
 if(d.Splits.length){
 d.Splits.forEach(s=>totalsObj[s.Category]+=s.Amount);
@@ -420,10 +246,54 @@ d.Splits.forEach(s=>totalsObj[s.Category]+=s.Amount);
 totalsObj[d.Category]+=d.Amount;
 }
 });
+
 totals.innerHTML="";
 Object.keys(totalsObj).forEach(k=>{
-totals.innerHTML+=`<div class="totalRow"><div>${k}</div><div>$${totalsObj[k].toFixed(2)}</div></div>`;
+const row=document.createElement("div");
+row.className="totalRow";
+row.innerHTML=`<div>${k}</div><div>$${totalsObj[k].toFixed(2)}</div>`;
+row.onclick=()=>showCategoryBreakdown(k);
+totals.appendChild(row);
 });
+}
+
+function showCategoryBreakdown(category){
+let total=0;
+let html="";
+
+data.forEach(d=>{
+if(d.Splits.length){
+d.Splits.forEach(s=>{
+if(s.Category===category){
+total+=s.Amount;
+html+=`
+<div style="border-bottom:1px solid #eee; padding:6px 0;">
+<strong>${d.Title}</strong><br>
+Vendor: ${d.Vendor}<br>
+Date: ${d.Date}<br>
+Split Amount: $${s.Amount.toFixed(2)}
+</div>`;
+}
+});
+}else if(d.Category===category){
+total+=d.Amount;
+html+=`
+<div style="border-bottom:1px solid #eee; padding:6px 0;">
+<strong>${d.Title}</strong><br>
+Vendor: ${d.Vendor}<br>
+Date: ${d.Date}<br>
+Amount: $${d.Amount.toFixed(2)}
+</div>`;
+}
+});
+
+modalTitle.innerText=category+" — Total: $"+total.toFixed(2);
+modalContent.innerHTML=html || "No transactions found.";
+modalOverlay.style.display="flex";
+}
+
+function closeModal(){
+modalOverlay.style.display="none";
 }
 
 function updateProgress(){
