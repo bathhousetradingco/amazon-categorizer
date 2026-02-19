@@ -461,28 +461,43 @@ html+=`</select>`;
 return html;
 }
 
-function confirmMapping(){
-const t=parseInt(mapTitle.value);
-const a=parseInt(mapAmount.value);
-const v=parseInt(mapVendor.value);
-const d=parseInt(mapDate.value);
-const c=mapCategory.value !== "" ? parseInt(mapCategory.value) : null;
+async function confirmMapping(){
+  const t=parseInt(mapTitle.value);
+  const a=parseInt(mapAmount.value);
+  const v=parseInt(mapVendor.value);
+  const d=parseInt(mapDate.value);
+  const c=mapCategory.value !== "" ? parseInt(mapCategory.value) : null;
 
-data = rawRows.map(row=>({
-Title: row[t] || "",
-Amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
-Vendor: row[v] || "",
-Date: row[d] || "",
-Category: c !== null 
-  ? (row[c] || "")
-      .normalize("NFKD")
-      .replace(/[^\x00-\x7F]/g, "")   // remove all non-ASCII characters
-      .replace(/[–—]/g,"-")
-      .trim()
-  : "",
-Splits: [],
-Receipt: null
-}));
+  const rowsToInsert = rawRows.map(row => ({
+    title: row[t] || "",
+    amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
+    vendor: row[v] || "",
+    date: row[d] || "",
+    category: c !== null 
+      ? (row[c] || "")
+          .normalize("NFKD")
+          .replace(/[^\x00-\x7F]/g, "")
+          .replace(/[–—]/g,"-")
+          .trim()
+      : "",
+    splits: []
+  }));
+
+  const { error } = await supabaseClient
+    .from("transactions")
+    .insert(rowsToInsert);
+
+  if(error){
+    console.error(error);
+    alert("Error importing CSV to database");
+    return;
+  }
+
+  mappingPanel.style.display="none";
+
+  await loadTransactions(); // reload from database
+}
+
 
 mappingPanel.style.display="none";
 app.style.display="block";
