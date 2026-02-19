@@ -1,4 +1,4 @@
-70
+71
 <!DOCTYPE html>
 <html>
 <head>
@@ -268,10 +268,16 @@ openModal();
 function saveNewTransaction(){
 
 const vendor = document.getElementById("newVendor").value.trim();
-const date = document.getElementById("newDate").value;
+const rawDate = document.getElementById("newDate").value;
+
+let formattedDate = "";
+if(rawDate){
+const parts = rawDate.split("-");
+formattedDate = `${parts[1]}/${parts[2]}/${parts[0].slice(-2)}`;
+}
 const amount = parseFloat(document.getElementById("newAmount").value);
 
-if(!vendor || !date || isNaN(amount)){
+if(!vendor || !formattedDate || isNaN(amount)){
 alert("Please complete all fields.");
 return;
 }
@@ -279,7 +285,7 @@ return;
 const newTransaction = {
 Title: vendor,
 Vendor: vendor,
-Date: date,
+Date: formattedDate,
 Amount: amount,
 Category: "",
 Splits: [],
@@ -304,6 +310,30 @@ const toggleBtn = document.getElementById("filterToggle");
 if(toggleBtn) toggleBtn.innerText = "Show Only Uncategorized";
 }
 currentIndex = data.length - 1;
+showCard();
+}
+
+function deleteTransaction(){
+
+if(!confirm("Are you sure you want to delete this transaction?")) return;
+
+data.splice(currentIndex,1);
+
+if(currentIndex >= data.length){
+currentIndex = data.length - 1;
+}
+
+updateTotals();
+updateProgress();
+
+if(data.length === 0){
+cardTitle.innerText = "No Transactions";
+cardMeta.innerHTML = "";
+splitSummary.innerHTML = "";
+currentCategory.innerText = "";
+return;
+}
+
 showCard();
 }
 
@@ -362,7 +392,7 @@ Title: row[t] || "",
 Amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
 Vendor: row[v] || "",
 Date: row[d] || "",
-Category: c !== null ? (row[c] || "") : "",
+Category: c !== null ? (row[c] || "").replace(/[–—]/g,"-").trim() : "",
 Splits: [],
 Receipt: null
 }));
@@ -692,7 +722,10 @@ cardMeta.innerHTML=
 (item.Receipt?`📎 Receipt Attached<br>
 <button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
 <button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>`:"")+
-`<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">`;
+`<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
+<br><button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>`;
+
+
 
 if(item.Splits.length){
 let splitHTML="<strong>Split Allocation:</strong><br>";
