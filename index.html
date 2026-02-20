@@ -53,13 +53,10 @@ overflow:auto;
   width:95%;
   max-width:1200px;
   height:90vh;
-  overflow:hidden;
-  border-radius:14px;
-  padding:16px;
+  overflow:visible;
   display:flex;
   flex-direction:column;
 }
-
 #modalContent {
   flex:1;
   overflow:auto;
@@ -768,16 +765,12 @@ if(item.id){
 goNext();
 }
 
-
-/* Split Modal with Side by Side */
-
 async function openSplitModal(){
 
 const item = data[currentIndex];
 modalTitle.innerText = "Split Transaction";
 
 let receiptHTML = "";
-let html = "";
 
 if(item.receipt_url){
 
@@ -789,22 +782,47 @@ if(item.receipt_url){
   if(!error && signedData?.signedUrl){
 
     receiptHTML = `
-  <div class="splitSideBySide">
-    <div class="splitLeft">
-      <iframe src="${signedData.signedUrl}"></iframe>
-    </div>
-    <div class="splitRight">
-`;
+    <div style="position:relative; height:100%; display:flex; flex-direction:column;">
+
+      <!-- FULL SCREEN RECEIPT -->
+      <div style="flex:1; overflow:hidden; background:#000;">
+        <iframe src="${signedData.signedUrl}" 
+  style="width:100%; height:100%; border:none; background:white;">
+</iframe>
+      </div>
+
+      <!-- DRAWER -->
+      <div id="splitDrawer" style="
+        position:absolute;
+        bottom:0;
+        left:0;
+        width:100%;
+        background:white;
+        border-top-left-radius:16px;
+        border-top-right-radius:16px;
+        box-shadow:0 -4px 20px rgba(0,0,0,.2);
+        padding:16px;
+        height:300px;
+        overflow:auto;
+      ">
+
+        <!-- DRAG HANDLE -->
+        <div style="
+          width:40px;
+          height:5px;
+          background:#ccc;
+          border-radius:999px;
+          margin:0 auto 10px auto;
+        "></div>
+
+        <div class="splitBox">
+          <strong>Total: $${item.Amount.toFixed(2)}</strong><br>
+          <div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div><br>
+    `;
   }
 }
 
-html += receiptHTML;
-
-html += `
-<div class="splitBox">
-<strong>Total: $${item.Amount.toFixed(2)}</strong><br>
-<div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div><br>
-`;
+let html = receiptHTML;
 
 categories.forEach((c,i)=>{
 html += `
@@ -816,16 +834,60 @@ ${c.name}<br>
 html += `
 <button onclick="saveSplit()">Save Split</button>
 </div>
+</div>
+</div>
 `;
-
-if(item.receipt_url){
-  html += `</div></div>`;
-}
 
 modalContent.innerHTML = html;
 openModal();
+setTimeout(initDrawerDrag, 50);
+
 }
 
+
+
+let startY = 0;
+let startHeight = 0;
+
+function initDrawerDrag(){
+  const drawer = document.getElementById("splitDrawer");
+if(!drawer) return;
+
+drawer.style.transition = "height 0.2s ease";
+  const receiptArea = drawer.previousElementSibling;
+
+const tapZone = document.createElement("div");
+tapZone.style.position = "absolute";
+tapZone.style.top = "0";
+tapZone.style.left = "0";
+tapZone.style.width = "100%";
+tapZone.style.height = "40%";
+tapZone.style.zIndex = "5";
+
+receiptArea.style.position = "relative";
+receiptArea.appendChild(tapZone);
+
+tapZone.addEventListener("click", () => {
+  drawer.style.height = "80vh";
+});
+
+
+
+  drawer.addEventListener("touchstart", (e)=>{
+    startY = e.touches[0].clientY;
+    startHeight = drawer.offsetHeight;
+  });
+
+  drawer.addEventListener("touchmove", (e)=>{
+    let delta = startY - e.touches[0].clientY;
+    let newHeight = startHeight + delta;
+
+    if(newHeight > window.innerHeight * 0.9) newHeight = window.innerHeight * 0.9;
+    if(newHeight < 120) newHeight = 120;
+
+    drawer.style.height = newHeight + "px";
+  });
+}
 
 function updateRemaining(){
 const item=data[currentIndex];
