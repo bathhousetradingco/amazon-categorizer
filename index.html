@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -140,22 +141,30 @@ margin-top:8px;
 <div class="panel">
 
 <button id="searchBtn" class="category-btn" style="background:#ff9800; margin-bottom:8px;" onclick="openSearchModal()">🔎 Search</button>
+
 <button id="clearSearchBtn" class="category-btn" style="background:#c62828; margin-bottom:8px; display:none;" onclick="clearSearchFilter()">Clear Search Filter</button>
+
 <button id="createTransactionBtn"
 class="category-btn"
 style="background:#1565c0; margin-bottom:8px;"
 onclick="openCreateTransactionModal()">
 ➕ Create Transaction
 </button>
+
+<button class="category-btn" style="background:#2e7d32; margin-bottom:8px;" onclick="connectBank()">
+🏦 Connect Bank
+</button>
+
 <select id="yearFilter" onchange="applyYearFilter()" style="margin-bottom:8px;">
   <option value="">All Years</option>
-</select> 
+</select>
+
 <div class="progress-bar-container">
-<div id="progressBar" class="progress-bar"></div>
+  <div id="progressBar" class="progress-bar"></div>
 </div>
+
 <div id="progressText" class="small"></div>
 
-</div>
 
 <div class="panel">
 <h3 id="cardTitle"></h3>
@@ -1509,6 +1518,48 @@ const ws=XLSX.utils.json_to_sheet(data);
 const wb=XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb,ws,"Categorized");
 XLSX.writeFile(wb,"Categorized.xlsx");
+}
+
+async function connectBank() {
+
+  // 1. Get link token from your edge function
+  const res = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/create-link-token");
+
+  const data = await res.json();
+
+  if (!data.link_token) {
+    alert("Failed to create link token");
+    console.error(data);
+    return;
+  }
+
+  // 2. Initialize Plaid
+  const handler = Plaid.create({
+    token: data.link_token,
+
+    onSuccess: async (public_token, metadata) => {
+      console.log("Connected!", public_token);
+
+      // Send to backend to exchange token
+      await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          public_token
+        })
+      });
+
+      alert("Bank connected successfully!");
+    },
+
+    onExit: function(err, metadata) {
+      console.log("User exited Plaid", err);
+    }
+  });
+
+  handler.open();
 }
 
 </script>
