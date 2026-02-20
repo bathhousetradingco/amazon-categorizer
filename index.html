@@ -933,10 +933,13 @@ if(remaining <= 0.01){
   alert("No more money to split.");
   return;
 }
-const amount = prompt("Enter amount from receipt:", remaining.toFixed(2));
-    if(!amount) return;
+const tapX = e.changedTouches[0].clientX;
+const tapY = e.changedTouches[0].clientY;
 
-    const parsed = parseFloat(amount);
+const amount = await showAmountInput(tapX, tapY, remaining);
+if(amount === null) return;
+
+const parsed = parseFloat(amount);
     if(isNaN(parsed)){
       alert("Invalid amount");
       return;
@@ -1002,6 +1005,57 @@ async function resetSplits(){
     el.style.color = "orange";
   }
 }
+
+function showAmountInput(x, y, remaining){
+  return new Promise(resolve => {
+
+    const inputBox = document.createElement("div");
+
+    inputBox.style.position = "fixed";
+    inputBox.style.top = y + "px";
+    inputBox.style.left = x + "px";
+    inputBox.style.transform = "translate(-50%, -50%)";
+    inputBox.style.background = "white";
+    inputBox.style.padding = "12px";
+    inputBox.style.borderRadius = "12px";
+    inputBox.style.boxShadow = "0 4px 20px rgba(0,0,0,.25)";
+    inputBox.style.zIndex = "99999";
+
+    inputBox.innerHTML = `
+      <input type="number" step="0.01" value="${remaining.toFixed(2)}" style="
+        width:120px;
+        padding:8px;
+        font-size:16px;
+        border-radius:8px;
+        border:1px solid #ccc;
+      ">
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <button style="flex:1; background:#2e7d32; color:white;">OK</button>
+        <button style="flex:1; background:#c62828; color:white;">Cancel</button>
+      </div>
+    `;
+
+    document.body.appendChild(inputBox);
+
+    const input = inputBox.querySelector("input");
+    input.focus();
+
+    const buttons = inputBox.querySelectorAll("button");
+
+    buttons[0].onclick = () => {
+      const val = input.value;
+      document.body.removeChild(inputBox);
+      resolve(val);
+    };
+
+    buttons[1].onclick = () => {
+      document.body.removeChild(inputBox);
+      resolve(null);
+    };
+
+  });
+}
+
 
 function updateRemainingUI(){
 
