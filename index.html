@@ -1558,12 +1558,15 @@ async function connectBank() {
   });
 
   // 2. 🔥 Pull transactions immediately
-  await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions", {
+  await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
     "Authorization": "Bearer " + SUPABASE_ANON_KEY
-  }
+  },
+  body: JSON.stringify({
+    public_token
+  })
 });
 
   // 3. Refresh app data
