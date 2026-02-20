@@ -971,10 +971,29 @@ async function applySplit(category, amount){
 
   if(!item.Splits) item.Splits = [];
 
-  item.Splits.push({
-    Category: category,
-    Amount: amount
-  });
+  // 🔥 CALCULATE CURRENT TOTAL
+let total = 0;
+item.Splits.forEach(s => total += s.Amount);
+
+const remaining = item.Amount - total;
+
+// 🚫 BLOCK OVER-ALLOCATION
+if(amount > remaining + 0.01){
+  alert(`Only $${remaining.toFixed(2)} remaining.`);
+  return;
+}
+
+// 🚫 BLOCK NEGATIVE OR ZERO
+if(amount <= 0){
+  alert("Enter a valid amount.");
+  return;
+}
+
+// ✅ SAFE TO ADD
+item.Splits.push({
+  Category: category,
+  Amount: amount
+});
 
   item.Category = "SPLIT";
 
