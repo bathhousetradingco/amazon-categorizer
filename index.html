@@ -432,12 +432,26 @@ if (!response.ok) {
   return;
 }
 
-await loadTransactions();
+// Add instantly to UI (optimistic update)
+data.unshift({
+  id: Date.now(), // temp id
+  Title: vendor,
+  Vendor: vendor,
+  Date: formattedDate,
+  Amount: amount,
+  Category: "",
+  Splits: [],
+  receipt_url: null
+});
 
 closeModal();
 
 updateTotals();
 updateProgress();
+showCard();
+
+// THEN refresh quietly in background
+loadTransactions();
 
 // Jump to new transaction
 activeSearchFilter = null;
