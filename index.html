@@ -984,6 +984,11 @@ async function resetSplits(){
   item.Category = "";
 
   updateRemainingUI();
+
+// Force UI refresh if modal is open
+setTimeout(() => {
+  updateRemainingUI();
+}, 50);
   updateTotals();
   updateProgress();
 
