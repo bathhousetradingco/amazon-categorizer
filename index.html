@@ -1538,21 +1538,33 @@ async function connectBank() {
     token: data.link_token,
 
     onSuccess: async (public_token, metadata) => {
-      console.log("Connected!", public_token);
+  console.log("Connected!", public_token);
 
-      // Send to backend to exchange token
-      await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          public_token
-        })
-      });
-
-      alert("Bank connected successfully!");
+  // 1. Exchange token
+  await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
     },
+    body: JSON.stringify({
+      public_token
+    })
+  });
+
+  // 2. 🔥 Pull transactions immediately
+  await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + SUPABASE_ANON_KEY
+  }
+});
+
+  // 3. Refresh app data
+  await loadTransactions();
+
+  alert("Bank connected and transactions imported!");
+},
 
     onExit: function(err, metadata) {
       console.log("User exited Plaid", err);
