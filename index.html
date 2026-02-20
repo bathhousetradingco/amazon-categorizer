@@ -1546,28 +1546,38 @@ async function connectBank() {
     onSuccess: async (public_token, metadata) => {
   console.log("Connected!", public_token);
 
-  // 1. Exchange token
-  await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
+  // 1. Exchange public_token → access_token (SAVES ACCOUNT)
+  const exchangeRes = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY
     },
     body: JSON.stringify({
       public_token
     })
   });
 
-  // 2. 🔥 Pull transactions immediately
-  await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "Authorization": "Bearer " + SUPABASE_ANON_KEY
-  },
-  body: JSON.stringify({
-    public_token
-  })
-});
+  const exchangeData = await exchangeRes.json();
+  console.log("Exchange result:", exchangeData);
+
+  // 2. 🚀 NOW sync transactions
+  const syncRes = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY
+    }
+  });
+
+  const syncData = await syncRes.json();
+  console.log("Sync result:", syncData);
+
+  // 3. Refresh UI
+  await loadTransactions();
+
+  alert("Bank connected and transactions imported!");
+}
 
   // 3. Refresh app data
   await loadTransactions();
