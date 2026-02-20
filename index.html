@@ -161,6 +161,17 @@ onclick="openCreateTransactionModal()">
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
 <div id="splitSummary"></div>
 
+<button onclick="resetSplits()" style="
+  background:#c62828;
+  color:white;
+  padding:10px 14px;
+  border-radius:10px;
+  margin-top:10px;
+  width:100%;
+">
+  Reset Splits
+</button>
+
 <hr>
 
 <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
@@ -848,32 +859,21 @@ splitMode = false;
     ">
       Enable Split Mode
     </button>
-<button onclick="resetSplits()" style="
-  position:absolute;
-  top:10px;
-  left:10px;
-  z-index:10;
-  background:#c62828;
-  color:white;
-  padding:8px 12px;
-  border-radius:10px;
-">
-  Reset
-</button>
     ${receiptView}
 
     <div id="remainingBar" style="
-      position:fixed;
-      bottom:40px;
-      left:50%;
-      transform:translateX(-50%);
-      background:white;
-      padding:12px 18px;
-      border-radius:999px;
-      box-shadow:0 4px 20px rgba(0,0,0,.2);
-      font-weight:600;
-      pointer-events:none;
-    ">
+  position:absolute;
+  bottom:10px;
+  left:50%;
+  transform:translateX(-50%);
+  background:rgba(255,255,255,0.9);
+  padding:10px 16px;
+  border-radius:999px;
+  box-shadow:0 4px 12px rgba(0,0,0,.15);
+  font-weight:600;
+  pointer-events:none;
+  z-index:5;
+">
       Remaining: $${item.Amount.toFixed(2)}
     </div>
 
@@ -900,7 +900,9 @@ let startHeight = 0;
 function initTapToSplit(){
 
   const container = document.getElementById("tapSplitContainer");
-  if(!container) return;
+if(!container || container.dataset.listenerAttached) return;
+
+container.dataset.listenerAttached = "true";
 
   let touchStartX = 0;
   let touchStartY = 0;
@@ -916,7 +918,7 @@ if(!splitMode) return;
   const dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
 
   // If finger moved → it's a scroll
-  if(dx > 6 || dy > 6) return;
+  if(dx > 10 || dy > 10) return;
 
   // Slight delay = better UX
   setTimeout(async () => {
@@ -929,7 +931,7 @@ total = parseFloat(total.toFixed(2));
 
 const remaining = parseFloat((item.Amount - total).toFixed(2));
 // 🚨 FIX BAD DATA STATE
-if(remaining <= 0.01){
+if(remaining <= 0){
   alert("No more money to split.");
   return;
 }
@@ -959,13 +961,16 @@ function enableSplitMode(){
   splitMode = !splitMode;
 
   const btn = document.querySelector("#tapSplitContainer button[onclick='enableSplitMode()']");
+  const container = document.getElementById("tapSplitContainer");
 
   if(splitMode){
     btn.innerText = "Exit Split Mode";
     btn.style.background = "#2e7d32";
+    if(container) container.style.outline = "3px solid #2e7d32";
   } else {
     btn.innerText = "Enable Split Mode";
     btn.style.background = "#ff9800";
+    if(container) container.style.outline = "none";
   }
 }
 
@@ -1009,11 +1014,23 @@ async function resetSplits(){
 function showAmountInput(x, y, remaining){
   return new Promise(resolve => {
 
-    const inputBox = document.createElement("div");
+    // Remove any existing input popups first
+document.querySelectorAll(".amount-popup").forEach(el => el.remove());
+
+const inputBox = document.createElement("div");
+inputBox.className = "amount-popup";
 
     inputBox.style.position = "fixed";
-    inputBox.style.top = y + "px";
-    inputBox.style.left = x + "px";
+    const offsetY = Math.min(
+  window.innerHeight - 120,
+  Math.max(80, y)
+);
+
+inputBox.style.top = offsetY + "px";
+inputBox.style.left = Math.min(
+  window.innerWidth - 80,
+  Math.max(80, x)
+) + "px";
     inputBox.style.transform = "translate(-50%, -50%)";
     inputBox.style.background = "white";
     inputBox.style.padding = "12px";
@@ -1071,8 +1088,11 @@ total = parseFloat(total.toFixed(2));
   
 // If already over-split from previous bad data → reset automatically
 if(remaining < -0.01){
-  alert("Splits exceeded total. Resetting.");
-  item.Splits = [];
+  console.warn("Over-split detected. Auto-correcting.");
+
+  // Trim last split instead of nuking everything
+  item.Splits.pop();
+
   updateRemainingUI();
   return;
 }
@@ -1131,6 +1151,10 @@ item.Splits.push({
 
   // ✅ Update UI immediately
   updateRemainingUI();
+  // Keep user in split mode after adding
+setTimeout(() => {
+  splitMode = true;
+}, 150);
   updateTotals();
   updateProgress();
 
