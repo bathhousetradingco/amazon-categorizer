@@ -991,7 +991,7 @@ setTimeout(() => {
 }, 50);
   updateTotals();
   updateProgress();
-
+showCard();
   // Save to Supabase
   if(item.id){
     const { error } = await supabaseClient
@@ -1162,7 +1162,7 @@ setTimeout(() => {
 }, 150);
   updateTotals();
   updateProgress();
-
+showCard();
   // ✅ Save to Supabase
   if(item.id){
     const { error } = await supabaseClient
