@@ -1527,7 +1527,9 @@ async function connectBank() {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": "Bearer " + SUPABASE_ANON_KEY
+      headers: {
+  "Content-Type": "application/json"
+}
     }
   });
 
@@ -1549,7 +1551,9 @@ async function connectBank() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": "Bearer " + SUPABASE_ANON_KEY
+          headers: {
+  "Content-Type": "application/json"
+}
         },
         body: JSON.stringify({ public_token })
       });
@@ -1561,7 +1565,9 @@ async function connectBank() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": "Bearer " + SUPABASE_ANON_KEY
+          headers: {
+  "Content-Type": "application/json"
+}
         }
       });
 
