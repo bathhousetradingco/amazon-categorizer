@@ -848,7 +848,18 @@ splitMode = false;
     ">
       Enable Split Mode
     </button>
-
+<button onclick="resetSplits()" style="
+  position:absolute;
+  top:10px;
+  left:10px;
+  z-index:10;
+  background:#c62828;
+  color:white;
+  padding:8px 12px;
+  border-radius:10px;
+">
+  Reset
+</button>
     ${receiptView}
 
     <div id="remainingBar" style="
@@ -910,7 +921,21 @@ if(!splitMode) return;
   // Slight delay = better UX
   setTimeout(async () => {
 
-    const amount = prompt("Enter amount from receipt:");
+    const item = data[currentIndex];
+
+let total = 0;
+item.Splits.forEach(s => total += parseFloat(s.Amount));
+total = parseFloat(total.toFixed(2));
+
+const remaining = parseFloat((item.Amount - total).toFixed(2));
+// 🚨 FIX BAD DATA STATE
+if(remaining <= 0){
+  alert("No remaining balance. Resetting splits.");
+  item.Splits = [];
+  updateRemainingUI();
+  return;
+}
+const amount = prompt("Enter amount from receipt:", remaining.toFixed(2));
     if(!amount) return;
 
     const parsed = parseFloat(amount);
@@ -932,7 +957,7 @@ if(!splitMode) return;
 function enableSplitMode(){
   splitMode = !splitMode;
 
-  const btn = document.querySelector("#tapSplitContainer button");
+  const btn = document.querySelector("#tapSplitContainer button[onclick='enableSplitMode()']");
 
   if(splitMode){
     btn.innerText = "Exit Split Mode";
@@ -943,17 +968,62 @@ function enableSplitMode(){
   }
 }
 
+async function resetSplits(){
+
+  if(!confirm("Reset all splits?")) return;
+
+  const item = data[currentIndex];
+
+  item.Splits = [];
+  item.Category = "";
+
+  updateRemainingUI();
+  updateTotals();
+  updateProgress();
+
+  // Save to Supabase
+  if(item.id){
+    const { error } = await supabaseClient
+      .from("transactions")
+      .update({
+        category: "",
+        splits: []
+      })
+      .eq("id", item.id);
+
+    if(error){
+      console.error("Reset error:", error);
+      alert("Error resetting splits.");
+    }
+  }
+
+  // Reset remaining bar UI
+  const el = document.getElementById("remainingBar");
+  if(el){
+    el.innerText = "Remaining: $" + item.Amount.toFixed(2);
+    el.style.color = "orange";
+  }
+}
+
 function updateRemainingUI(){
 
   const item = data[currentIndex];
 
   let total = 0;
   if(item.Splits){
-    item.Splits.forEach(s => total += s.Amount);
+    item.Splits.forEach(s => total += parseFloat(s.Amount));
+total = parseFloat(total.toFixed(2));
   }
 
-  const remaining = item.Amount - total;
-
+  const remaining = parseFloat((item.Amount - total).toFixed(2));
+  
+// If already over-split from previous bad data → reset automatically
+if(remaining < -0.01){
+  alert("Splits exceeded total. Resetting.");
+  item.Splits = [];
+  updateRemainingUI();
+  return;
+}
   const el = document.getElementById("remainingBar");
   if(!el) return;
 
@@ -973,14 +1043,22 @@ async function applySplit(category, amount){
 
   // 🔥 CALCULATE CURRENT TOTAL
 let total = 0;
-item.Splits.forEach(s => total += s.Amount);
+item.Splits.forEach(s => total += parseFloat(s.Amount));
+total = parseFloat(total.toFixed(2));
 
-const remaining = item.Amount - total;
+const remaining = parseFloat((item.Amount - total).toFixed(2));
 
 // 🚫 BLOCK OVER-ALLOCATION
+// Clamp instead of block (better UX)
+// 🚫 HARD BLOCK over-allocation
 if(amount > remaining + 0.01){
-  alert(`Only $${remaining.toFixed(2)} remaining.`);
+  alert("Amount exceeds remaining balance.");
   return;
+}
+
+// 🧠 Snap to exact remaining if close
+if(Math.abs(amount - remaining) < 0.01){
+  amount = remaining;
 }
 
 // 🚫 BLOCK NEGATIVE OR ZERO
