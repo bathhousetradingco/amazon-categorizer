@@ -929,10 +929,8 @@ total = parseFloat(total.toFixed(2));
 
 const remaining = parseFloat((item.Amount - total).toFixed(2));
 // 🚨 FIX BAD DATA STATE
-if(remaining <= 0){
-  alert("No remaining balance. Resetting splits.");
-  item.Splits = [];
-  updateRemainingUI();
+if(remaining <= 0.01){
+  alert("No more money to split.");
   return;
 }
 const amount = prompt("Enter amount from receipt:", remaining.toFixed(2));
