@@ -609,11 +609,34 @@ if(error){
 
 modalTitle.innerText = "Receipt Preview";
 
-modalContent.innerHTML = `
-<div class="receiptPreview">
-  <iframe src="${signedData.signedUrl}"></iframe>
-</div>
-`;
+const url = signedData.signedUrl;
+const isPDF = url.toLowerCase().includes(".pdf");
+
+if(isPDF){
+  modalContent.innerHTML = `
+  <div class="receiptPreview">
+    <iframe src="${url}"></iframe>
+  </div>
+  `;
+} else {
+  modalContent.innerHTML = `
+  <div style="
+    width:100%;
+    height:100%;
+    overflow:auto;
+    display:flex;
+    justify-content:center;
+    align-items:flex-start;
+    background:#000;
+  ">
+    <img src="${url}" style="
+      max-width:100%;
+      height:auto;
+      touch-action:manipulation;
+    ">
+  </div>
+  `;
+}
 
 
 
