@@ -272,7 +272,8 @@ const supabaseClient = window.supabase.createClient(
   SUPABASE_ANON_KEY
 );
   /* Auto-load on startup */
-loadTransactions();
+/* Auto-load on startup */
+window.addEventListener("DOMContentLoaded", loadTransactions);
 const categories=[
 {name:"COGS - Ingredients",class:"cogs"},
 {name:"COGS - Packaging",class:"cogs"},
@@ -1522,14 +1523,13 @@ XLSX.writeFile(wb,"Categorized.xlsx");
 
 async function connectBank() {
 
-  // 1. Get link token from your edge function
   const res = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/create-link-token", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "Authorization": "Bearer " + SUPABASE_ANON_KEY
-  }
-});
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY
+    }
+  });
 
   const data = await res.json();
 
@@ -1539,51 +1539,39 @@ async function connectBank() {
     return;
   }
 
-  // 2. Initialize Plaid
   const handler = Plaid.create({
     token: data.link_token,
 
     onSuccess: async (public_token, metadata) => {
-  console.log("Connected!", public_token);
+      console.log("Connected!", public_token);
 
-  // 1. Exchange public_token → access_token (SAVES ACCOUNT)
-  const exchangeRes = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + SUPABASE_ANON_KEY
+      const exchangeRes = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + SUPABASE_ANON_KEY
+        },
+        body: JSON.stringify({ public_token })
+      });
+
+      const exchangeData = await exchangeRes.json();
+      console.log("Exchange result:", exchangeData);
+
+      const syncRes = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + SUPABASE_ANON_KEY
+        }
+      });
+
+      const syncData = await syncRes.json();
+      console.log("Sync result:", syncData);
+
+      await loadTransactions();
+
+      alert("Bank connected and transactions imported!");
     },
-    body: JSON.stringify({
-      public_token
-    })
-  });
-
-  const exchangeData = await exchangeRes.json();
-  console.log("Exchange result:", exchangeData);
-
-  // 2. 🚀 NOW sync transactions
-  const syncRes = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + SUPABASE_ANON_KEY
-    }
-  });
-
-  const syncData = await syncRes.json();
-  console.log("Sync result:", syncData);
-
-  // 3. Refresh UI
-  await loadTransactions();
-
-  alert("Bank connected and transactions imported!");
-}
-
-  // 3. Refresh app data
-  await loadTransactions();
-
-  alert("Bank connected and transactions imported!");
-},
 
     onExit: function(err, metadata) {
       console.log("User exited Plaid", err);
