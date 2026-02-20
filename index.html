@@ -395,7 +395,6 @@ openModal();
 
 async function saveNewTransaction(){
 
-
 const vendor = document.getElementById("newVendor").value.trim();
 const rawDate = document.getElementById("newDate").value;
 
@@ -410,16 +409,6 @@ if(!vendor || !formattedDate || isNaN(amount)){
 alert("Please complete all fields.");
 return;
 }
-
-const newTransaction = {
-Title: vendor,
-Vendor: vendor,
-Date: formattedDate,
-Amount: amount,
-Category: "",
-Splits: [],
-Receipt: null
-};
 
 const response = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-transactions", {
   method: "POST",
@@ -443,15 +432,7 @@ if (!response.ok) {
   return;
 }
 
-if (error) {
-  alert("Error saving to database");
-  console.error(error);
-  return;
-}
-
-
 await loadTransactions();
-
 
 closeModal();
 
@@ -462,13 +443,14 @@ updateProgress();
 activeSearchFilter = null;
 const clearBtn = document.getElementById("clearSearchBtn");
 if(clearBtn) clearBtn.style.display = "none";
-// Ensure Uncategorized filter doesn't hide new item
+
 if(showOnlyUncategorized){
 showOnlyUncategorized = false;
 const toggleBtn = document.getElementById("filterToggle");
 if(toggleBtn) toggleBtn.innerText = "Show Only Uncategorized";
 }
-currentIndex = data.length - 1;
+
+currentIndex = 0;
 showCard();
 }
 
