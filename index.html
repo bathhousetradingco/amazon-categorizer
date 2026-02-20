@@ -1523,7 +1523,13 @@ XLSX.writeFile(wb,"Categorized.xlsx");
 async function connectBank() {
 
   // 1. Get link token from your edge function
-  const res = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/create-link-token");
+  const res = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/create-link-token", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + SUPABASE_ANON_KEY
+  }
+});
 
   const data = await res.json();
 
