@@ -804,15 +804,45 @@ if(item.receipt_url){
 
   if(!error && signedData?.signedUrl){
 
+const url = signedData.signedUrl;
+const isPDF = url.toLowerCase().includes(".pdf");
+
+let receiptView = "";
+
+if(isPDF){
+  receiptView = `
+    <iframe src="${url}" 
+      style="width:100%; height:100%; border:none; background:white;">
+    </iframe>
+  `;
+} else {
+  receiptView = `
+    <div style="
+      width:100%;
+      height:100%;
+      overflow:auto;
+      display:flex;
+      justify-content:center;
+      align-items:flex-start;
+      background:#000;
+    ">
+      <img src="${url}" style="
+  width:100%;
+  height:auto;
+  transform-origin: top center;
+">
+    </div>
+  `;
+}
+
     receiptHTML = `
     <div style="position:relative; height:100%; display:flex; flex-direction:column;">
 
       <!-- FULL SCREEN RECEIPT -->
       <div style="flex:1; overflow:hidden; background:#000;">
-        <iframe src="${signedData.signedUrl}" 
-  style="width:100%; height:100%; border:none; background:white;">
-</iframe>
-      </div>
+  ${receiptView}
+</div>
+        
 
       <!-- DRAWER -->
       <div id="splitDrawer" style="
