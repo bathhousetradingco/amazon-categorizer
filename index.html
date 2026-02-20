@@ -200,6 +200,7 @@ let currentIndex=0;
 let showOnlyUncategorized=false;
 let activeSearchFilter=null;
 
+let splitMode = false;
 /* ================= LOAD FROM SUPABASE ================= */
 
 async function loadTransactions() {
@@ -789,157 +790,248 @@ goNext();
 }
 
 async function openSplitModal(){
+splitMode = false;
+  const item = data[currentIndex];
+  modalTitle.innerText = "Split Transaction";
 
-const item = data[currentIndex];
-modalTitle.innerText = "Split Transaction";
-
-let receiptHTML = "";
-
-if(item.receipt_url){
+  if(!item.receipt_url){
+    alert("Attach a receipt first.");
+    return;
+  }
 
   const { data: signedData, error } = await supabaseClient
     .storage
     .from("receipts")
     .createSignedUrl(item.receipt_url, 60);
 
-  if(!error && signedData?.signedUrl){
+  if(error || !signedData?.signedUrl){
+    alert("Unable to load receipt.");
+    return;
+  }
 
-const url = signedData.signedUrl;
-const isPDF = url.toLowerCase().includes(".pdf");
+  const url = signedData.signedUrl;
+  const isPDF = url.toLowerCase().includes(".pdf");
 
-let receiptView = "";
-
-if(isPDF){
-  receiptView = `
-    <iframe src="${url}" 
-      style="width:100%; height:100%; border:none; background:white;">
-    </iframe>
-  `;
-} else {
-  receiptView = `
-    <div style="
-      width:100%;
-      height:100%;
-      overflow:auto;
-      display:flex;
-      justify-content:center;
-      align-items:flex-start;
-      background:#000;
-    ">
-      <img src="${url}" style="
+  let receiptView = isPDF
+    ? `<iframe src="${url}" style="width:100%; height:100%; border:none;"></iframe>`
+    : `
+      <div style="
+        width:100%;
+        height:100%;
+        overflow:auto;
+        display:flex;
+        justify-content:center;
+        align-items:flex-start;
+        background:#000;
+        -webkit-overflow-scrolling: touch;
+      ">
+        <img src="${url}" style="
   width:100%;
   height:auto;
-  transform-origin: top center;
+  touch-action:pan-x pan-y pinch-zoom;
 ">
+      </div>
+    `;
+
+  modalContent.innerHTML = `
+  <div id="tapSplitContainer" style="position:relative; height:100%;">
+    
+    <button onclick="enableSplitMode()" style="
+      position:absolute;
+      top:10px;
+      right:10px;
+      z-index:10;
+      background:#ff9800;
+      color:white;
+      padding:8px 12px;
+      border-radius:10px;
+    ">
+      Enable Split Mode
+    </button>
+
+    ${receiptView}
+
+    <div id="remainingBar" style="
+      position:fixed;
+      bottom:40px;
+      left:50%;
+      transform:translateX(-50%);
+      background:white;
+      padding:12px 18px;
+      border-radius:999px;
+      box-shadow:0 4px 20px rgba(0,0,0,.2);
+      font-weight:600;
+      pointer-events:none;
+    ">
+      Remaining: $${item.Amount.toFixed(2)}
     </div>
-  `;
+
+  </div>
+`;
+
+  openModal();
+
+  setTimeout(initTapToSplit, 50);
 }
-
-    receiptHTML = `
-    <div style="position:relative; height:100%; display:flex; flex-direction:column;">
-
-      <!-- FULL SCREEN RECEIPT -->
-      <div style="flex:1; overflow:hidden; background:#000;">
-  ${receiptView}
-</div>
         
 
-      <!-- DRAWER -->
-      <div id="splitDrawer" style="
-        position:absolute;
-        bottom:0;
-        left:0;
-        width:100%;
-        background:white;
-        border-top-left-radius:16px;
-        border-top-right-radius:16px;
-        box-shadow:0 -4px 20px rgba(0,0,0,.2);
-        padding:16px;
-        height:300px;
-        overflow:auto;
-      ">
+      
 
-        <!-- DRAG HANDLE -->
-        <div style="
-          width:40px;
-          height:5px;
-          background:#ccc;
-          border-radius:999px;
-          margin:0 auto 10px auto;
-        "></div>
 
-        <div class="splitBox">
-          <strong>Total: $${item.Amount.toFixed(2)}</strong><br>
-          <div id="remainingBalance">Remaining: $${item.Amount.toFixed(2)}</div><br>
-    `;
-  }
-}
-
-let html = receiptHTML;
-
-categories.forEach((c,i)=>{
-html += `
-${c.name}<br>
-<input type="number" step="0.01" id="split_${i}" oninput="updateRemaining()"><br><br>
-`;
-});
-
-html += `
-<button onclick="saveSplit()">Save Split</button>
-</div>
-</div>
-</div>
-`;
-
-modalContent.innerHTML = html;
-openModal();
-setTimeout(initDrawerDrag, 50);
-
-}
 
 
 
 let startY = 0;
 let startHeight = 0;
 
-function initDrawerDrag(){
-  const drawer = document.getElementById("splitDrawer");
-if(!drawer) return;
 
-drawer.style.transition = "height 0.2s ease";
-  const receiptArea = drawer.previousElementSibling;
 
-const tapZone = document.createElement("div");
-tapZone.style.position = "absolute";
-tapZone.style.top = "0";
-tapZone.style.left = "0";
-tapZone.style.width = "100%";
-tapZone.style.height = "40%";
-tapZone.style.zIndex = "5";
+function initTapToSplit(){
 
-receiptArea.style.position = "relative";
-receiptArea.appendChild(tapZone);
+  const container = document.getElementById("tapSplitContainer");
+  if(!container) return;
 
-tapZone.addEventListener("click", () => {
-  drawer.style.height = "80vh";
+  let touchStartX = 0;
+  let touchStartY = 0;
+
+  container.addEventListener("touchstart", (e)=>{
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  });
+
+  container.addEventListener("touchend", (e)=>{
+if(!splitMode) return;
+  const dx = Math.abs(e.changedTouches[0].clientX - touchStartX);
+  const dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
+
+  // If finger moved → it's a scroll
+  if(dx > 6 || dy > 6) return;
+
+  // Slight delay = better UX
+  setTimeout(async () => {
+
+    const amount = prompt("Enter amount from receipt:");
+    if(!amount) return;
+
+    const parsed = parseFloat(amount);
+    if(isNaN(parsed)){
+      alert("Invalid amount");
+      return;
+    }
+
+    const category = await pickCategory();
+    if(!category) return;
+
+    applySplit(category, parsed);
+
+  }, 50);
+
 });
+}
 
+function enableSplitMode(){
+  splitMode = !splitMode;
 
+  const btn = document.querySelector("#tapSplitContainer button");
 
-  drawer.addEventListener("touchstart", (e)=>{
-    startY = e.touches[0].clientY;
-    startHeight = drawer.offsetHeight;
+  if(splitMode){
+    btn.innerText = "Exit Split Mode";
+    btn.style.background = "#2e7d32";
+  } else {
+    btn.innerText = "Enable Split Mode";
+    btn.style.background = "#ff9800";
+  }
+}
+
+function updateRemainingUI(){
+
+  const item = data[currentIndex];
+
+  let total = 0;
+  if(item.Splits){
+    item.Splits.forEach(s => total += s.Amount);
+  }
+
+  const remaining = item.Amount - total;
+
+  const el = document.getElementById("remainingBar");
+  if(!el) return;
+
+  el.innerText = "Remaining: $" + remaining.toFixed(2);
+
+  el.style.color =
+    Math.abs(remaining) < 0.01 ? "green" :
+    remaining < 0 ? "red" : "orange";
+
+}
+
+async function applySplit(category, amount){
+
+  const item = data[currentIndex];
+
+  if(!item.Splits) item.Splits = [];
+
+  item.Splits.push({
+    Category: category,
+    Amount: amount
   });
 
-  drawer.addEventListener("touchmove", (e)=>{
-    let delta = startY - e.touches[0].clientY;
-    let newHeight = startHeight + delta;
+  item.Category = "SPLIT";
 
-    if(newHeight > window.innerHeight * 0.9) newHeight = window.innerHeight * 0.9;
-    if(newHeight < 120) newHeight = 120;
+  window.lastCategoryUsed = category;
 
-    drawer.style.height = newHeight + "px";
+  // ✅ Update UI immediately
+  updateRemainingUI();
+  updateTotals();
+  updateProgress();
+
+  // ✅ Save to Supabase
+  if(item.id){
+    const { error } = await supabaseClient
+      .from("transactions")
+      .update({
+        category: "SPLIT",
+        splits: item.Splits
+      })
+      .eq("id", item.id);
+
+    if(error){
+      console.error("Split save error:", error);
+      alert("Error saving split.");
+    }
+  }
+}
+
+function pickCategory(){
+
+  return new Promise(resolve => {
+
+    let html = "<h3>Select Category</h3>";
+
+    if(window.lastCategoryUsed){
+      html += `<div style="margin-bottom:10px;">Suggested: <strong>${window.lastCategoryUsed}</strong></div>`;
+    }
+
+    categories.forEach(c=>{
+      html += `
+        <button class="category-btn ${c.class}" 
+          onclick="selectCategory('${c.name}')">
+          ${c.name}
+        </button>
+      `;
+    });
+
+    modalContent.innerHTML = html;
+
+    window.selectCategory = (name)=>{
+      closeModal();
+      resolve(name);
+    };
+
+    openModal();
+
   });
+
 }
 
 function updateRemaining(){
