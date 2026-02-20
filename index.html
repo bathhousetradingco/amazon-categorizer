@@ -147,7 +147,9 @@ style="background:#1565c0; margin-bottom:8px;"
 onclick="openCreateTransactionModal()">
 ➕ Create Transaction
 </button>
-
+<select id="yearFilter" onchange="applyYearFilter()" style="margin-bottom:8px;">
+  <option value="">All Years</option>
+</select> 
 <div class="progress-bar-container">
 <div id="progressBar" class="progress-bar"></div>
 </div>
@@ -210,8 +212,8 @@ let data=[];
 let currentIndex=0;
 let showOnlyUncategorized=false;
 let activeSearchFilter=null;
-
 let splitMode = false;
+let activeYearFilter = null;
 /* ================= LOAD FROM SUPABASE ================= */
 
 async function loadTransactions() {
@@ -239,12 +241,13 @@ async function loadTransactions() {
     }));
 
     if (data.length > 0) {
-      app.style.display = "block";
-      renderCategories();
-      updateTotals();
-      updateProgress();
-      showCard();
-    }
+  app.style.display = "block";
+  renderCategories();
+  populateYearFilter();
+  updateTotals();
+  updateProgress();
+  showCard();
+}
   }
 }
 
@@ -291,6 +294,36 @@ openModal();
 setTimeout(() => {
 document.getElementById("searchInput").focus();
 }, 50);
+}
+
+function populateYearFilter(){
+  const years = new Set();
+
+  data.forEach(d=>{
+    if(d.Date){
+      const rawYear = d.Date.split("/").pop();
+const year = rawYear.length === 2 ? "20" + rawYear : rawYear;
+      years.add(year);
+    }
+  });
+
+  const select = document.getElementById("yearFilter");
+  select.innerHTML = `<option value="">All Years</option>`;
+
+  Array.from(years).sort().forEach(y=>{
+    select.innerHTML += `<option value="${y}">${y}</option>`;
+  });
+}
+
+function applyYearFilter(){
+  const val = document.getElementById("yearFilter").value;
+  activeYearFilter = val || null;
+  activeSearchFilter = null;
+document.getElementById("clearSearchBtn").style.display = "none";
+  currentIndex = 0;
+  updateTotals();
+updateProgress();
+showCard();
 }
 
 function updateSearchResults(){
@@ -706,9 +739,21 @@ baseList = data.map((_,i)=>i);
 baseList = data.map((d,i)=>!d.Category?i:null).filter(i=>i!==null);
 }
 
-if(!activeSearchFilter) return baseList;
+let filtered = baseList;
 
-return baseList.filter(i=>{
+if(activeYearFilter){
+  filtered = filtered.filter(i=>{
+    const d = data[i];
+    if(!d.Date) return false;
+    const rawYear = d.Date.split("/").pop();
+const year = rawYear.length === 2 ? "20" + rawYear : rawYear;
+return year === activeYearFilter;
+  });
+}
+
+if(!activeSearchFilter) return filtered;
+
+return filtered.filter(i=>{
 const d=data[i];
 
 const vendorMatch =
@@ -1292,7 +1337,11 @@ function showCategoryBreakdown(categoryName){
 modalTitle.innerText=categoryName+" Transactions";
 let html="";
 
-data.forEach((d,i)=>{
+const visible = getVisibleIndexes();
+
+visible.forEach(i=>{
+const d = data[i];
+
 if(d.Category===categoryName){
 html+=`<div class="modalItem" onclick="jumpToItem(${i})">
 ${d.Title} — $${d.Amount.toFixed(2)}
@@ -1308,6 +1357,11 @@ ${d.Title} (Split) — $${s.Amount.toFixed(2)}
 });
 }
 });
+
+if(!html) html="No transactions in this category.";
+modalContent.innerHTML=html;
+openModal();
+}
 
 if(!html) html="No transactions in this category.";
 modalContent.innerHTML=html;
@@ -1412,16 +1466,20 @@ function updateTotals(){
 let totalsObj={};
 categories.forEach(c=>totalsObj[c.name]=0);
 
-data.forEach(d=>{
-if(d.Splits.length){
-d.Splits.forEach(s=>{
-if(totalsObj[s.Category]!=null){
-totalsObj[s.Category]+=s.Amount;
-}
-});
-}else if(d.Category && totalsObj[d.Category]!=null){
-totalsObj[d.Category]+=d.Amount;
-}
+const visible = getVisibleIndexes();
+
+visible.forEach(i=>{
+  const d = data[i];
+
+  if(d.Splits.length){
+    d.Splits.forEach(s=>{
+      if(totalsObj[s.Category]!=null){
+        totalsObj[s.Category]+=s.Amount;
+      }
+    });
+  }else if(d.Category && totalsObj[d.Category]!=null){
+    totalsObj[d.Category]+=d.Amount;
+  }
 });
 
 totals.innerHTML="";
@@ -1436,8 +1494,9 @@ totals.innerHTML+=`<div class="totalRow" onclick="showCategoryBreakdown('${k}')"
 /* Progress */
 
 function updateProgress(){
-const total=data.length;
-const done=data.filter(d=>d.Category).length;
+const visible = getVisibleIndexes();
+const total = visible.length;
+const done = visible.filter(i => data[i].Category).length;
 const percent=total?Math.round((done/total)*100):0;
 progressBar.style.width=percent+"%";
 progressText.innerText=`${done} of ${total} categorized (${percent}%)`;
