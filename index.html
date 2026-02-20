@@ -1006,6 +1006,21 @@ function pickCategory(){
 
   return new Promise(resolve => {
 
+    const overlay = document.createElement("div");
+
+    overlay.style.position = "fixed";
+    overlay.style.bottom = "0";
+    overlay.style.left = "0";
+    overlay.style.width = "100%";
+    overlay.style.maxHeight = "60vh";
+    overlay.style.background = "white";
+    overlay.style.borderTopLeftRadius = "16px";
+    overlay.style.borderTopRightRadius = "16px";
+    overlay.style.boxShadow = "0 -4px 20px rgba(0,0,0,.2)";
+    overlay.style.padding = "16px";
+    overlay.style.overflowY = "auto";
+    overlay.style.zIndex = "99999";
+
     let html = "<h3>Select Category</h3>";
 
     if(window.lastCategoryUsed){
@@ -1015,20 +1030,20 @@ function pickCategory(){
     categories.forEach(c=>{
       html += `
         <button class="category-btn ${c.class}" 
+          style="margin-bottom:8px;"
           onclick="selectCategory('${c.name}')">
           ${c.name}
         </button>
       `;
     });
 
-    modalContent.innerHTML = html;
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
 
     window.selectCategory = (name)=>{
-      closeModal();
+      document.body.removeChild(overlay);
       resolve(name);
     };
-
-    openModal();
 
   });
 
