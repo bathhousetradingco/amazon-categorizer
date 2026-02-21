@@ -1525,12 +1525,9 @@ async function connectBank() {
 
   const res = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/create-link-token", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      headers: {
+headers: {
   "Content-Type": "application/json"
 }
-    }
   });
 
   const data = await res.json();
@@ -1549,12 +1546,9 @@ async function connectBank() {
 
       const exchangeRes = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/exchange-token", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          headers: {
+      headers: {
   "Content-Type": "application/json"
-}
-        },
+},
         body: JSON.stringify({ public_token })
       });
 
@@ -1563,12 +1557,9 @@ async function connectBank() {
 
       const syncRes = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          headers: {
+   headers: {
   "Content-Type": "application/json"
 }
-        }
       });
 
       const syncData = await syncRes.json();
