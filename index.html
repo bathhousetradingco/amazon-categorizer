@@ -524,6 +524,15 @@ name:"Interest Expense",
 class:"expense",
 description:`Credit card or business loan interest.`
 },
+  {
+name:"Uncategorized",
+class:"special",
+description:`
+Transactions that have not yet been categorized.
+
+This is the default state for new transactions.
+`
+},
 {
 name:"Needs Review",
 class:"special",
@@ -1795,45 +1804,50 @@ function updateTotals(){
 
     const d = data[i];
 
-    // If transaction has splits
+    const addAmount = (cat, amount) => {
+      if(!cat || cat.trim() === ""){
+        cat = "Uncategorized";
+      }
+
+      if(categoryAliases[cat]){
+        cat = categoryAliases[cat];
+      }
+
+      if(totalsObj[cat] != null){
+        totalsObj[cat] += parseFloat(amount);
+      } else {
+        totalsObj["Uncategorized"] += parseFloat(amount);
+      }
+    };
+
+    // Handle splits
     if(d.Splits && d.Splits.length){
 
       d.Splits.forEach(s => {
-
-        let splitCategory = s.Category;
-
-        // Normalize old category names
-        if(categoryAliases[splitCategory]){
-          splitCategory = categoryAliases[splitCategory];
-        }
-
-        if(totalsObj[splitCategory] != null){
-          totalsObj[splitCategory] += parseFloat(s.Amount);
-        } else if(totalsObj["Needs Review"] != null){
-          totalsObj["Needs Review"] += parseFloat(s.Amount);
-        }
-
+        addAmount(s.Category, s.Amount);
       });
 
     } else {
 
-      let categoryName = d.Category;
-
-      // Normalize old category names
-      if(categoryAliases[categoryName]){
-        categoryName = categoryAliases[categoryName];
-      }
-
-      if(categoryName && totalsObj[categoryName] != null){
-        totalsObj[categoryName] += parseFloat(d.Amount);
-      } else if(d.Category && totalsObj["Needs Review"] != null){
-        totalsObj["Needs Review"] += parseFloat(d.Amount);
-      }
+      addAmount(d.Category, d.Amount);
 
     }
 
   });
 
+  // Render totals UI
+  totals.innerHTML = "";
+
+  Object.keys(totalsObj).forEach(k => {
+    totals.innerHTML += `
+      <div class="totalRow" onclick="showCategoryBreakdown('${k}')">
+        <div>${k}</div>
+        <div>$${totalsObj[k].toFixed(2)}</div>
+      </div>
+    `;
+  });
+
+}
   // Render totals UI
   totals.innerHTML = "";
 
