@@ -560,20 +560,13 @@ return html;
 
 async function confirmMapping(){
 
-  const t = parseInt(document.getElementById("mapTitle").value);
-  const a = parseInt(document.getElementById("mapAmount").value);
-  const v = parseInt(document.getElementById("mapVendor").value);
-  const d = parseInt(document.getElementById("mapDate").value);
-  const c = document.getElementById("mapCategory").value !== "" 
-    ? parseInt(document.getElementById("mapCategory").value) 
-    : null;
-
   const rowsToInsert = rawRows.map(row => ({
-    title: row[t] || "",
-    amount: parseFloat(String(row[a]||"").replace(/[$,]/g,"")) || 0,
-    vendor: row[v] || "",
-    date: row[d] || "",
-    category: c !== null ? row[c] || "" : "",
+    date: row[headers.indexOf("date")] || "",
+    source: "csv",
+    title: row[headers.indexOf("title")] || "",
+    vendor: row[headers.indexOf("vendor")] || "",
+    amount: parseFloat(row[headers.indexOf("amount")]) || 0,
+    category: row[headers.indexOf("category")] || "",
     splits: []
   }));
 
@@ -591,9 +584,7 @@ async function confirmMapping(){
   app.style.display = "block";
 
   await loadTransactions();
-
 }
-
 
 
 
