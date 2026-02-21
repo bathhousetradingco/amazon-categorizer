@@ -519,73 +519,41 @@ showCard();
   
 /* CSV */
 
-document.getElementById("csvFile").addEventListener("change",e=>{
-const file=e.target.files[0];
-if(!file)return;
+document.getElementById("csvFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
 
-Papa.parse(file,{
-header:false,
-skipEmptyLines:true,
-complete:res=>{
-headers = res.data[0].map(h=>String(h).trim());
-rawRows = res.data.slice(1);
-showMapping();
-}
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    complete: async (res) => {
+
+      const rowsToInsert = res.data.map(row => ({
+        date: row.date,
+        source: "csv",
+        title: row.title,
+        vendor: row.vendor,
+        amount: parseFloat(row.amount) || 0,
+        category: row.category || "",
+        splits: []
+      }));
+
+      const { error } = await supabaseClient
+        .from("transactions")
+        .insert(rowsToInsert);
+
+      if (error) {
+        console.error(error);
+        alert("CSV Import Error");
+        return;
+      }
+
+      app.style.display = "block";
+      await loadTransactions();
+    }
+  });
 });
-});
 
-/* Mapping */
-
-function showMapping(){
-mappingPanel.style.display="block";
-mappingPanel.innerHTML=`
-<h4>Map Columns</h4>
-Title:<br>${dropdown("mapTitle")}<br><br>
-Amount:<br>${dropdown("mapAmount")}<br><br>
-Vendor:<br>${dropdown("mapVendor")}<br><br>
-Date:<br>${dropdown("mapDate")}<br><br>
-Existing Category (optional):<br>${dropdown("mapCategory",true)}<br><br>
-<button onclick="confirmMapping()">Confirm Mapping</button>
-`;
-}
-
-function dropdown(id,allowEmpty=false){
-let html=`<select id="${id}">`;
-if(allowEmpty) html+=`<option value="">--None--</option>`;
-headers.forEach((h,i)=>{
-html+=`<option value="${i}">${h}</option>`;
-});
-html+=`</select>`;
-return html;
-}
-
-async function confirmMapping(){
-
-  const rowsToInsert = rawRows.map(row => ({
-    date: row[headers.indexOf("date")] || "",
-    source: "csv",
-    title: row[headers.indexOf("title")] || "",
-    vendor: row[headers.indexOf("vendor")] || "",
-    amount: parseFloat(row[headers.indexOf("amount")]) || 0,
-    category: row[headers.indexOf("category")] || "",
-    splits: []
-  }));
-
-  const { error } = await supabaseClient
-    .from("transactions")
-    .insert(rowsToInsert);
-
-  if(error){
-    console.error(error);
-    alert("Error importing CSV to database");
-    return;
-  }
-
-  mappingPanel.style.display = "none";
-  app.style.display = "block";
-
-  await loadTransactions();
-}
 
 
 
