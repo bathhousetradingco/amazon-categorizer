@@ -360,7 +360,8 @@ if(!query) return;
 
 const numeric=parseFloat(query);
 
-data.forEach((d,i)=>{
+getVisibleIndexes().forEach(i=>{
+  const d = data[i];
 let vendorMatch=d.Vendor && d.Vendor.toLowerCase().includes(query);
 let amountMatch=!isNaN(numeric) && d.Amount===numeric;
 
@@ -375,22 +376,16 @@ ${d.Vendor || d.Title} — $${d.Amount.toFixed(2)}
 
 function applySearchFilter(index){
 
-  // Clear filters so the item is visible
-  activeSearchFilter = null;
-  activeYearFilter = null;
-  showOnlyUncategorized = false;
-
-  document.getElementById("yearFilter").value = "";
-  document.getElementById("clearSearchBtn").style.display = "none";
-
-  // Force correct visible list alignment
   const visible = getVisibleIndexes();
 
+  // If the clicked item is NOT inside the current filtered view,
+  // do NOT jump to it.
   if(!visible.includes(index)){
-    currentIndex = visible[0];
-  } else {
-    currentIndex = index;
+    alert("This transaction is outside your current filter.");
+    return;
   }
+
+  currentIndex = index;
 
   closeModal();
   showCard();
