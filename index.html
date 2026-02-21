@@ -429,12 +429,13 @@ const response = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions
     "Content-Type": "application/json"
   },
   body: JSON.stringify({
-    title: vendor,
-    vendor: vendor,
-    date: formattedDate,
-    amount: amount,
-    category: ""
-  })
+  title: vendor,
+  vendor: vendor,
+  date: formattedDate,
+  amount: amount,
+  category: "",
+  source: "manual"
+})
 });
 
 const result = await response.json();
