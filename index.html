@@ -737,7 +737,7 @@ if(activeYearFilter){
     const d = data[i];
     if(!d.Date) return false;
 
-    const year = new Date(d.Date).getFullYear().toString();
+    const year = d.Date ? d.Date.toString().slice(0,4) : null;
     return year === activeYearFilter;
   });
 }
