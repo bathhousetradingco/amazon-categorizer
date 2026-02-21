@@ -310,19 +310,22 @@ function populateYearFilter(){
   const years = new Set();
 
   data.forEach(d=>{
-    if(d.Date){
-      const rawYear = d.Date.split("/").pop();
-const year = rawYear.length === 2 ? "20" + rawYear : rawYear;
-      years.add(year);
+    if(!d.Date) return;
+
+    const year = new Date(d.Date).getFullYear();
+    if(!isNaN(year)){
+      years.add(year.toString());
     }
   });
 
   const select = document.getElementById("yearFilter");
   select.innerHTML = `<option value="">All Years</option>`;
 
-  Array.from(years).sort().forEach(y=>{
-    select.innerHTML += `<option value="${y}">${y}</option>`;
-  });
+  Array.from(years)
+    .sort((a,b)=>b-a)
+    .forEach(y=>{
+      select.innerHTML += `<option value="${y}">${y}</option>`;
+    });
 }
 
 function applyYearFilter(){
@@ -760,9 +763,9 @@ if(activeYearFilter){
   filtered = filtered.filter(i=>{
     const d = data[i];
     if(!d.Date) return false;
-    const rawYear = d.Date.split("/").pop();
-const year = rawYear.length === 2 ? "20" + rawYear : rawYear;
-return year === activeYearFilter;
+
+    const year = new Date(d.Date).getFullYear().toString();
+    return year === activeYearFilter;
   });
 }
 
