@@ -1545,33 +1545,56 @@ goNext();
 /* Category Breakdown Modal */
 
 function showCategoryBreakdown(categoryName){
-modalTitle.innerText=categoryName+" Transactions";
-let html="";
 
-const visible = getVisibleIndexes();
+  modalTitle.innerText = categoryName + " Transactions";
+  let html = "";
 
-visible.forEach(i=>{
-const d = data[i];
+  const visible = getVisibleIndexes();
 
-if(d.Category===categoryName){
-html+=`<div class="modalItem" onclick="jumpToItem(${i})">
-${d.Title} — $${d.Amount.toFixed(2)}
-</div>`;
-}
-if(d.Splits.length){
-d.Splits.forEach(s=>{
-if(s.Category===categoryName){
-html+=`<div class="modalItem" onclick="jumpToItem(${i})">
-${d.Title} (Split) — $${s.Amount.toFixed(2)}
-</div>`;
-}
-});
-}
-});
+  visible.forEach(i => {
 
-if(!html) html="No transactions in this category.";
-modalContent.innerHTML=html;
-openModal();
+    const d = data[i];
+
+    // Normalize main category
+    let normalizedCategory = d.Category;
+    if(categoryAliases[normalizedCategory]){
+      normalizedCategory = categoryAliases[normalizedCategory];
+    }
+
+    if(normalizedCategory === categoryName){
+      html += `
+        <div class="modalItem" onclick="jumpToItem(${i})">
+          ${d.Title} — $${d.Amount.toFixed(2)}
+        </div>
+      `;
+    }
+
+    // Normalize splits
+    if(d.Splits && d.Splits.length){
+      d.Splits.forEach(s => {
+
+        let splitCategory = s.Category;
+        if(categoryAliases[splitCategory]){
+          splitCategory = categoryAliases[splitCategory];
+        }
+
+        if(splitCategory === categoryName){
+          html += `
+            <div class="modalItem" onclick="jumpToItem(${i})">
+              ${d.Title} (Split) — $${parseFloat(s.Amount).toFixed(2)}
+            </div>
+          `;
+        }
+
+      });
+    }
+
+  });
+
+  if(!html) html = "No transactions in this category.";
+
+  modalContent.innerHTML = html;
+  openModal();
 }
 
 function jumpToItem(index){
