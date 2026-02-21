@@ -414,7 +414,7 @@ const rawDate = document.getElementById("newDate").value;
 let formattedDate = "";
 if(rawDate){
 const parts = rawDate.split("-");
-formattedDate = `${parts[1]}/${parts[2]}/${parts[0].slice(-2)}`;
+formattedDate = rawDate; // store as YYYY-MM-DD
 }
 const amount = parseFloat(document.getElementById("newAmount").value);
 
