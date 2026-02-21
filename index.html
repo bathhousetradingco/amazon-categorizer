@@ -241,34 +241,35 @@ async function loadTransactions() {
   const { data: rows, error } = await supabaseClient
     .from("transactions")
     .select("*")
-    .order("created_at", { ascending: true });
+    .order("date", { ascending: true }); // safer than created_at
 
   if (error) {
     console.error("Load error:", error);
     return;
   }
 
-  if (rows) {
-    data = rows.map(r => ({
-      id: r.id,
-      Title: r.title,
-      Vendor: r.vendor,
-      Date: r.date,
-      Amount: r.amount,
-      Category: r.category || "",
-      Splits: r.splits || [],
-      receipt_url: r.receipt_url,
-      Receipt: null
-    }));
+  console.log("Rows from Supabase:", rows);
 
-    if (data.length > 0) {
+  data = rows.map(r => ({
+    id: r.id,
+    Title: r.title,
+    Vendor: r.vendor,
+    Date: r.date,
+    Amount: r.amount,
+    Category: r.category || "",
+    Splits: r.splits || [],
+    receipt_url: r.receipt_url
+  }));
+
   app.style.display = "block";
+
   renderCategories();
   populateYearFilter();
   updateTotals();
   updateProgress();
-  showCard();
-}
+
+  if (data.length > 0) {
+    showCard();
   }
 }
 
