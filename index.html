@@ -1399,51 +1399,51 @@ if(e.key==="Escape") closeModal();
 /* Show Card */
 
 function showCard(){
-if(!data.length)return;
+  if(!data.length) return;
 
-if(showOnlyUncategorized){
-const visible = getVisibleIndexes();
+  const visible = getVisibleIndexes();
 
-if(visible.length === 0){
-cardTitle.innerText = "No Uncategorized Transactions";
-cardMeta.innerHTML = "";
-splitSummary.innerHTML = "";
-currentCategory.innerText = "";
-return;
-}
+  // 🚨 If nothing visible after filter
+  if(visible.length === 0){
+    cardTitle.innerText = "No Transactions Found";
+    cardMeta.innerHTML = "";
+    splitSummary.innerHTML = "";
+    currentCategory.innerText = "";
+    return;
+  }
 
-if(!visible.includes(currentIndex)){
-currentIndex = visible[0];
-}
-}
+  // 🚨 Force currentIndex to be valid under active filters
+  if(!visible.includes(currentIndex)){
+    currentIndex = visible[0];
+  }
 
+  const item = data[currentIndex];
 
-const item=data[currentIndex];
-cardTitle.innerText=item.Title;
+  cardTitle.innerText = item.Title;
 
-cardMeta.innerHTML=
-(item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
-(item.Date?`Date: ${item.Date}<br>`:"")+
-`Amount: $${item.Amount.toFixed(2)}<br>`+
-(item.receipt_url?`📎 Receipt Attached<br>
-<button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
-<button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>`:"")+
-`<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
-<br><button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>`;
+  cardMeta.innerHTML =
+  (item.Vendor?`Vendor: ${item.Vendor}<br>`:"")+
+  (item.Date?`Date: ${item.Date}<br>`:"")+
+  `Amount: $${item.Amount.toFixed(2)}<br>`+
+  (item.receipt_url?`📎 Receipt Attached<br>
+  <button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
+  <button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>`:"")+
+  `<br><input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
+  <br><button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>`;
 
+  if(item.Splits.length){
+    let splitHTML="<strong>Split Allocation:</strong><br>";
+    item.Splits.forEach(s=>{
+      splitHTML+=`${s.Category}: $${s.Amount.toFixed(2)}<br>`;
+    });
+    splitSummary.innerHTML=splitHTML;
+  }else{
+    splitSummary.innerHTML="";
+  }
 
-
-if(item.Splits.length){
-let splitHTML="<strong>Split Allocation:</strong><br>";
-item.Splits.forEach(s=>{
-splitHTML+=`${s.Category}: $${s.Amount.toFixed(2)}<br>`;
-});
-splitSummary.innerHTML=splitHTML;
-}else{
-splitSummary.innerHTML="";
-}
-
-currentCategory.innerText=item.Splits.length?"Split into multiple categories":"Current: "+(item.Category||"—");
+  currentCategory.innerText = item.Splits.length
+    ? "Split into multiple categories"
+    : "Current: " + (item.Category || "—");
 }
 
 /* Totals */
