@@ -1422,7 +1422,6 @@ function showCard(){
 
   const visible = getVisibleIndexes();
 
-  // If no results after filters
   if(visible.length === 0){
     cardTitle.innerText = "No Transactions Found";
     cardMeta.innerHTML = "";
@@ -1432,7 +1431,6 @@ function showCard(){
     return;
   }
 
-  // Ensure currentIndex is valid under active filters
   if(!visible.includes(currentIndex)){
     currentIndex = visible[0];
   }
@@ -1444,8 +1442,8 @@ function showCard(){
 
   const item = data[currentIndex];
 
-  // 🔥 Show ID so duplicates are obvious
-  cardTitle.innerText = item.Title + "  •  ID: " + item.id;
+  // Clean title
+  cardTitle.innerText = item.Title || item.Vendor || "Untitled Transaction";
 
   cardMeta.innerHTML =
     (item.Vendor ? `Vendor: ${item.Vendor}<br>` : "") +
@@ -1462,7 +1460,6 @@ function showCard(){
      <br>
      <button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>`;
 
-  // Show split summary
   if(item.Splits && item.Splits.length){
     let splitHTML = "<strong>Split Allocation:</strong><br>";
     item.Splits.forEach(s=>{
