@@ -325,7 +325,7 @@ function populateYearFilter(){
   data.forEach(d=>{
     if(!d.Date) return;
 
-    const year = new Date(d.Date).getFullYear();
+    const year = d.Date ? d.Date.toString().slice(0,4) : null;
     if(!isNaN(year)){
       years.add(year.toString());
     }
