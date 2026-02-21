@@ -288,20 +288,197 @@ const supabaseClient = window.supabase.createClient(
 /* Auto-load on startup */
 window.addEventListener("DOMContentLoaded", loadTransactions);
 const categories=[
-{name:"COGS - Ingredients",class:"cogs"},
-{name:"COGS - Packaging",class:"cogs"},
-{name:"COGS - Resale Inventory",class:"cogs"},
-{name:"COGS - Production Supplies",class:"cogs"},
-{name:"COGS - Shipping from Suppliers",class:"cogs"},
-{name:"Equipment",class:"expense"},
-{name:"Advertising & Marketing",class:"expense"},
-{name:"Software",class:"expense"},
-{name:"Merchant Processing Fees",class:"expense"},
-{name:"Insurance",class:"expense"},
-{name:"Utilities",class:"expense"},
-{name:"Professional Services",class:"expense"},
-{name:"Fuel",class:"expense"},
-{name:"Needs Review",class:"special"}
+{
+name:"COGS - Ingredients",
+class:"cogs",
+description:`
+<strong>Definition:</strong><br>
+Raw materials that physically become part of a finished Bathhouse product.<br><br>
+
+<strong>Examples:</strong><br>
+• Olive oil, coconut oil, shea butter<br>
+• Grass-fed tallow<br>
+• Essential oils & phthalate-free fragrance oils<br>
+• Lye<br>
+• Mica, titanium dioxide (in product)<br>
+• Goat milk<br>
+• Aloe juice (in soap/lotion)<br><br>
+
+<strong>Does NOT Include:</strong><br>
+• Cleaning chemicals<br>
+• Soap nuts for cleaning<br>
+• Store hand soap<br><br>
+
+Ask yourself: Does this physically go inside the product being sold?
+`
+},
+{
+name:"COGS - Packaging",
+class:"cogs",
+description:`
+<strong>Definition:</strong><br>
+Packaging that becomes part of the product at time of sale.<br><br>
+
+<strong>Examples:</strong><br>
+• Soap boxes<br>
+• Shrink wrap<br>
+• Product labels<br>
+• Ingredient labels<br>
+• Jars & pump tops<br>
+• Lip balm tubes<br>
+• Deodorant tubes<br>
+• Inserts inside retail packaging<br><br>
+
+<strong>Does NOT Include:</strong><br>
+• Shipping boxes<br>
+• Tissue paper in shipments<br>
+• Packing tape<br>
+• Shipping labels<br><br>
+
+Rule: If it stays attached to the product itself → Packaging.
+`
+},
+{
+name:"COGS - Resale Inventory",
+class:"cogs",
+description:`
+Items purchased finished and resold without modification.<br><br>
+
+Examples:<br>
+• Pumice stones sold as-is<br>
+• Sleep masks<br>
+• Wholesale accessories<br>
+`
+},
+{
+name:"COGS - Production Supplies",
+class:"cogs",
+description:`
+Consumables used during production but not in final product.<br><br>
+
+Examples:<br>
+• Gloves<br>
+• Mixing sticks<br>
+• Alcohol for sanitizing<br>
+• Paper towels used in production<br>
+• Mold liners<br>
+`
+},
+{
+name:"COGS - Shipping from Suppliers",
+class:"cogs",
+description:`
+Freight-in paid to receive ingredients or inventory.<br><br>
+
+Examples:<br>
+• Shipping from Wholesale Supplies Plus<br>
+• Freight charges on jars<br>
+• UPS cost from ingredient vendors<br>
+`
+},
+{
+name:"Shipping Supplies",
+class:"expense",
+description:`
+Materials used to ship orders to customers.<br><br>
+
+Examples:<br>
+• Shipping boxes<br>
+• Tissue paper in shipping box<br>
+• Bubble wrap<br>
+• Packing tape<br>
+• Order stickers<br>
+• Shipping label paper<br><br>
+
+This is NOT COGS.
+`
+},
+{
+name:"Shipping to Customers",
+class:"expense",
+description:`
+Postage or shipping labels purchased to send orders.<br><br>
+
+Examples:<br>
+• USPS postage<br>
+• UPS postage<br>
+• Shopify shipping labels<br>
+`
+},
+{
+name:"Advertising & Marketing",
+class:"expense",
+description:`
+Promotional spending to generate sales.<br><br>
+
+Examples:<br>
+• Facebook ads<br>
+• Google Ads<br>
+• Newspaper ads<br>
+• Loofah Fest signage<br>
+• Canva Pro (if marketing related)<br>
+`
+},
+{
+name:"Commissions & Merchant Fees",
+class:"expense",
+description:`
+Transaction fees charged by payment processors.<br><br>
+
+Examples:<br>
+• Shopify processing fees<br>
+• Square fees<br>
+• Faire commission fees<br>
+`
+},
+{
+name:"Software & Subscriptions",
+class:"expense",
+description:`
+Recurring digital tools used to run Bathhouse.<br><br>
+
+Examples:<br>
+• Shopify subscription<br>
+• QuickBooks<br>
+• Supabase<br>
+• Plaid<br>
+`
+},
+{
+name:"Insurance",
+class:"expense",
+description:`Business or product liability insurance.`
+},
+{
+name:"Utilities",
+class:"expense",
+description:`Electric, water, internet used for business.`
+},
+{
+name:"Professional Services",
+class:"expense",
+description:`CPA, legal fees, consulting services.`
+},
+{
+name:"Fuel",
+class:"expense",
+description:`Gas used for markets, supply pickups, or business travel.`
+},
+{
+name:"Taxes & Licenses",
+class:"expense",
+description:`Business license fees and state filings (not income tax).`
+},
+{
+name:"Interest Expense",
+class:"expense",
+description:`Credit card or business loan interest.`
+},
+{
+name:"Needs Review",
+class:"special",
+description:`If unsure, temporarily park the transaction here.`
+}
 ];
 
 /* ================= SEARCH ================= */
@@ -798,7 +975,25 @@ div.innerHTML="";
 categories.forEach(cat=>{
 const btn=document.createElement("button");
 btn.className="category-btn "+cat.class;
-btn.innerText=cat.name;
+btn.innerHTML = `
+<span>${cat.name}</span>
+<span style="
+margin-left:8px;
+background:white;
+color:black;
+border-radius:50%;
+width:18px;
+height:18px;
+display:inline-flex;
+align-items:center;
+justify-content:center;
+font-size:12px;
+font-weight:bold;
+cursor:pointer;
+" onclick="event.stopPropagation(); showCategoryInfo('${cat.name.replace(/'/g, "\\'")}')">
+i
+</span>
+`;
 btn.onclick=()=>categorize(cat.name);
 div.appendChild(btn);
 });
@@ -817,6 +1012,20 @@ filterBtn.onclick=toggleFilter;
 div.appendChild(filterBtn);
 }
 
+function showCategoryInfo(name){
+  const category = categories.find(c=>c.name===name);
+  if(!category) return;
+
+  modalTitle.innerText = name;
+  modalContent.innerHTML = `
+    <div style="padding:10px; line-height:1.6;">
+      ${category.description}
+    </div>
+  `;
+
+  openModal();
+}
+  
 async function categorize(name){
 
 const item = data[currentIndex];
