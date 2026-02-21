@@ -1848,19 +1848,7 @@ function updateTotals(){
   });
 
 }
-  // Render totals UI
-  totals.innerHTML = "";
 
-  Object.keys(totalsObj).forEach(k => {
-    totals.innerHTML += `
-      <div class="totalRow" onclick="showCategoryBreakdown('${k}')">
-        <div>${k}</div>
-        <div>$${totalsObj[k].toFixed(2)}</div>
-      </div>
-    `;
-  });
-
-}
 
 /* Progress */
 
