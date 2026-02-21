@@ -480,7 +480,10 @@ class:"special",
 description:`If unsure, temporarily park the transaction here.`
 }
 ];
-
+const categoryAliases = {
+  "Software": "Software & Subscriptions",
+  "Merchant Processing Fees": "Commissions & Merchant Fees"
+};
 /* ================= SEARCH ================= */
 
 function openSearchModal(){
@@ -1684,32 +1687,69 @@ function showCard(){
 /* Totals */
 
 function updateTotals(){
-let totalsObj={};
-categories.forEach(c=>totalsObj[c.name]=0);
 
-const visible = getVisibleIndexes();
+  let totalsObj = {};
 
-visible.forEach(i=>{
-  const d = data[i];
+  // Build totals object dynamically from categories
+  categories.forEach(c => totalsObj[c.name] = 0);
 
-  if(d.Splits.length){
-    d.Splits.forEach(s=>{
-      if(totalsObj[s.Category]!=null){
-        totalsObj[s.Category]+=s.Amount;
+  const visible = getVisibleIndexes();
+
+  visible.forEach(i => {
+
+    const d = data[i];
+
+    // If transaction has splits
+    if(d.Splits && d.Splits.length){
+
+      d.Splits.forEach(s => {
+
+        let splitCategory = s.Category;
+
+        // Normalize old category names
+        if(categoryAliases[splitCategory]){
+          splitCategory = categoryAliases[splitCategory];
+        }
+
+        if(totalsObj[splitCategory] != null){
+          totalsObj[splitCategory] += parseFloat(s.Amount);
+        } else if(totalsObj["Needs Review"] != null){
+          totalsObj["Needs Review"] += parseFloat(s.Amount);
+        }
+
+      });
+
+    } else {
+
+      let categoryName = d.Category;
+
+      // Normalize old category names
+      if(categoryAliases[categoryName]){
+        categoryName = categoryAliases[categoryName];
       }
-    });
-  }else if(d.Category && totalsObj[d.Category]!=null){
-    totalsObj[d.Category]+=d.Amount;
-  }
-});
 
-totals.innerHTML="";
-Object.keys(totalsObj).forEach(k=>{
-totals.innerHTML+=`<div class="totalRow" onclick="showCategoryBreakdown('${k}')">
-<div>${k}</div>
-<div>$${totalsObj[k].toFixed(2)}</div>
-</div>`;
-});
+      if(categoryName && totalsObj[categoryName] != null){
+        totalsObj[categoryName] += parseFloat(d.Amount);
+      } else if(d.Category && totalsObj["Needs Review"] != null){
+        totalsObj["Needs Review"] += parseFloat(d.Amount);
+      }
+
+    }
+
+  });
+
+  // Render totals UI
+  totals.innerHTML = "";
+
+  Object.keys(totalsObj).forEach(k => {
+    totals.innerHTML += `
+      <div class="totalRow" onclick="showCategoryBreakdown('${k}')">
+        <div>${k}</div>
+        <div>$${totalsObj[k].toFixed(2)}</div>
+      </div>
+    `;
+  });
+
 }
 
 /* Progress */
