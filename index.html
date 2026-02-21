@@ -454,6 +454,56 @@ name:"Utilities",
 class:"expense",
 description:`Electric, water, internet used for business.`
 },
+  {
+  name:"Office Supplies",
+  class:"expense",
+  description:`
+Office consumables used to operate Bathhouse Trading Company.
+
+Examples:
+• Printer paper
+• Receipt paper
+• Pens
+• File folders
+• Storage bins
+• Desk organizers
+
+Does NOT include:
+• Product packaging
+• Shipping supplies
+• Equipment over $2,500 (capital asset)
+`
+},
+  {
+name:"Equipment",
+class:"expense",
+description:`
+Business equipment purchases under IRS capitalization threshold.
+
+Examples:
+• Label printer
+• Small shelving
+• Storage racks
+• Small tools
+• Washer/dryer (if expensed, not depreciated)
+
+Note: Larger capital assets may require depreciation.
+`
+},
+  {
+name:"Meals",
+class:"expense",
+description:`
+Business meals related to operations.
+
+Examples:
+• Vendor meetings
+• Market event meals
+• Business planning lunches
+
+Note: Typically 50% deductible.
+`
+},
 {
 name:"Professional Services",
 class:"expense",
@@ -481,8 +531,31 @@ description:`If unsure, temporarily park the transaction here.`
 }
 ];
 const categoryAliases = {
+
+  // Software rename
   "Software": "Software & Subscriptions",
+
+  // Advertising rename
+  "Advertising": "Advertising & Marketing",
+
+  // Gas rename
+  "Gas": "Fuel",
+
+  // Interest rename
+  "Other Interest": "Interest Expense",
+
+  // Office rename (choose correct destination)
+  "Office / Admin": "Office Supplies",
+
+  // Old spelling
+  "COGS - Resell Inventory": "COGS - Resale Inventory",
+
+  // Explicit no category
+  "NO CATEGORY": "Needs Review",
+
+  // Merchant rename
   "Merchant Processing Fees": "Commissions & Merchant Fees"
+
 };
 /* ================= SEARCH ================= */
 
