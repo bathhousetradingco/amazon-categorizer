@@ -1277,7 +1277,7 @@ const parsed = parseFloat(amount);
       return;
     }
 
-    const category = await pickCategory();
+    const category = await pickCategory(parsed);
     if(!category) return;
 
     applySplit(category, parsed);
@@ -1510,7 +1510,7 @@ showCard();
   }
 }
 
-function pickCategory(){
+function pickCategory(amount){
 
   return new Promise(resolve => {
 
@@ -1529,19 +1529,43 @@ function pickCategory(){
     overlay.style.overflowY = "auto";
     overlay.style.zIndex = "99999";
 
-    let html = "<h3>Select Category</h3>";
+    let html = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">Select Category</h3>
+        <button onclick="closeCategoryPicker()" style="
+          background:#c62828;
+          color:white;
+          border:none;
+          padding:6px 10px;
+          border-radius:8px;
+        ">← Back</button>
+      </div>
 
-    if(window.lastCategoryUsed){
-      html += `<div style="margin-bottom:10px;">Suggested: <strong>${window.lastCategoryUsed}</strong></div>`;
-    }
+      <div style="margin-bottom:10px; font-size:14px;">
+        <strong>Amount:</strong> $${amount.toFixed(2)}
+      </div>
+    `;
 
     categories.forEach(c=>{
       html += `
-        <button class="category-btn ${c.class}" 
-          style="margin-bottom:8px;"
-          onclick="selectCategory('${c.name}')">
-          ${c.name}
-        </button>
+        <div style="display:flex; gap:6px; margin-bottom:6px;">
+          
+          <button class="category-btn ${c.class}" 
+            style="flex:1;"
+            onclick="selectCategory('${c.name}')">
+            ${c.name}
+          </button>
+
+          <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
+            width:32px;
+            height:32px;
+            border-radius:50%;
+            border:none;
+            background:#eee;
+            font-weight:bold;
+          ">i</button>
+
+        </div>
       `;
     });
 
@@ -1551,6 +1575,11 @@ function pickCategory(){
     window.selectCategory = (name)=>{
       document.body.removeChild(overlay);
       resolve(name);
+    };
+
+    window.closeCategoryPicker = ()=>{
+      document.body.removeChild(overlay);
+      resolve(null); // ← THIS IS THE FIX (escape hatch)
     };
 
   });
