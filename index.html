@@ -1548,24 +1548,25 @@ function pickCategory(amount){
 
     categories.forEach(c=>{
       html += `
-        <div style="display:flex; gap:6px; margin-bottom:6px;">
-          
-          <button class="category-btn ${c.class}" 
-            style="flex:1;"
-            onclick="selectCategory('${c.name}')">
-            ${c.name}
-          </button>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+  
+  <button class="category-btn ${c.class}" 
+    style="flex:1; min-width:0;"
+    onclick="selectCategory('${c.name}')">
+    ${c.name}
+  </button>
 
-          <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
-            width:32px;
-            height:32px;
-            border-radius:50%;
-            border:none;
-            background:#eee;
-            font-weight:bold;
-          ">i</button>
+  <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
+    flex-shrink:0;
+    width:36px;
+    height:36px;
+    border-radius:50%;
+    border:none;
+    background:#eee;
+    font-weight:bold;
+  ">i</button>
 
-        </div>
+</div>
       `;
     });
 
