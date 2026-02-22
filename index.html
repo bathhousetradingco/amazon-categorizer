@@ -1091,17 +1091,59 @@ div.appendChild(filterBtn);
 }
 
 function showCategoryInfo(name){
-  const category = categories.find(c=>c.name===name);
+
+  const category = categories.find(c => c.name === name);
   if(!category) return;
 
-  modalTitle.innerText = name;
-  modalContent.innerHTML = `
-    <div style="padding:10px; line-height:1.6;">
-      ${category.description}
+  const modal = document.createElement("div");
+
+  modal.style.position = "fixed";
+  modal.style.top = "0";
+  modal.style.left = "0";
+  modal.style.width = "100%";
+  modal.style.height = "100%";
+  modal.style.background = "rgba(0,0,0,0.5)";
+  modal.style.display = "flex";
+  modal.style.alignItems = "center";
+  modal.style.justifyContent = "center";
+  modal.style.zIndex = "100000"; // 👈 above picker
+
+  modal.innerHTML = `
+    <div style="
+      background:white;
+      width:90%;
+      max-width:500px;
+      max-height:80vh;
+      border-radius:16px;
+      padding:16px;
+      overflow:auto;
+      box-sizing:border-box;
+    ">
+      
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">${category.name}</h3>
+        <button onclick="closeCategoryInfo()" style="
+          background:#c62828;
+          color:white;
+          border:none;
+          padding:6px 10px;
+          border-radius:8px;
+        ">✕</button>
+      </div>
+
+      <div style="font-size:14px; line-height:1.5;">
+        ${category.description || "No description available."}
+      </div>
+
     </div>
   `;
 
-  openModal();
+  document.body.appendChild(modal);
+
+  window.closeCategoryInfo = () => {
+    document.body.removeChild(modal);
+  };
+
 }
   
 async function categorize(name){
