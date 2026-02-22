@@ -794,7 +794,12 @@ showCard();
   
 /* CSV */
 
-document.getElementById("csvFile").addEventListener("change", async (e) => {
+window.addEventListener("DOMContentLoaded", () => {
+
+  const csvInput = document.getElementById("csvFile");
+  if(!csvInput) return;
+
+  csvInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
@@ -828,6 +833,8 @@ document.getElementById("csvFile").addEventListener("change", async (e) => {
     }
   });
 });
+
+  });
 
 
 
@@ -884,6 +891,30 @@ item.receipt_url = filePath;
 showCard(); // 🔥 THIS refreshes the UI
 
 alert("Receipt saved successfully.");
+}
+
+
+function resetSplits(){
+  const item = data[currentIndex];
+
+  if(!item) return;
+
+  item.Splits = [];
+  item.Category = "";
+
+  updateTotals();
+  updateProgress();
+  showCard();
+
+  if(item.id){
+    supabaseClient
+      .from("transactions")
+      .update({
+        category: "",
+        splits: []
+      })
+      .eq("id", item.id);
+  }
 }
 
 async function viewReceipt(){
