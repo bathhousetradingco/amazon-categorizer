@@ -1485,57 +1485,72 @@ if(remaining < -0.01){
 
 }
 
+function updateSplitSummaryUI(){
+
+  const item = data[currentIndex];
+  const el = document.getElementById("splitSummary");
+
+  if(!el) return;
+
+  if(!item.Splits || !item.Splits.length){
+    el.innerHTML = "";
+    return;
+  }
+
+  let html = "<strong>Split Allocation:</strong><br>";
+
+  item.Splits.forEach(s=>{
+    html += `${s.Category}: $${parseFloat(s.Amount).toFixed(2)}<br>`;
+  });
+
+  el.innerHTML = html;
+}
+
 async function applySplit(category, amount){
 
   const item = data[currentIndex];
 
   if(!item.Splits) item.Splits = [];
 
-  // 🔥 CALCULATE CURRENT TOTAL
-let total = 0;
-item.Splits.forEach(s => total += parseFloat(s.Amount));
-total = parseFloat(total.toFixed(2));
+  // ✅ Accurate math (no floating errors)
+  let total = item.Splits.reduce((sum, s) => {
+    return sum + Math.round(parseFloat(s.Amount) * 100);
+  }, 0) / 100;
 
-const remaining = parseFloat((item.Amount - total).toFixed(2));
+  const remaining = parseFloat((item.Amount - total).toFixed(2));
 
-// 🚫 BLOCK OVER-ALLOCATION
-// Clamp instead of block (better UX)
-// 🚫 HARD BLOCK over-allocation
-if(amount > remaining + 0.01){
-  alert("Amount exceeds remaining balance.");
-  return;
-}
+  // 🚫 Block over-allocation
+  if(amount > remaining + 0.01){
+    alert("Amount exceeds remaining balance.");
+    return;
+  }
 
-// 🧠 Snap to exact remaining if close
-if(Math.abs(amount - remaining) < 0.01){
-  amount = remaining;
-}
+  // 🧠 Snap to exact remaining if close
+  if(Math.abs(amount - remaining) < 0.01){
+    amount = remaining;
+  }
 
-// 🚫 BLOCK NEGATIVE OR ZERO
-if(amount <= 0){
-  alert("Enter a valid amount.");
-  return;
-}
+  // 🚫 Block invalid values
+  if(amount <= 0){
+    alert("Enter a valid amount.");
+    return;
+  }
 
-// ✅ SAFE TO ADD
-item.Splits.push({
-  Category: category,
-  Amount: amount
-});
+  // ✅ Add split
+  item.Splits.push({
+    Category: category,
+    Amount: amount
+  });
 
   item.Category = "SPLIT";
-
   window.lastCategoryUsed = category;
 
-  // ✅ Update UI immediately
+  // ✅ Update UI (NO showCard here)
   updateRemainingUI();
-  // Keep user in split mode after adding
-setTimeout(() => {
-  splitMode = true;
-}, 150);
+  updateSplitSummaryUI();
   updateTotals();
   updateProgress();
-showCard();
+
   // ✅ Save to Supabase
   if(item.id){
     const { error } = await supabaseClient
@@ -1550,6 +1565,19 @@ showCard();
       console.error("Split save error:", error);
       alert("Error saving split.");
     }
+  }
+
+  // 🔥 Auto-finish when done
+  const newTotal = item.Splits.reduce((sum, s) => {
+    return sum + Math.round(parseFloat(s.Amount) * 100);
+  }, 0) / 100;
+
+  const newRemaining = parseFloat((item.Amount - newTotal).toFixed(2));
+
+  if(Math.abs(newRemaining) < 0.01){
+    alert("Split complete");
+    closeModal();
+    showCard(); // only now refresh main screen
   }
 }
 
