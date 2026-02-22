@@ -234,7 +234,6 @@ let data=[];
 let currentIndex=0;
 let showOnlyUncategorized=false;
 let activeSearchFilter=null;
-let splitMode = false;
 let activeYearFilter = null;
 /* ================= LOAD FROM SUPABASE ================= */
 
@@ -1311,7 +1310,6 @@ function addSplit(category){
 
   updateTotals();
   updateProgress();
-  updateSplitSummaryUI();
   renderSplitUI();
 
   if(item.id){
