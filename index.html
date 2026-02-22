@@ -1518,15 +1518,20 @@ function pickCategory(amount){
     const overlay = document.createElement("div");
 
     overlay.style.position = "fixed";
+    overlay.style.borderTop = "1px solid #eee";
+overlay.style.backdropFilter = "blur(6px)";
     overlay.style.bottom = "0";
     overlay.style.left = "0";
     overlay.style.width = "100%";
-    overlay.style.maxHeight = "60vh";
+    overlay.style.maxHeight = "50vh"; // 👈 less aggressive
+overlay.style.padding = "12px 12px 20px 12px"; // 👈 bottom breathing room
+overlay.style.boxSizing = "border-box";
+overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
     overlay.style.background = "white";
     overlay.style.borderTopLeftRadius = "16px";
     overlay.style.borderTopRightRadius = "16px";
     overlay.style.boxShadow = "0 -4px 20px rgba(0,0,0,.2)";
-    overlay.style.padding = "16px";
+    
     overlay.style.overflowY = "auto";
     overlay.style.zIndex = "99999";
 
