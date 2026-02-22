@@ -214,18 +214,25 @@ onclick="openCreateTransactionModal()">
 
 <script>
 
-const app = document.getElementById("app");
-const modalOverlay = document.getElementById("modalOverlay");
-const modalContent = document.getElementById("modalContent");
-const modalTitle = document.getElementById("modalTitle");
-const cardTitle = document.getElementById("cardTitle");
-const cardMeta = document.getElementById("cardMeta");
-const splitSummary = document.getElementById("splitSummary");
-const currentCategory = document.getElementById("currentCategory");
-const totals = document.getElementById("totals");
-const progressBar = document.getElementById("progressBar");
-const progressText = document.getElementById("progressText");
+let app, modalOverlay, modalContent, modalTitle;
+let cardTitle, cardMeta, splitSummary, currentCategory;
+let totals, progressBar, progressText;
 
+window.addEventListener("DOMContentLoaded", () => {
+
+  app = document.getElementById("app");
+  modalOverlay = document.getElementById("modalOverlay");
+  modalContent = document.getElementById("modalContent");
+  modalTitle = document.getElementById("modalTitle");
+  cardTitle = document.getElementById("cardTitle");
+  cardMeta = document.getElementById("cardMeta");
+  splitSummary = document.getElementById("splitSummary");
+  currentCategory = document.getElementById("currentCategory");
+  totals = document.getElementById("totals");
+  progressBar = document.getElementById("progressBar");
+  progressText = document.getElementById("progressText");
+
+});
 /* ALL YOUR ORIGINAL JS REMAINS UNCHANGED BELOW */
 
 let rawRows=[];
