@@ -214,25 +214,18 @@ onclick="openCreateTransactionModal()">
 
 <script>
 
-let app, modalOverlay, modalContent, modalTitle;
-let cardTitle, cardMeta, splitSummary, currentCategory;
-let totals, progressBar, progressText;
+const app = document.getElementById("app");
+const modalOverlay = document.getElementById("modalOverlay");
+const modalContent = document.getElementById("modalContent");
+const modalTitle = document.getElementById("modalTitle");
+const cardTitle = document.getElementById("cardTitle");
+const cardMeta = document.getElementById("cardMeta");
+const splitSummary = document.getElementById("splitSummary");
+const currentCategory = document.getElementById("currentCategory");
+const totals = document.getElementById("totals");
+const progressBar = document.getElementById("progressBar");
+const progressText = document.getElementById("progressText");
 
-window.addEventListener("DOMContentLoaded", () => {
-
-  app = document.getElementById("app");
-  modalOverlay = document.getElementById("modalOverlay");
-  modalContent = document.getElementById("modalContent");
-  modalTitle = document.getElementById("modalTitle");
-  cardTitle = document.getElementById("cardTitle");
-  cardMeta = document.getElementById("cardMeta");
-  splitSummary = document.getElementById("splitSummary");
-  currentCategory = document.getElementById("currentCategory");
-  totals = document.getElementById("totals");
-  progressBar = document.getElementById("progressBar");
-  progressText = document.getElementById("progressText");
-
-});
 /* ALL YOUR ORIGINAL JS REMAINS UNCHANGED BELOW */
 
 let rawRows=[];
@@ -241,6 +234,7 @@ let data=[];
 let currentIndex=0;
 let showOnlyUncategorized=false;
 let activeSearchFilter=null;
+let splitMode = false;
 let activeYearFilter = null;
 /* ================= LOAD FROM SUPABASE ================= */
 
@@ -801,12 +795,7 @@ showCard();
   
 /* CSV */
 
-window.addEventListener("DOMContentLoaded", () => {
-
-  const csvInput = document.getElementById("csvFile");
-  if(!csvInput) return;
-
-  csvInput.addEventListener("change", async (e) => {
+document.getElementById("csvFile").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
@@ -840,8 +829,6 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 });
-
-  });
 
 
 
@@ -898,30 +885,6 @@ item.receipt_url = filePath;
 showCard(); // 🔥 THIS refreshes the UI
 
 alert("Receipt saved successfully.");
-}
-
-
-function resetSplits(){
-  const item = data[currentIndex];
-
-  if(!item) return;
-
-  item.Splits = [];
-  item.Category = "";
-
-  updateTotals();
-  updateProgress();
-  showCard();
-
-  if(item.id){
-    supabaseClient
-      .from("transactions")
-      .update({
-        category: "",
-        splits: []
-      })
-      .eq("id", item.id);
-  }
 }
 
 async function viewReceipt(){
@@ -1212,144 +1175,383 @@ if(item.id){
 goNext();
 }
 
-/* ================= NEW SPLIT UI (REPLACEMENT) ================= */
-
 async function openSplitModal(){
-
+  splitMode = false;
   const item = data[currentIndex];
   modalTitle.innerText = "Split Transaction";
 
-  renderSplitUI();
+  let receiptView = `
+    <div style="
+      width:100%;
+      height:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:#f4f4f4;
+      color:#777;
+      font-size:16px;
+    ">
+      No receipt attached
+    </div>
+  `;
 
-  openModal();
-}
+  if(item.receipt_url){
+    const { data: signedData, error } = await supabaseClient
+      .storage
+      .from("receipts")
+      .createSignedUrl(item.receipt_url, 60);
 
-function renderSplitUI(){
+    if(!error && signedData?.signedUrl){
+      const url = signedData.signedUrl;
+      const isPDF = url.toLowerCase().includes(".pdf");
 
-  const item = data[currentIndex];
-
-  let total = 0;
-  if(item.Splits){
-    item.Splits.forEach(s => total += parseFloat(s.Amount));
-    total = parseFloat(total.toFixed(2));
+      receiptView = isPDF
+        ? `<iframe src="${url}" style="width:100%; height:100%; border:none;"></iframe>`
+        : `
+          <div style="
+            width:100%;
+            height:100%;
+            overflow:auto;
+            display:flex;
+            justify-content:center;
+            align-items:flex-start;
+            background:#000;
+          ">
+            <img src="${url}" style="width:100%; height:auto;">
+          </div>
+        `;
+    }
   }
 
-  const remaining = parseFloat((item.Amount - total).toFixed(2));
-
-  let html = `
-    <div style="display:flex; flex-direction:column; gap:12px;">
-
-      <div style="
-        font-size:18px;
-        font-weight:700;
-        background:#f5f5f5;
-        padding:12px;
+  modalContent.innerHTML = `
+    <div id="tapSplitContainer" style="position:relative; min-height:100%;">
+      
+      <button onclick="enableSplitMode()" style="
+        position:absolute;
+        top:10px;
+        right:10px;
+        z-index:10;
+        background:#ff9800;
+        color:white;
+        padding:8px 12px;
         border-radius:10px;
       ">
-        Remaining: $${remaining.toFixed(2)}
+        Enable Split Mode
+      </button>
+
+      ${receiptView}
+
+      <div id="remainingBar" style="
+        position:absolute;
+        bottom:10px;
+        left:50%;
+        transform:translateX(-50%);
+        background:rgba(255,255,255,0.9);
+        padding:10px 16px;
+        border-radius:999px;
+        box-shadow:0 4px 12px rgba(0,0,0,.15);
+        font-weight:600;
+        pointer-events:none;
+        z-index:5;
+      ">
+        Remaining: $${item.Amount.toFixed(2)}
       </div>
 
-      <div style="background:#fafafa; padding:10px; border-radius:10px;">
+    </div>
   `;
 
-  if(item.Splits && item.Splits.length){
-    item.Splits.forEach((s,i)=>{
-      html += `
-        <div style="
-          display:flex;
-          justify-content:space-between;
-          padding:6px 0;
-          border-bottom:1px solid #eee;
-        ">
-          <div>${s.Category}</div>
-          <div>
-            $${parseFloat(s.Amount).toFixed(2)}
-            <button onclick="removeSplit(${i})" style="
-              margin-left:8px;
-              background:#c62828;
-              color:white;
-              border:none;
-              border-radius:6px;
-              padding:2px 6px;
-            ">x</button>
-          </div>
-        </div>
-      `;
-    });
-  } else {
-    html += `<div style="color:#777;">No splits yet</div>`;
-  }
-
-  html += `</div><strong>Add Split</strong>`;
-
-  categories.forEach(c=>{
-    html += `
-      <button class="category-btn ${c.class}" 
-        onclick="addSplit('${c.name.replace(/'/g, "\\'")}')">
-        ${c.name}
-      </button>
-    `;
-  });
-
-  html += `
-    <button onclick="closeModal()" style="
-      background:#2e7d32;
-      color:white;
-      padding:10px;
-      border-radius:10px;
-      margin-top:10px;
-    ">
-      Done
-    </button>
-  `;
-
-  modalContent.innerHTML = html;
+  openModal();
+  setTimeout(initTapToSplit, 50);
 }
 
-function addSplit(category){
+
+let startY = 0;
+let startHeight = 0;
+
+
+
+function initTapToSplit(){
+
+  const container = document.getElementById("tapSplitContainer");
+if(!container || container.dataset.listenerAttached) return;
+
+container.dataset.listenerAttached = "true";
+
+  let touchStartX = 0;
+  let touchStartY = 0;
+
+  container.addEventListener("touchstart", (e)=>{
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  });
+
+  container.addEventListener("touchend", (e)=>{
+if(!splitMode) return;
+  const dx = Math.abs(e.changedTouches[0].clientX - touchStartX);
+  const dy = Math.abs(e.changedTouches[0].clientY - touchStartY);
+
+  // If finger moved → it's a scroll
+  if(dx > 10 || dy > 10) return;
+
+  // Slight delay = better UX
+  setTimeout(async () => {
+
+    const item = data[currentIndex];
+
+let total = 0;
+item.Splits.forEach(s => total += parseFloat(s.Amount));
+total = parseFloat(total.toFixed(2));
+
+const remaining = parseFloat((item.Amount - total).toFixed(2));
+// 🚨 FIX BAD DATA STATE
+if(remaining <= 0){
+  alert("No more money to split.");
+  return;
+}
+const tapX = e.changedTouches[0].clientX;
+const tapY = e.changedTouches[0].clientY;
+
+const amount = await showAmountInput(tapX, tapY, remaining);
+if(amount === null) return;
+
+const parsed = parseFloat(amount);
+    if(isNaN(parsed)){
+      alert("Invalid amount");
+      return;
+    }
+
+    const category = await pickCategory(parsed);
+    if(!category) return;
+
+    applySplit(category, parsed);
+
+  }, 50);
+
+});
+}
+
+function enableSplitMode(){
+  splitMode = !splitMode;
+
+  const btn = document.querySelector("#tapSplitContainer button[onclick='enableSplitMode()']");
+  const container = document.getElementById("tapSplitContainer");
+
+  if(splitMode){
+    btn.innerText = "Exit Split Mode";
+    btn.style.background = "#2e7d32";
+    if(container) container.style.outline = "3px solid #2e7d32";
+  } else {
+    btn.innerText = "Enable Split Mode";
+    btn.style.background = "#ff9800";
+    if(container) container.style.outline = "none";
+  }
+}
+
+async function resetSplits(){
+
+  if(!confirm("Reset all splits?")) return;
+
+  const item = data[currentIndex];
+
+  item.Splits = [];
+  item.Category = "";
+
+  updateRemainingUI();
+
+// Force UI refresh if modal is open
+setTimeout(() => {
+  updateRemainingUI();
+}, 50);
+  updateTotals();
+  updateProgress();
+showCard();
+  // Save to Supabase
+  if(item.id){
+    const { error } = await supabaseClient
+      .from("transactions")
+      .update({
+        category: "",
+        splits: []
+      })
+      .eq("id", item.id);
+
+    if(error){
+      console.error("Reset error:", error);
+      alert("Error resetting splits.");
+    }
+  }
+
+  // Reset remaining bar UI
+  const el = document.getElementById("remainingBar");
+  if(el){
+    el.innerText = "Remaining: $" + item.Amount.toFixed(2);
+    el.style.color = "orange";
+  }
+}
+
+function showAmountInput(x, y, remaining){
+  return new Promise(resolve => {
+
+    // Remove any existing input popups first
+document.querySelectorAll(".amount-popup").forEach(el => el.remove());
+
+const inputBox = document.createElement("div");
+inputBox.className = "amount-popup";
+
+    inputBox.style.position = "fixed";
+    const offsetY = Math.min(
+  window.innerHeight - 120,
+  Math.max(80, y)
+);
+
+inputBox.style.top = offsetY + "px";
+inputBox.style.left = Math.min(
+  window.innerWidth - 80,
+  Math.max(80, x)
+) + "px";
+    inputBox.style.transform = "translate(-50%, -50%)";
+    inputBox.style.background = "white";
+    inputBox.style.padding = "12px";
+    inputBox.style.borderRadius = "12px";
+    inputBox.style.boxShadow = "0 4px 20px rgba(0,0,0,.25)";
+    inputBox.style.zIndex = "99999";
+
+    inputBox.innerHTML = `
+      <input type="number" step="0.01" value="${remaining.toFixed(2)}" style="
+        width:120px;
+        padding:8px;
+        font-size:16px;
+        border-radius:8px;
+        border:1px solid #ccc;
+      ">
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <button style="flex:1; background:#2e7d32; color:white;">OK</button>
+        <button style="flex:1; background:#c62828; color:white;">Cancel</button>
+      </div>
+    `;
+
+    document.body.appendChild(inputBox);
+
+    const input = inputBox.querySelector("input");
+    input.focus();
+
+    const buttons = inputBox.querySelectorAll("button");
+
+    buttons[0].onclick = () => {
+      const val = input.value;
+      document.body.removeChild(inputBox);
+      resolve(val);
+    };
+
+    buttons[1].onclick = () => {
+      document.body.removeChild(inputBox);
+      resolve(null);
+    };
+
+  });
+}
+
+
+function updateRemainingUI(){
 
   const item = data[currentIndex];
 
   let total = 0;
   if(item.Splits){
     item.Splits.forEach(s => total += parseFloat(s.Amount));
-    total = parseFloat(total.toFixed(2));
+total = parseFloat(total.toFixed(2));
   }
 
   const remaining = parseFloat((item.Amount - total).toFixed(2));
+  
+// If already over-split from previous bad data → reset automatically
+if(remaining < -0.01){
+  console.warn("Over-split detected. Auto-correcting.");
 
-  const input = prompt(`Enter amount (Remaining: $${remaining.toFixed(2)})`);
-  if(input === null) return;
+  // Trim last split instead of nuking everything
+  item.Splits.pop();
 
-  let amount = parseFloat(input);
+  updateRemainingUI();
+  return;
+}
+  const el = document.getElementById("remainingBar");
+  if(!el) return;
 
-  if(isNaN(amount) || amount <= 0){
-    alert("Invalid amount");
+  el.innerText = "Remaining: $" + remaining.toFixed(2);
+
+  el.style.color =
+    Math.abs(remaining) < 0.01 ? "green" :
+    remaining < 0 ? "red" : "orange";
+
+}
+
+function updateSplitSummaryUI(){
+
+  const item = data[currentIndex];
+  const el = document.getElementById("splitSummary");
+
+  if(!el) return;
+
+  if(!item.Splits || !item.Splits.length){
+    el.innerHTML = "";
     return;
   }
 
+  let html = "<strong>Split Allocation:</strong><br>";
+
+  item.Splits.forEach(s=>{
+    html += `${s.Category}: $${parseFloat(s.Amount).toFixed(2)}<br>`;
+  });
+
+  el.innerHTML = html;
+}
+
+async function applySplit(category, amount){
+
+  const item = data[currentIndex];
+
+  if(!item.Splits) item.Splits = [];
+
+  // ✅ Accurate math (no floating errors)
+  let total = item.Splits.reduce((sum, s) => {
+    return sum + Math.round(parseFloat(s.Amount) * 100);
+  }, 0) / 100;
+
+  const remaining = parseFloat((item.Amount - total).toFixed(2));
+
+  // 🚫 Block over-allocation
   if(amount > remaining + 0.01){
-    alert("Amount exceeds remaining.");
+    alert("Amount exceeds remaining balance.");
     return;
   }
 
+  // 🧠 Snap to exact remaining if close
   if(Math.abs(amount - remaining) < 0.01){
     amount = remaining;
   }
 
-  if(!item.Splits) item.Splits = [];
+  // 🚫 Block invalid values
+  if(amount <= 0){
+    alert("Enter a valid amount.");
+    return;
+  }
 
+  // ✅ Add split
   item.Splits.push({
     Category: category,
     Amount: amount
   });
 
   item.Category = "SPLIT";
+  window.lastCategoryUsed = category;
 
+  // ✅ Update UI (NO showCard here)
+  updateRemainingUI();
+  updateSplitSummaryUI();
   updateTotals();
   updateProgress();
-  renderSplitUI();
 
+  // ✅ Save to Supabase
   if(item.id){
     const { error } = await supabaseClient
       .from("transactions")
@@ -1360,19 +1562,164 @@ function addSplit(category){
       .eq("id", item.id);
 
     if(error){
-      console.error(error);
+      console.error("Split save error:", error);
       alert("Error saving split.");
     }
   }
+
+  // 🔥 Auto-finish when done
+  const newTotal = item.Splits.reduce((sum, s) => {
+    return sum + Math.round(parseFloat(s.Amount) * 100);
+  }, 0) / 100;
+
+  const newRemaining = parseFloat((item.Amount - newTotal).toFixed(2));
+
+  if(Math.abs(newRemaining) < 0.01){
+    alert("Split complete");
+    closeModal();
+    showCard(); // only now refresh main screen
+  }
 }
 
-function removeSplit(index){
-  const item = data[currentIndex];
-  item.Splits.splice(index,1);
-  renderSplitUI();
+function pickCategory(amount){
+
+  return new Promise(resolve => {
+
+    const overlay = document.createElement("div");
+
+    overlay.style.position = "fixed";
+    overlay.style.borderTop = "1px solid #eee";
+overlay.style.backdropFilter = "blur(6px)";
+    overlay.style.bottom = "0";
+    overlay.style.left = "0";
+    overlay.style.width = "100%";
+    overlay.style.maxHeight = "50vh"; // 👈 less aggressive
+overlay.style.padding = "12px 12px 20px 12px"; // 👈 bottom breathing room
+overlay.style.boxSizing = "border-box";
+overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
+    overlay.style.background = "white";
+    overlay.style.borderTopLeftRadius = "16px";
+    overlay.style.borderTopRightRadius = "16px";
+    overlay.style.boxShadow = "0 -4px 20px rgba(0,0,0,.2)";
+    
+    overlay.style.overflowY = "auto";
+    overlay.style.zIndex = "99999";
+
+    let html = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">Select Category</h3>
+        <button onclick="closeCategoryPicker()" style="
+          background:#c62828;
+          color:white;
+          border:none;
+          padding:6px 10px;
+          border-radius:8px;
+        ">← Back</button>
+      </div>
+
+      <div style="margin-bottom:10px; font-size:14px;">
+        <strong>Amount:</strong> $${amount.toFixed(2)}
+      </div>
+    `;
+
+    categories.forEach(c=>{
+      html += `
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+  
+  <button class="category-btn ${c.class}" 
+    style="flex:1; min-width:0;"
+    onclick="selectCategory('${c.name}')">
+    ${c.name}
+  </button>
+
+  <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
+    flex-shrink:0;
+    width:36px;
+    height:36px;
+    border-radius:50%;
+    border:none;
+    background:#eee;
+    font-weight:bold;
+  ">i</button>
+
+</div>
+      `;
+    });
+
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+
+    window.selectCategory = (name)=>{
+      document.body.removeChild(overlay);
+      resolve(name);
+    };
+
+    window.closeCategoryPicker = ()=>{
+      document.body.removeChild(overlay);
+      resolve(null); // ← THIS IS THE FIX (escape hatch)
+    };
+
+  });
+
 }
 
+function updateRemaining(){
+const item=data[currentIndex];
+let total=0;
+categories.forEach((c,i)=>{
+total+=parseFloat(document.getElementById("split_"+i).value)||0;
+});
+const remaining=item.Amount-total;
+const el=document.getElementById("remainingBalance");
+el.innerText="Remaining: $"+remaining.toFixed(2);
+el.style.color=Math.abs(remaining)<0.01?"green":remaining<0?"red":"orange";
+}
 
+async function saveSplit(){
+
+const item = data[currentIndex];
+
+let total = 0;
+let splits = [];
+
+categories.forEach((c,i)=>{
+  const val = parseFloat(document.getElementById("split_"+i).value) || 0;
+  if(val > 0){
+    splits.push({Category: c.name, Amount: val});
+    total += val;
+  }
+});
+
+if(Math.abs(total - item.Amount) > 0.01){
+  alert("Split must equal total.");
+  return;
+}
+
+item.Splits = splits;
+item.Category = "SPLIT";
+
+updateTotals();
+updateProgress();
+
+if(item.id){
+  const { error } = await supabaseClient
+    .from("transactions")
+    .update({
+      category: "SPLIT",
+      splits: splits
+    })
+    .eq("id", item.id);
+
+  if(error){
+    console.error("Split save error:", error);
+    alert("Error saving split to database.");
+    return;
+  }
+}
+
+closeModal();
+goNext();
+}
 
 
 /* Category Breakdown Modal */
