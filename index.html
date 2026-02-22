@@ -524,15 +524,7 @@ name:"Interest Expense",
 class:"expense",
 description:`Credit card or business loan interest.`
 },
-  {
-name:"Uncategorized",
-class:"special",
-description:`
-Transactions that have not yet been categorized.
-
-This is the default state for new transactions.
-`
-},
+  
 {
 name:"Needs Review",
 class:"special",
@@ -1806,8 +1798,8 @@ function updateTotals(){
 
     const addAmount = (cat, amount) => {
       if(!cat || cat.trim() === ""){
-        cat = "Uncategorized";
-      }
+  return; // skip uncategorized entirely
+}
 
       if(categoryAliases[cat]){
         cat = categoryAliases[cat];
@@ -1816,8 +1808,8 @@ function updateTotals(){
       if(totalsObj[cat] != null){
         totalsObj[cat] += parseFloat(amount);
       } else {
-        totalsObj["Uncategorized"] += parseFloat(amount);
-      }
+  return; // don't track unknown categories
+}
     };
 
     // Handle splits
