@@ -54,13 +54,14 @@ overflow:auto;
   width:95%;
   max-width:1200px;
   height:90vh;
-  overflow:visible;
   display:flex;
   flex-direction:column;
+  overflow:hidden; /* 👈 important */
 }
 #modalContent {
   flex:1;
   overflow:auto;
+  min-height:0; /* 👈 CRITICAL fix for flex scrolling */
 }
 
 .modalClose {
@@ -1181,7 +1182,7 @@ async function openSplitModal(){
   }
 
   modalContent.innerHTML = `
-    <div id="tapSplitContainer" style="position:relative; height:100%;">
+    <div id="tapSplitContainer" style="position:relative; min-height:100%;">
       
       <button onclick="enableSplitMode()" style="
         position:absolute;
