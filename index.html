@@ -252,15 +252,16 @@ async function loadTransactions() {
   console.log("Rows from Supabase:", rows);
 
   data = rows.map(r => ({
-    id: r.id,
-    Title: r.title,
-    Vendor: r.vendor,
-    Date: r.date,
-    Amount: r.amount,
-    Category: r.category || "",
-    Splits: r.splits || [],
-    receipt_url: r.receipt_url
-  }));
+  id: r.id,
+  Title: r.title,
+  Vendor: r.vendor,
+  Date: r.date,
+  Amount: r.amount,
+  Category: r.category || "",
+  Splits: r.splits || [],
+  receipt_url: r.receipt_url,
+  Institution: r.institution || ""   // 👈 ADD THIS LINE
+}));
 
   app.style.display = "block";
 
@@ -1858,9 +1859,10 @@ function showCard(){
   cardTitle.innerText = item.Title || item.Vendor || "Untitled Transaction";
 
   cardMeta.innerHTML =
-    (item.Vendor ? `Vendor: ${item.Vendor}<br>` : "") +
-    (item.Date ? `Date: ${item.Date}<br>` : "") +
-    `Amount: $${item.Amount.toFixed(2)}<br>` +
+  (item.Vendor ? `Vendor: ${item.Vendor}<br>` : "") +
+  (item.Institution ? `Account: ${item.Institution}<br>` : "") +   // 👈 ADD THIS
+  (item.Date ? `Date: ${item.Date}<br>` : "") +
+  `Amount: $${item.Amount.toFixed(2)}<br>` +
     (item.receipt_url ? 
       `📎 Receipt Attached<br>
        <button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
