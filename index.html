@@ -1860,31 +1860,32 @@ function showCard(){
 
   cardMeta.innerHTML =
   (item.Vendor ? `Vendor: ${item.Vendor}<br>` : "") +
-  (item.Institution ? `Account: ${item.Institution}<br>` : "") +   // 👈 ADD THIS
+  (item.Institution ? `Account: ${item.Institution}<br>` : "") +
   (item.Date ? `Date: ${item.Date}<br>` : "") +
   `Amount: $${item.Amount.toFixed(2)}<br>` +
-    (item.receipt_url ? 
-      `📎 Receipt Attached<br>
-       <button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
-       <button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>` 
-      : ""
-    ) +
-    `<br>
-     <input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
-<br>
+  (item.receipt_url ? 
+    `📎 Receipt Attached<br>
+     <button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
+     <button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>` 
+    : ""
+  ) +
+  `<br>
+   <input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
+   <br>
 
-<button onclick="askAI()" style="
-  background:#000;
-  color:white;
-  padding:10px;
-  border-radius:10px;
-  margin-top:8px;
-  width:100%;
-">
-  🤖 Ask AI
-</button>
+   <button onclick="askAI()" style="
+     background:#000;
+     color:white;
+     padding:10px;
+     border-radius:10px;
+     margin-top:8px;
+     width:100%;
+   ">
+     🤖 Ask AI
+   </button>
 
-<button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>
+   <button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>
+  `;
 
   if(item.Splits && item.Splits.length){
     let splitHTML = "<strong>Split Allocation:</strong><br>";
