@@ -1606,10 +1606,10 @@ async function analyzeReceipt(){
       {
         method: "POST",
         headers: await getAuthHeaders(),
-        body: JSON.stringify({
-          imageUrl: signedData.signedUrl,
-          categories: categories.map(c => c.name)
-        })
+  body: JSON.stringify({
+  filePath: item.receipt_url,
+  categories: categories.map(c => c.name)
+})
       }
     );
 
