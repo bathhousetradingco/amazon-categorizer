@@ -1870,21 +1870,20 @@ function showCard(){
     : ""
   ) +
   `<br>
-   <input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
-   <br>
+  <input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)"><br>
 
-   <button onclick="askAI()" style="
-     background:#000;
-     color:white;
-     padding:10px;
-     border-radius:10px;
-     margin-top:8px;
-     width:100%;
-   ">
-     🤖 Ask AI
-   </button>
+  <button onclick="askAI()" style="
+    background:#000;
+    color:white;
+    padding:10px;
+    border-radius:10px;
+    margin-top:8px;
+    width:100%;
+  ">
+    🤖 Ask AI
+  </button>
 
-   <button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>
+  <button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>
   `;
 
   if(item.Splits && item.Splits.length){
@@ -2044,15 +2043,57 @@ async function askAI(){
 
   const item = data[currentIndex];
 
+  // STEP 1: Ask user for context FIRST
   modalTitle.innerText = "🤖 AI Categorization";
 
   modalContent.innerHTML = `
     <div style="padding:10px;">
-      <div style="margin-bottom:10px;"><strong>Analyzing transaction...</strong></div>
+
+      <div style="margin-bottom:10px;">
+        <strong>What was this purchase for?</strong>
+      </div>
+
+      <textarea id="aiUserInput" placeholder="Example: we bought keys for the shop, packaging supplies, resale items..." style="
+        width:100%;
+        height:100px;
+        padding:10px;
+        border-radius:10px;
+        border:1px solid #ddd;
+        margin-bottom:12px;
+        font-size:14px;
+      "></textarea>
+
+      <button onclick="submitAIRequest()" style="
+        background:#000;
+        color:white;
+        padding:12px;
+        border-radius:10px;
+        width:100%;
+      ">
+        Ask AI
+      </button>
+
     </div>
   `;
 
   openModal();
+}
+
+async function submitAIRequest(){
+
+  const item = data[currentIndex];
+  const userInput = document.getElementById("aiUserInput").value;
+
+  if(!userInput.trim()){
+    alert("Please enter a quick description.");
+    return;
+  }
+
+  modalContent.innerHTML = `
+    <div style="padding:10px;">
+      <strong>Analyzing transaction...</strong>
+    </div>
+  `;
 
   try {
 
@@ -2064,7 +2105,8 @@ async function askAI(){
       body: JSON.stringify({
         title: item.Title,
         vendor: item.Vendor,
-        amount: item.Amount
+        amount: item.Amount,
+        user_input: userInput   // 🔥 THIS IS THE MAGIC
       })
     });
 
@@ -2100,13 +2142,13 @@ async function askAI(){
           ✅ Accept Suggestion
         </button>
 
-        <button onclick="closeModal()" style="
+        <button onclick="askAI()" style="
           background:#ccc;
           padding:12px;
           border-radius:10px;
           width:100%;
         ">
-          Cancel
+          Try Again
         </button>
 
       </div>
