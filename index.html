@@ -165,7 +165,9 @@ onclick="openCreateTransactionModal()">
 <button class="category-btn" style="background:#2e7d32; margin-bottom:8px;" onclick="connectBank()">
 🏦 Connect Bank
 </button>
-
+<button class="category-btn" style="background:#000; margin-bottom:8px;" onclick="forcePlaidSync()">
+🔄 Sync Bank Now
+</button>
 <select id="yearFilter" onchange="applyYearFilter()" style="margin-bottom:8px;">
   <option value="">All Years</option>
 </select>
@@ -657,7 +659,37 @@ function populateYearFilter(){
       select.innerHTML += `<option value="${y}">${y}</option>`;
     });
 }
+async function forcePlaidSync(){
 
+  try {
+
+    const res = await fetch(
+      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions",
+      {
+        method: "POST",
+        headers: await getAuthHeaders()
+      }
+    );
+
+    const data = await res.json();
+
+    if(!res.ok){
+      console.error(data);
+      alert("Sync failed");
+      return;
+    }
+
+    console.log("Sync result:", data);
+
+    await loadTransactions();
+
+    alert(`Sync complete. Inserted: ${data.inserted}`);
+
+  } catch(err){
+    console.error(err);
+    alert("Error triggering sync");
+  }
+}
 function applyYearFilter(){
   const val = document.getElementById("yearFilter").value;
   activeYearFilter = val || null;
