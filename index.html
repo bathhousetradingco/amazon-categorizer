@@ -1871,8 +1871,20 @@ function showCard(){
     ) +
     `<br>
      <input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
-     <br>
-     <button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>`;
+<br>
+
+<button onclick="askAI()" style="
+  background:#000;
+  color:white;
+  padding:10px;
+  border-radius:10px;
+  margin-top:8px;
+  width:100%;
+">
+  🤖 Ask AI
+</button>
+
+<button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>
 
   if(item.Splits && item.Splits.length){
     let splitHTML = "<strong>Split Allocation:</strong><br>";
@@ -2026,6 +2038,97 @@ headers: {
 
   handler.open();
 }
+
+async function askAI(){
+
+  const item = data[currentIndex];
+
+  modalTitle.innerText = "🤖 AI Categorization";
+
+  modalContent.innerHTML = `
+    <div style="padding:10px;">
+      <div style="margin-bottom:10px;"><strong>Analyzing transaction...</strong></div>
+    </div>
+  `;
+
+  openModal();
+
+  try {
+
+    const response = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/ask-ai", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        title: item.Title,
+        vendor: item.Vendor,
+        amount: item.Amount
+      })
+    });
+
+    const result = await response.json();
+
+    if(!response.ok){
+      throw new Error(result.error || "AI request failed");
+    }
+
+    modalContent.innerHTML = `
+      <div style="padding:10px;">
+
+        <div style="font-size:16px; margin-bottom:10px;">
+          <strong>Suggested Category:</strong><br>
+          <span style="color:#2e7d32; font-size:18px;">
+            ${result.category}
+          </span>
+        </div>
+
+        <div style="margin-bottom:15px;">
+          <strong>Reasoning:</strong><br>
+          ${result.reason}
+        </div>
+
+        <button onclick="applyAISuggestion('${result.category.replace(/'/g, "\\'")}')" style="
+          background:#2e7d32;
+          color:white;
+          padding:12px;
+          border-radius:10px;
+          width:100%;
+          margin-bottom:8px;
+        ">
+          ✅ Accept Suggestion
+        </button>
+
+        <button onclick="closeModal()" style="
+          background:#ccc;
+          padding:12px;
+          border-radius:10px;
+          width:100%;
+        ">
+          Cancel
+        </button>
+
+      </div>
+    `;
+
+  } catch(err){
+    console.error(err);
+
+    modalContent.innerHTML = `
+      <div style="padding:10px; color:red;">
+        Error getting AI suggestion
+      </div>
+    `;
+  }
+}
+
+function applyAISuggestion(category){
+
+  closeModal();
+
+  categorize(category); // 🔥 uses your existing system
+}
+
 
 </script>
 </body>
