@@ -2184,12 +2184,10 @@ async function submitAIRequest(){
       {
         method: "POST",
         headers: await getAuthHeaders(),
-        body: JSON.stringify({
-          title: item.Title,
-          vendor: item.Vendor,
-          amount: item.Amount,
-          user_input: userInput
-        })
+ body: JSON.stringify({
+  userInput: userInput,
+  categories: categories.map(c => c.name)
+})
       }
     );
 
@@ -2211,7 +2209,9 @@ async function submitAIRequest(){
 
         <div style="margin-bottom:15px;">
           <strong>Reasoning:</strong><br>
-          ${result.reason}
+         ${result.reasoning}
+<br><br>
+Confidence: <strong>${result.confidence}</strong>
         </div>
 
         <button onclick="applyAISuggestion('${result.category.replace(/'/g, "\\'")}')" style="
