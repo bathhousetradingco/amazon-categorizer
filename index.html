@@ -1631,12 +1631,16 @@ async function analyzeReceipt(){
     alert("Receipt analysis failed.");
   }
 }
-  function renderReceiptSuggestions(){
+ function renderReceiptSuggestions(){
 
   if(!receiptSuggestions.length){
     alert("No line items detected.");
     return;
   }
+
+  // Remove old panel if exists
+  const existing = document.getElementById("receiptSuggestionPanel");
+  if(existing) existing.remove();
 
   const container = document.createElement("div");
 
@@ -1645,68 +1649,148 @@ async function analyzeReceipt(){
   container.style.right = "0";
   container.style.top = "0";
   container.style.height = "100%";
-  container.style.width = "350px";
+  container.style.width = "380px";
   container.style.background = "white";
   container.style.boxShadow = "-4px 0 20px rgba(0,0,0,.2)";
   container.style.overflowY = "auto";
   container.style.zIndex = "99999";
   container.style.padding = "16px";
 
-  container.innerHTML = `<h3>Receipt Line Items</h3>`;
+  container.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <h3 style="margin:0;">Receipt Line Items</h3>
+      <button onclick="closeReceiptSuggestions()" style="
+        background:#c62828;
+        color:white;
+        border:none;
+        padding:6px 10px;
+        border-radius:8px;
+      ">✕</button>
+    </div>
+  `;
 
   receiptSuggestions.forEach((item, index) => {
+
+    const description =
+      item.normalized_description ||
+      item.description ||
+      "Unknown Item";
+
+    const confidence = item.confidence
+      ? Math.round(item.confidence * 100)
+      : null;
 
     container.innerHTML += `
       <div id="suggestion_${index}" style="
         border-bottom:1px solid #eee;
-        padding:10px 0;
+        padding:12px 0;
       ">
-        <strong>${item.description}</strong><br>
-        $${parseFloat(item.amount).toFixed(2)}<br>
-        <span style="color:#2e7d32">${item.suggested_category}</span><br><br>
+        <strong>${description}</strong><br>
+        <div style="margin:4px 0;">
+          $${parseFloat(item.amount).toFixed(2)}
+        </div>
 
-        <button onclick="acceptSuggestion(${index})" style="
-          background:#2e7d32;
-          color:white;
-          padding:6px 10px;
-          border-radius:8px;
-          margin-right:6px;
-        ">Accept</button>
+        <div style="color:#2e7d32; font-size:14px;">
+          ${item.suggested_category}
+        </div>
 
-        <button onclick="declineSuggestion(${index})" style="
-          background:#c62828;
-          color:white;
-          padding:6px 10px;
-          border-radius:8px;
-        ">Decline</button>
+        ${confidence ? `
+          <div style="font-size:12px; color:#777; margin-top:2px;">
+            Confidence: ${confidence}%
+          </div>
+        ` : ""}
+
+        <div style="margin-top:8px;">
+          <button onclick="acceptSuggestion(${index})" style="
+            background:#2e7d32;
+            color:white;
+            padding:6px 10px;
+            border-radius:8px;
+            margin-right:6px;
+          ">Accept</button>
+
+          <button onclick="declineSuggestion(${index})" style="
+            background:#c62828;
+            color:white;
+            padding:6px 10px;
+            border-radius:8px;
+          ">Decline</button>
+        </div>
       </div>
     `;
   });
 
   document.body.appendChild(container);
+
+  highlightCurrentSuggestion();
 }
-  function acceptSuggestion(index){
+ function acceptSuggestion(index){
 
   const suggestion = receiptSuggestions[index];
 
-  applySplit(suggestion.suggested_category, parseFloat(suggestion.amount));
+  applySplit(
+    suggestion.suggested_category,
+    parseFloat(suggestion.amount)
+  );
 
-  document.getElementById(`suggestion_${index}`).style.opacity = "0.4";
+  const el = document.getElementById(`suggestion_${index}`);
+  if(el){
+    el.style.opacity = "0.4";
+  }
 
   moveToNextSuggestion();
 }
 
 function declineSuggestion(index){
-  document.getElementById(`suggestion_${index}`).style.opacity = "0.3";
+
+  const el = document.getElementById(`suggestion_${index}`);
+  if(el){
+    el.style.opacity = "0.3";
+  }
+
   moveToNextSuggestion();
 }
 
 function moveToNextSuggestion(){
+
   currentSuggestionIndex++;
 
   if(currentSuggestionIndex >= receiptSuggestions.length){
     alert("All receipt items processed.");
+    closeReceiptSuggestions();
+    return;
   }
+
+  highlightCurrentSuggestion();
+}
+
+  function highlightCurrentSuggestion(){
+
+  receiptSuggestions.forEach((_, i)=>{
+    const el = document.getElementById(`suggestion_${i}`);
+    if(!el) return;
+
+    el.style.background =
+      i === currentSuggestionIndex
+        ? "#f5f5f5"
+        : "white";
+  });
+
+  const activeEl = document.getElementById(
+    `suggestion_${currentSuggestionIndex}`
+  );
+
+  if(activeEl){
+    activeEl.scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+  }
+}
+
+function closeReceiptSuggestions(){
+  const panel = document.getElementById("receiptSuggestionPanel");
+  if(panel) panel.remove();
 }
 
 function updateRemainingUI(){
