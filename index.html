@@ -1339,7 +1339,20 @@ async function openSplitModal(){
       ">
         Enable Split Mode
       </button>
-
+${item.receipt_url ? `
+<button onclick="analyzeReceipt()" style="
+  position:absolute;
+  top:60px;
+  right:10px;
+  z-index:10;
+  background:#000;
+  color:white;
+  padding:8px 12px;
+  border-radius:10px;
+">
+  🤖 Analyze Receipt
+</button>
+` : ``}
       ${receiptView}
 
       <div id="remainingBar" style="
@@ -1551,7 +1564,150 @@ inputBox.style.left = Math.min(
 
   });
 }
+let receiptSuggestions = [];
+let currentSuggestionIndex = 0;
 
+async function analyzeReceipt(){
+
+  const item = data[currentIndex];
+
+  if(!item.receipt_url){
+    alert("No receipt attached.");
+    return;
+  }
+
+  modalContent.innerHTML += `
+    <div id="aiLoading" style="
+      position:absolute;
+      top:50%;
+      left:50%;
+      transform:translate(-50%, -50%);
+      background:white;
+      padding:20px;
+      border-radius:12px;
+      box-shadow:0 4px 20px rgba(0,0,0,.2);
+      z-index:99999;
+    ">
+      Analyzing receipt...
+    </div>
+  `;
+
+  try {
+
+    const { data: signedData, error } = await supabaseClient
+      .storage
+      .from("receipts")
+      .createSignedUrl(item.receipt_url, 60);
+
+    if(error) throw error;
+
+    const response = await fetch(
+      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
+      {
+        method: "POST",
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({
+          imageUrl: signedData.signedUrl,
+          categories: categories.map(c => c.name)
+        })
+      }
+    );
+
+    const result = await response.json();
+
+    document.getElementById("aiLoading")?.remove();
+
+    if(!response.ok){
+      throw new Error(result.error || "OCR failed");
+    }
+
+    receiptSuggestions = result.line_items || [];
+    currentSuggestionIndex = 0;
+
+    renderReceiptSuggestions();
+
+  } catch(err){
+    console.error(err);
+    alert("Receipt analysis failed.");
+  }
+}
+  function renderReceiptSuggestions(){
+
+  if(!receiptSuggestions.length){
+    alert("No line items detected.");
+    return;
+  }
+
+  const container = document.createElement("div");
+
+  container.id = "receiptSuggestionPanel";
+  container.style.position = "fixed";
+  container.style.right = "0";
+  container.style.top = "0";
+  container.style.height = "100%";
+  container.style.width = "350px";
+  container.style.background = "white";
+  container.style.boxShadow = "-4px 0 20px rgba(0,0,0,.2)";
+  container.style.overflowY = "auto";
+  container.style.zIndex = "99999";
+  container.style.padding = "16px";
+
+  container.innerHTML = `<h3>Receipt Line Items</h3>`;
+
+  receiptSuggestions.forEach((item, index) => {
+
+    container.innerHTML += `
+      <div id="suggestion_${index}" style="
+        border-bottom:1px solid #eee;
+        padding:10px 0;
+      ">
+        <strong>${item.description}</strong><br>
+        $${parseFloat(item.amount).toFixed(2)}<br>
+        <span style="color:#2e7d32">${item.suggested_category}</span><br><br>
+
+        <button onclick="acceptSuggestion(${index})" style="
+          background:#2e7d32;
+          color:white;
+          padding:6px 10px;
+          border-radius:8px;
+          margin-right:6px;
+        ">Accept</button>
+
+        <button onclick="declineSuggestion(${index})" style="
+          background:#c62828;
+          color:white;
+          padding:6px 10px;
+          border-radius:8px;
+        ">Decline</button>
+      </div>
+    `;
+  });
+
+  document.body.appendChild(container);
+}
+  function acceptSuggestion(index){
+
+  const suggestion = receiptSuggestions[index];
+
+  applySplit(suggestion.suggested_category, parseFloat(suggestion.amount));
+
+  document.getElementById(`suggestion_${index}`).style.opacity = "0.4";
+
+  moveToNextSuggestion();
+}
+
+function declineSuggestion(index){
+  document.getElementById(`suggestion_${index}`).style.opacity = "0.3";
+  moveToNextSuggestion();
+}
+
+function moveToNextSuggestion(){
+  currentSuggestionIndex++;
+
+  if(currentSuggestionIndex >= receiptSuggestions.length){
+    alert("All receipt items processed.");
+  }
+}
 
 function updateRemainingUI(){
 
