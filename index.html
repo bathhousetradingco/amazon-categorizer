@@ -1678,7 +1678,7 @@ async function analyzeReceipt(){
 
     <div style="margin-bottom:15px; padding:10px; background:#f5f5f5; border-radius:10px;">
       <div><strong>Total:</strong> $${data[currentIndex].Amount.toFixed(2)}</div>
-<div><strong>Remaining:</strong> $<span id="receiptRemaining">${calculateReceiptRemaining().toFixed(2)}</span></div>
+      <div><strong>Remaining:</strong> $<span id="receiptRemaining">${calculateReceiptRemaining().toFixed(2)}</span></div>
     </div>
   `;
 
@@ -1694,13 +1694,17 @@ async function analyzeReceipt(){
       : null;
 
     const isActive = index === currentSuggestionIndex;
+    const isAccepted = item._accepted === true;
 
     container.innerHTML += `
       <div id="suggestion_${index}" style="
         border-bottom:1px solid #eee;
         padding:12px 0;
         background:${isActive ? "#f5f5f5" : "white"};
+        opacity:${isAccepted ? "0.4" : "1"};
+        transition:opacity 0.2s ease;
       ">
+
         <strong>${description}</strong><br>
 
         <div style="margin:4px 0;">
@@ -1724,7 +1728,9 @@ async function analyzeReceipt(){
             padding:6px 10px;
             border-radius:8px;
             margin-right:6px;
-          ">Accept</button>
+          ">
+            Accept
+          </button>
 
           <button onclick="openReceiptCategorySelector(${index})" style="
             background:#555;
@@ -1732,17 +1738,20 @@ async function analyzeReceipt(){
             padding:6px 10px;
             border-radius:8px;
             margin-right:6px;
-          ">Change</button>
+          ">
+            Change
+          </button>
 
           <button onclick="askAIForReceiptItem(${index})" style="
-  background:#000;
-  color:white;
-  padding:6px 10px;
-  border-radius:8px;
-">
-  Ask AI
-</button>
+            background:#000;
+            color:white;
+            padding:6px 10px;
+            border-radius:8px;
+          ">
+            Ask AI
+          </button>
         </div>
+
       </div>
     `;
   });
@@ -1757,25 +1766,26 @@ async function analyzeReceipt(){
   const suggestion = receiptSuggestions[index];
   const amount = parseFloat(suggestion.amount);
 
-  applySplit(
+  const success = applySplit(
     suggestion.suggested_category,
     amount
   );
 
-  // Recalculate remaining from actual ledger
-  const remaining = calculateReceiptRemaining();
+  // If split failed (over-alloc etc), stop
+  if(success === false) return;
 
+  // Mark as accepted in suggestion model
+  suggestion._accepted = true;
+
+  // Update remaining UI
+  const remaining = calculateReceiptRemaining();
   const remainingEl = document.getElementById("receiptRemaining");
   if(remainingEl){
     remainingEl.innerText = remaining.toFixed(2);
   }
 
-  const el = document.getElementById(`suggestion_${index}`);
-  if(el){
-    el.style.opacity = "0.4";
-  }
+  renderReceiptSuggestions(); // 🔥 re-render safely
 
-  moveToNextSuggestion();
 }
 
 function calculateReceiptRemaining(){
@@ -2032,9 +2042,9 @@ async function applySplit(category, amount){
 
   // 🚫 Block over-allocation
   if(amount > remaining + 0.01){
-    alert("Amount exceeds remaining balance.");
-    return;
-  }
+  alert("Amount exceeds remaining balance.");
+  return false;
+}
 
   // 🧠 Snap to exact remaining if close
   if(Math.abs(amount - remaining) < 0.01){
@@ -2090,6 +2100,7 @@ async function applySplit(category, amount){
     closeModal();
     showCard(); // only now refresh main screen
   }
+  return true;
 }
 
 function pickCategory(amount){
