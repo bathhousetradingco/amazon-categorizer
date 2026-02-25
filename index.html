@@ -1579,8 +1579,7 @@ inputBox.style.left = Math.min(
 }
 let receiptSuggestions = [];
 let currentSuggestionIndex = 0;
-let receiptTotal = 0;
-let receiptRemaining = 0;
+
 
 async function analyzeReceipt(){
 
@@ -1632,8 +1631,7 @@ async function analyzeReceipt(){
     receiptSuggestions = result.line_items || [];
     currentSuggestionIndex = 0;
 
-    receiptTotal = item.Amount;
-    receiptRemaining = item.Amount;
+    
 
     renderReceiptSuggestions();
 
@@ -1679,8 +1677,8 @@ async function analyzeReceipt(){
     </div>
 
     <div style="margin-bottom:15px; padding:10px; background:#f5f5f5; border-radius:10px;">
-      <div><strong>Total:</strong> $${receiptTotal.toFixed(2)}</div>
-      <div><strong>Remaining:</strong> $<span id="receiptRemaining">${receiptRemaining.toFixed(2)}</span></div>
+      <div><strong>Total:</strong> $${data[currentIndex].Amount.toFixed(2)}</div>
+<div><strong>Remaining:</strong> $<span id="receiptRemaining">${calculateReceiptRemaining().toFixed(2)}</span></div>
     </div>
   `;
 
@@ -1764,11 +1762,12 @@ async function analyzeReceipt(){
     amount
   );
 
-  receiptRemaining -= amount;
+  // Recalculate remaining from actual ledger
+  const remaining = calculateReceiptRemaining();
 
   const remainingEl = document.getElementById("receiptRemaining");
   if(remainingEl){
-    remainingEl.innerText = receiptRemaining.toFixed(2);
+    remainingEl.innerText = remaining.toFixed(2);
   }
 
   const el = document.getElementById(`suggestion_${index}`);
@@ -1779,7 +1778,16 @@ async function analyzeReceipt(){
   moveToNextSuggestion();
 }
 
+function calculateReceiptRemaining(){
 
+  const item = data[currentIndex];
+
+  let total = item.Splits.reduce((sum, s) => {
+    return sum + Math.round(parseFloat(s.Amount) * 100);
+  }, 0) / 100;
+
+  return parseFloat((item.Amount - total).toFixed(2));
+}
 
 function moveToNextSuggestion(){
 
