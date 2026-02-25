@@ -1723,10 +1723,14 @@ async function analyzeReceipt(){
             margin-right:6px;
           ">Change</button>
 
-          <span onclick="askAIForReceiptItem(${index})"
-            style="color:#1565c0; cursor:pointer; font-size:13px;">
-            Ask AI
-          </span>
+          <button onclick="askAIForReceiptItem(${index})" style="
+  background:#000;
+  color:white;
+  padding:6px 10px;
+  border-radius:8px;
+">
+  Ask AI
+</button>
         </div>
       </div>
     `;
@@ -1849,7 +1853,8 @@ function askAIForReceiptItem(index){
     </div>
   `;
 
-  openModal();
+  // 🔥 OPEN ABOVE RECEIPT PANEL
+  openModal(1000000);
 }
 
 async function submitReceiptAI(index){
@@ -2243,13 +2248,15 @@ window.scrollTo({ top: 0, behavior: "smooth" });
 
 /* Modal Controls */
 
-function openModal(){
-modalOverlay.style.display="flex";
+function openModal(zIndex = 9999){
+  modalOverlay.style.display = "flex";
+  modalOverlay.style.zIndex = zIndex;
 }
 
 function closeModal(){
-modalOverlay.style.display="none";
-modalContent.innerHTML="";
+  modalOverlay.style.display = "none";
+  modalOverlay.style.zIndex = 9999; // reset to default
+  modalContent.innerHTML = "";
 }
 
 modalOverlay.addEventListener("click",function(e){
