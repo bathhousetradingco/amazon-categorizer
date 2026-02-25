@@ -248,6 +248,9 @@ let showOnlyUncategorized=false;
 let activeSearchFilter=null;
 let splitMode = false;
 let activeYearFilter = null;
+let aiContext = null; 
+// null = normal transaction
+// { type: "receipt", index: X } = receipt item mode
 /* ================= LOAD FROM SUPABASE ================= */
 
 async function loadTransactions() {
@@ -1503,6 +1506,16 @@ showCard();
   }
 }
 
+function chooseCategoryForReceipt(index){
+
+  aiContext = { type: "receipt", index };
+
+  modalTitle.innerText = "Choose Category";
+  modalContent.innerHTML = generateCategoryButtons();
+
+  openModal(1000000);
+}
+
 function showAmountInput(x, y, remaining){
   return new Promise(resolve => {
 
@@ -1812,20 +1825,31 @@ function closeReceiptSuggestions(){
 
 function openReceiptCategorySelector(index){
 
-  const category = prompt("Enter category name:");
+  aiContext = { type: "receipt", index };
 
-  if(!category) return;
+  modalTitle.innerText = "Choose Category";
 
-  receiptSuggestions[index].suggested_category = category;
-  receiptSuggestions[index].confidence = 1;
+  modalContent.innerHTML = `
+    <div style="padding:10px;">
+      ${categories.map(c => `
+        <button class="category-btn ${c.class}" 
+          style="margin-bottom:8px;"
+          onclick="selectCategory('${c.name.replace(/'/g,"\\'")}')">
+          ${c.name}
+        </button>
+      `).join("")}
+    </div>
+  `;
 
-  renderReceiptSuggestions();
+  openModal(100000);
 }
 
 function askAIForReceiptItem(index){
 
-  modalTitle.innerText = "🤖 AI Categorization";
+  aiContext = { type: "receipt", index };
 
+  // Clear modal
+  modalTitle.innerText = "🤖 AI Categorization";
   modalContent.innerHTML = `
     <div style="padding:10px;">
       <div style="margin-bottom:10px;">
@@ -1834,37 +1858,40 @@ function askAIForReceiptItem(index){
 
       <textarea id="aiUserInput" style="
         width:100%;
-        height:100px;
-        padding:10px;
-        border-radius:10px;
+        height:120px;
+        padding:12px;
+        border-radius:12px;
         border:1px solid #ddd;
         margin-bottom:12px;
+        font-size:16px;
       "></textarea>
 
-      <button onclick="submitReceiptAI(${index})" style="
+      <button onclick="submitReceiptAI()" style="
         background:#000;
         color:white;
-        padding:12px;
-        border-radius:10px;
+        padding:14px;
+        border-radius:12px;
         width:100%;
+        font-size:16px;
       ">
         Ask AI
       </button>
     </div>
   `;
 
-  // 🔥 OPEN ABOVE RECEIPT PANEL
   openModal(1000000);
 }
 
-async function submitReceiptAI(index){
+async function submitReceiptAI(){
 
-  const userInput = document.getElementById("aiUserInput").value;
+  const input = document.getElementById("aiUserInput").value.trim();
+  if(!input) return alert("Please describe how this item will be used.");
 
-  if(!userInput.trim()){
-    alert("Please enter description.");
-    return;
-  }
+  modalContent.innerHTML = `
+    <div style="padding:40px;text-align:center;">
+      🤖 Thinking...
+    </div>
+  `;
 
   try {
 
@@ -1874,27 +1901,57 @@ async function submitReceiptAI(index){
         method: "POST",
         headers: await getAuthHeaders(),
         body: JSON.stringify({
-          userInput: userInput,
+          userInput: input,
           categories: categories.map(c => c.name)
         })
       }
     );
 
     const result = await response.json();
+    if(!response.ok) throw new Error(result.error);
 
-    if(!response.ok){
-      throw new Error(result.error || "AI request failed");
-    }
+    modalContent.innerHTML = `
+      <div style="padding:10px;">
 
-    receiptSuggestions[index].suggested_category = result.category;
-    receiptSuggestions[index].confidence = result.confidence;
+        <div style="font-size:16px; margin-bottom:10px;">
+          <strong>Suggested Category:</strong><br>
+          <span style="color:#2e7d32; font-size:18px;">
+            ${result.category}
+          </span>
+        </div>
 
-    closeModal();
-    renderReceiptSuggestions();
+        <div style="margin-bottom:15px;">
+          <strong>Reasoning:</strong><br>
+          ${result.reasoning}<br><br>
+          Confidence: <strong>${result.confidence}</strong>
+        </div>
+
+        <button onclick="applyAISuggestion('${result.category.replace(/'/g,"\\'")}')" style="
+          background:#2e7d32;
+          color:white;
+          padding:12px;
+          border-radius:10px;
+          width:100%;
+          margin-bottom:8px;
+        ">
+          ✅ Accept Suggestion
+        </button>
+
+        <button onclick="askAIForReceiptItem(${aiContext.index})" style="
+          background:#ccc;
+          padding:12px;
+          border-radius:10px;
+          width:100%;
+        ">
+          Try Again
+        </button>
+
+      </div>
+    `;
 
   } catch(err){
-    console.error(err);
     alert("AI failed.");
+    closeModal();
   }
 }
 
@@ -2593,16 +2650,16 @@ async function submitAIRequest(){
 Confidence: <strong>${result.confidence}</strong>
         </div>
 
-        <button onclick="applyAISuggestion('${result.category.replace(/'/g, "\\'")}')" style="
-          background:#2e7d32;
-          color:white;
-          padding:12px;
-          border-radius:10px;
-          width:100%;
-          margin-bottom:8px;
-        ">
-          ✅ Accept Suggestion
-        </button>
+        <button onclick="applyAISuggestion('${result.category}')" style="
+  background:#2e7d32;
+  color:white;
+  padding:12px;
+  border-radius:10px;
+  width:100%;
+  margin-bottom:8px;
+">
+  ✅ Accept Suggestion
+</button>
 
         <button onclick="askAI()" style="
           background:#ccc;
@@ -2626,34 +2683,57 @@ Confidence: <strong>${result.confidence}</strong>
     `;
   }
 }
-async function applyAISuggestion(categoryName){
 
+function applyAISuggestion(category){
+
+  // Receipt context
+  if(aiContext && aiContext.type === "receipt"){
+
+    receiptSuggestions[aiContext.index].suggested_category = category;
+
+    renderReceiptSuggestions();
+    closeModal();
+    aiContext = null;
+    return;
+  }
+
+  // Normal transaction context
   const item = data[currentIndex];
 
-  item.Category = categoryName;
+  item.Category = category;
   item.Splits = [];
 
   updateTotals();
   updateProgress();
 
   if(item.id){
-    const { error } = await supabaseClient
+    supabaseClient
       .from("transactions")
       .update({
-        category: categoryName,
+        category: category,
         splits: []
       })
       .eq("id", item.id);
-
-    if(error){
-      console.error("AI category save error:", error);
-      alert("Error saving AI category.");
-      return;
-    }
   }
 
   closeModal();
-  showCard();
+  goNext();
+}
+
+
+function selectCategory(category){
+
+  if(aiContext && aiContext.type === "receipt"){
+    receiptSuggestions[aiContext.index].suggested_category = category;
+    renderReceiptSuggestions();
+    closeModal();
+    aiContext = null;
+    return;
+  }
+
+  // normal transaction mode
+  categorize(category);
+  closeModal();
 }
 
 </script>
