@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html>
 <head>
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
@@ -1622,17 +1622,29 @@ async function analyzeReceipt(){
 
   try {
 
-    const response = await fetch(
-      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
-      {
-        method: "POST",
-        headers: await getAuthHeaders(),
-        body: JSON.stringify({
-          filePath: item.receipt_url,
-          categories: categories.map(c => c.name)
-        })
-      }
-    );
+    // 🔐 Get signed URL FIRST
+const { data: signedData, error } = await supabaseClient
+  .storage
+  .from("receipts")
+  .createSignedUrl(item.receipt_url, 60);
+
+if(error){
+  throw error;
+}
+
+const signedUrl = signedData.signedUrl;
+
+const response = await fetch(
+  "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
+  {
+    method: "POST",
+    headers: await getAuthHeaders(),
+    body: JSON.stringify({
+      filePath: signedUrl,  // ✅ use signed URL
+      categories: categories.map(c => c.name)
+    })
+  }
+);
 
     const result = await response.json();
 
