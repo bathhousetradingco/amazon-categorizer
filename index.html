@@ -1566,6 +1566,8 @@ inputBox.style.left = Math.min(
 }
 let receiptSuggestions = [];
 let currentSuggestionIndex = 0;
+let receiptTotal = 0;
+let receiptRemaining = 0;
 
 async function analyzeReceipt(){
 
@@ -1594,22 +1596,15 @@ async function analyzeReceipt(){
 
   try {
 
-    const { data: signedData, error } = await supabaseClient
-      .storage
-      .from("receipts")
-      .createSignedUrl(item.receipt_url, 60);
-
-    if(error) throw error;
-
     const response = await fetch(
       "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
       {
         method: "POST",
         headers: await getAuthHeaders(),
-  body: JSON.stringify({
-  filePath: item.receipt_url,
-  categories: categories.map(c => c.name)
-})
+        body: JSON.stringify({
+          filePath: item.receipt_url,
+          categories: categories.map(c => c.name)
+        })
       }
     );
 
@@ -1623,6 +1618,9 @@ async function analyzeReceipt(){
 
     receiptSuggestions = result.line_items || [];
     currentSuggestionIndex = 0;
+
+    receiptTotal = item.Amount;
+    receiptRemaining = item.Amount;
 
     renderReceiptSuggestions();
 
@@ -1638,7 +1636,6 @@ async function analyzeReceipt(){
     return;
   }
 
-  // Remove old panel if exists
   const existing = document.getElementById("receiptSuggestionPanel");
   if(existing) existing.remove();
 
@@ -1667,6 +1664,11 @@ async function analyzeReceipt(){
         border-radius:8px;
       ">✕</button>
     </div>
+
+    <div style="margin-bottom:15px; padding:10px; background:#f5f5f5; border-radius:10px;">
+      <div><strong>Total:</strong> $${receiptTotal.toFixed(2)}</div>
+      <div><strong>Remaining:</strong> $<span id="receiptRemaining">${receiptRemaining.toFixed(2)}</span></div>
+    </div>
   `;
 
   receiptSuggestions.forEach((item, index) => {
@@ -1680,18 +1682,22 @@ async function analyzeReceipt(){
       ? Math.round(item.confidence * 100)
       : null;
 
+    const isActive = index === currentSuggestionIndex;
+
     container.innerHTML += `
       <div id="suggestion_${index}" style="
         border-bottom:1px solid #eee;
         padding:12px 0;
+        background:${isActive ? "#f5f5f5" : "white"};
       ">
         <strong>${description}</strong><br>
+
         <div style="margin:4px 0;">
           $${parseFloat(item.amount).toFixed(2)}
         </div>
 
         <div style="color:#2e7d32; font-size:14px;">
-          ${item.suggested_category}
+          ${item.suggested_category || "—"}
         </div>
 
         ${confidence ? `
@@ -1709,12 +1715,18 @@ async function analyzeReceipt(){
             margin-right:6px;
           ">Accept</button>
 
-          <button onclick="declineSuggestion(${index})" style="
-            background:#c62828;
+          <button onclick="openReceiptCategorySelector(${index})" style="
+            background:#555;
             color:white;
             padding:6px 10px;
             border-radius:8px;
-          ">Decline</button>
+            margin-right:6px;
+          ">Change</button>
+
+          <span onclick="askAIForReceiptItem(${index})"
+            style="color:#1565c0; cursor:pointer; font-size:13px;">
+            Ask AI
+          </span>
         </div>
       </div>
     `;
@@ -1724,14 +1736,23 @@ async function analyzeReceipt(){
 
   highlightCurrentSuggestion();
 }
+
  function acceptSuggestion(index){
 
   const suggestion = receiptSuggestions[index];
+  const amount = parseFloat(suggestion.amount);
 
   applySplit(
     suggestion.suggested_category,
-    parseFloat(suggestion.amount)
+    amount
   );
+
+  receiptRemaining -= amount;
+
+  const remainingEl = document.getElementById("receiptRemaining");
+  if(remainingEl){
+    remainingEl.innerText = receiptRemaining.toFixed(2);
+  }
 
   const el = document.getElementById(`suggestion_${index}`);
   if(el){
@@ -1741,15 +1762,7 @@ async function analyzeReceipt(){
   moveToNextSuggestion();
 }
 
-function declineSuggestion(index){
 
-  const el = document.getElementById(`suggestion_${index}`);
-  if(el){
-    el.style.opacity = "0.3";
-  }
-
-  moveToNextSuggestion();
-}
 
 function moveToNextSuggestion(){
 
@@ -1791,6 +1804,93 @@ function moveToNextSuggestion(){
 function closeReceiptSuggestions(){
   const panel = document.getElementById("receiptSuggestionPanel");
   if(panel) panel.remove();
+}
+
+function openReceiptCategorySelector(index){
+
+  const category = prompt("Enter category name:");
+
+  if(!category) return;
+
+  receiptSuggestions[index].suggested_category = category;
+  receiptSuggestions[index].confidence = 1;
+
+  renderReceiptSuggestions();
+}
+
+function askAIForReceiptItem(index){
+
+  modalTitle.innerText = "🤖 AI Categorization";
+
+  modalContent.innerHTML = `
+    <div style="padding:10px;">
+      <div style="margin-bottom:10px;">
+        <strong>How will this item be used?</strong>
+      </div>
+
+      <textarea id="aiUserInput" style="
+        width:100%;
+        height:100px;
+        padding:10px;
+        border-radius:10px;
+        border:1px solid #ddd;
+        margin-bottom:12px;
+      "></textarea>
+
+      <button onclick="submitReceiptAI(${index})" style="
+        background:#000;
+        color:white;
+        padding:12px;
+        border-radius:10px;
+        width:100%;
+      ">
+        Ask AI
+      </button>
+    </div>
+  `;
+
+  openModal();
+}
+
+async function submitReceiptAI(index){
+
+  const userInput = document.getElementById("aiUserInput").value;
+
+  if(!userInput.trim()){
+    alert("Please enter description.");
+    return;
+  }
+
+  try {
+
+    const response = await fetch(
+      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/ask-ai",
+      {
+        method: "POST",
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({
+          userInput: userInput,
+          categories: categories.map(c => c.name)
+        })
+      }
+    );
+
+    const result = await response.json();
+
+    if(!response.ok){
+      throw new Error(result.error || "AI request failed");
+    }
+
+    receiptSuggestions[index].suggested_category = result.category;
+    receiptSuggestions[index].confidence = result.confidence;
+
+    closeModal();
+    renderReceiptSuggestions();
+
+  } catch(err){
+    console.error(err);
+    alert("AI failed.");
+  }
 }
 
 function updateRemainingUI(){
