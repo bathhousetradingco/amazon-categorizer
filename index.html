@@ -1722,15 +1722,33 @@ async function analyzeReceipt(){
         ` : ""}
 
         <div style="margin-top:8px;">
-          <button onclick="acceptSuggestion(${index})" style="
-            background:#2e7d32;
-            color:white;
-            padding:6px 10px;
-            border-radius:8px;
-            margin-right:6px;
-          ">
-            Accept
-          </button>
+
+          ${
+            !isAccepted
+            ? `
+              <button onclick="acceptSuggestion(${index})" style="
+                background:#2e7d32;
+                color:white;
+                padding:6px 10px;
+                border-radius:8px;
+                margin-right:6px;
+              ">
+                Accept
+              </button>
+            `
+            : `
+              <span style="
+                background:#2e7d32;
+                color:white;
+                padding:6px 10px;
+                border-radius:8px;
+                margin-right:6px;
+                font-size:13px;
+              ">
+                ✓ Accepted
+              </span>
+            `
+          }
 
           <button onclick="openReceiptCategorySelector(${index})" style="
             background:#555;
@@ -1750,6 +1768,7 @@ async function analyzeReceipt(){
           ">
             Ask AI
           </button>
+
         </div>
 
       </div>
@@ -1764,6 +1783,12 @@ async function analyzeReceipt(){
  function acceptSuggestion(index){
 
   const suggestion = receiptSuggestions[index];
+
+  // 🚫 Prevent double allocation
+  if(suggestion._accepted){
+    return;
+  }
+
   const amount = parseFloat(suggestion.amount);
 
   const success = applySplit(
@@ -1771,21 +1796,11 @@ async function analyzeReceipt(){
     amount
   );
 
-  // If split failed (over-alloc etc), stop
   if(success === false) return;
 
-  // Mark as accepted in suggestion model
   suggestion._accepted = true;
 
-  // Update remaining UI
-  const remaining = calculateReceiptRemaining();
-  const remainingEl = document.getElementById("receiptRemaining");
-  if(remainingEl){
-    remainingEl.innerText = remaining.toFixed(2);
-  }
-
-  renderReceiptSuggestions(); // 🔥 re-render safely
-
+  renderReceiptSuggestions();
 }
 
 function calculateReceiptRemaining(){
