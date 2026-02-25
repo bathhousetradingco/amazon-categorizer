@@ -1604,6 +1604,48 @@ async function analyzeReceipt(){
     return;
   }
 
+  // 🔎 STEP 1: Check if analysis already exists
+  const { data: existing, error: fetchError } = await supabaseClient
+    .from("transactions")
+    .select("receipt_analysis")
+    .eq("id", item.id)
+    .single();
+
+  if(existing?.receipt_analysis){
+
+    console.log("Loaded saved receipt analysis");
+
+    receiptSuggestions = existing.receipt_analysis.line_items || [];
+    currentSuggestionIndex = 0;
+
+    // Inject tax if needed (same behavior as before)
+    if(existing.receipt_analysis.tax_amount > 0){
+
+      receiptSuggestions.push({
+        normalized_description: "Sales Tax",
+        raw_description: "Sales Tax",
+        amount: existing.receipt_analysis.tax_amount,
+        suggested_category: "Sales Tax Paid",
+        confidence: 1,
+        _accepted: true,
+        _locked: true
+      });
+
+      const existingTax = item.Splits?.find(
+        s => s.Category === "Sales Tax Paid"
+      );
+
+      if(!existingTax){
+        applySplit("Sales Tax Paid", existing.receipt_analysis.tax_amount);
+      }
+    }
+
+    renderReceiptSuggestions();
+    return;
+  }
+
+  // 🚀 STEP 2: No saved analysis → Run AI
+
   modalContent.innerHTML += `
     <div id="aiLoading" style="
       position:absolute;
@@ -1622,29 +1664,24 @@ async function analyzeReceipt(){
 
   try {
 
-    // 🔐 Get signed URL FIRST
-const { data: signedData, error } = await supabaseClient
-  .storage
-  .from("receipts")
-  .createSignedUrl(item.receipt_url, 60);
+    const { data: signedData, error } = await supabaseClient
+      .storage
+      .from("receipts")
+      .createSignedUrl(item.receipt_url, 60);
 
-if(error){
-  throw error;
-}
+    if(error) throw error;
 
-const signedUrl = signedData.signedUrl;
-
-const response = await fetch(
-  "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
-  {
-    method: "POST",
-    headers: await getAuthHeaders(),
-    body: JSON.stringify({
-      filePath: signedUrl,  // ✅ use signed URL
-      categories: categories.map(c => c.name)
-    })
-  }
-);
+    const response = await fetch(
+      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
+      {
+        method: "POST",
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({
+          filePath: signedData.signedUrl,
+          categories: categories.map(c => c.name)
+        })
+      }
+    );
 
     const result = await response.json();
 
@@ -1657,27 +1694,40 @@ const response = await fetch(
     receiptSuggestions = result.line_items || [];
     currentSuggestionIndex = 0;
 
-    if(result.tax_amount && result.tax_amount > 0){
+    // 💾 STEP 3: Save analysis to DB
+    await supabaseClient
+      .from("transactions")
+      .update({
+        receipt_analysis: {
+          line_items: result.line_items,
+          tax_amount: result.tax_amount,
+          total_amount: result.total_amount,
+          created_at: new Date().toISOString()
+        }
+      })
+      .eq("id", item.id);
 
-  receiptSuggestions.push({
-    normalized_description: "Sales Tax",
-    raw_description: "Sales Tax",
-    amount: result.tax_amount,
-    suggested_category: "Sales Tax Paid",
-    confidence: 1,
-    _accepted: true,
-    _locked: true
-  });
+    // Inject tax line same as before
+    if(result.tax_amount > 0){
 
-  // ✅ Prevent duplicate tax allocation
-  const existingTax = item.Splits?.find(
-    s => s.Category === "Sales Tax Paid"
-  );
+      receiptSuggestions.push({
+        normalized_description: "Sales Tax",
+        raw_description: "Sales Tax",
+        amount: result.tax_amount,
+        suggested_category: "Sales Tax Paid",
+        confidence: 1,
+        _accepted: true,
+        _locked: true
+      });
 
-  if(!existingTax){
-    applySplit("Sales Tax Paid", result.tax_amount);
-  }
-}
+      const existingTax = item.Splits?.find(
+        s => s.Category === "Sales Tax Paid"
+      );
+
+      if(!existingTax){
+        applySplit("Sales Tax Paid", result.tax_amount);
+      }
+    }
 
     renderReceiptSuggestions();
 
@@ -1685,165 +1735,6 @@ const response = await fetch(
     console.error(err);
     alert("Receipt analysis failed.");
   }
-}
- function renderReceiptSuggestions(){
-
-  if(!receiptSuggestions.length){
-    alert("No line items detected.");
-    return;
-  }
-
-  const existing = document.getElementById("receiptSuggestionPanel");
-  if(existing) existing.remove();
-
-  const container = document.createElement("div");
-
-  container.id = "receiptSuggestionPanel";
-  container.style.position = "fixed";
-  container.style.right = "0";
-  container.style.top = "0";
-  container.style.height = "100%";
-  container.style.width = "380px";
-  container.style.background = "white";
-  container.style.boxShadow = "-4px 0 20px rgba(0,0,0,.2)";
-  container.style.overflowY = "auto";
-  container.style.zIndex = "99999";
-  container.style.padding = "16px";
-
-  container.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-      <h3 style="margin:0;">Receipt Line Items</h3>
-      <button onclick="closeReceiptSuggestions()" style="
-        background:#c62828;
-        color:white;
-        border:none;
-        padding:6px 10px;
-        border-radius:8px;
-      ">✕</button>
-    </div>
-
-    <div style="margin-bottom:15px; padding:10px; background:#f5f5f5; border-radius:10px;">
-      <div><strong>Total:</strong> $${data[currentIndex].Amount.toFixed(2)}</div>
-      <div><strong>Remaining:</strong> $<span id="receiptRemaining">${calculateReceiptRemaining().toFixed(2)}</span></div>
-    </div>
-  `;
-
-  receiptSuggestions.forEach((item, index) => {
-
-    const description =
-      item.normalized_description ||
-      item.description ||
-      "Unknown Item";
-
-    const confidence = item.confidence
-      ? Math.round(item.confidence * 100)
-      : null;
-
-    const isAccepted = item._accepted === true;
-    const isLocked = item._locked === true;
-    const isActive = index === currentSuggestionIndex;
-
-    container.innerHTML += `
-      <div id="suggestion_${index}" style="
-        border-bottom:1px solid #eee;
-        padding:12px 0;
-        background:${isActive ? "#f5f5f5" : "white"};
-        opacity:${isAccepted || isLocked ? "0.45" : "1"};
-        transition:opacity 0.2s ease;
-      ">
-
-        <strong>${description}</strong><br>
-
-        <div style="margin:4px 0;">
-          $${parseFloat(item.amount).toFixed(2)}
-        </div>
-
-        <div style="color:#2e7d32; font-size:14px;">
-          ${item.suggested_category || "—"}
-        </div>
-
-        ${confidence && !isLocked ? `
-          <div style="font-size:12px; color:#777; margin-top:2px;">
-            Confidence: ${confidence}%
-          </div>
-        ` : ""}
-
-        <div style="margin-top:8px;">
-
-          ${
-            isLocked
-            ? `
-              <span style="
-                background:#1565c0;
-                color:white;
-                padding:6px 10px;
-                border-radius:8px;
-                font-size:13px;
-                margin-right:6px;
-              ">
-                ✓ Auto-Allocated
-              </span>
-            `
-            : isAccepted
-              ? `
-                <span style="
-                  background:#2e7d32;
-                  color:white;
-                  padding:6px 10px;
-                  border-radius:8px;
-                  font-size:13px;
-                  margin-right:6px;
-                ">
-                  ✓ Accepted
-                </span>
-              `
-              : `
-                <button onclick="acceptSuggestion(${index})" style="
-                  background:#2e7d32;
-                  color:white;
-                  padding:6px 10px;
-                  border-radius:8px;
-                  margin-right:6px;
-                ">
-                  Accept
-                </button>
-              `
-          }
-
-          ${
-            !isLocked
-            ? `
-              <button onclick="openReceiptCategorySelector(${index})" style="
-                background:#555;
-                color:white;
-                padding:6px 10px;
-                border-radius:8px;
-                margin-right:6px;
-              ">
-                Change
-              </button>
-
-              <button onclick="askAIForReceiptItem(${index})" style="
-                background:#000;
-                color:white;
-                padding:6px 10px;
-                border-radius:8px;
-              ">
-                Ask AI
-              </button>
-            `
-            : ""
-          }
-
-        </div>
-
-      </div>
-    `;
-  });
-
-  document.body.appendChild(container);
-
-  highlightCurrentSuggestion();
 }
 
  function acceptSuggestion(index){
