@@ -1754,7 +1754,8 @@ async function analyzeReceipt(){
 
   const suggestion = receiptSuggestions[index];
 
-  if(suggestion._accepted) return;
+  // 🚫 Prevent double clicks
+  if(suggestion._accepted || suggestion._locked) return;
 
   const amount = parseFloat(suggestion.amount);
 
@@ -1765,122 +1766,18 @@ async function analyzeReceipt(){
 
   if(success === false) return;
 
+  // ✅ LOCK + ACCEPT
   suggestion._accepted = true;
+  suggestion._locked = true;
 
-  // 🔥 FIX: UPDATE REMAINING UI IMMEDIATELY
+  // 🔥 FORCE UI SYNC
   updateRemainingUI();
+  updateSplitSummaryUI();
+  updateTotals();
+  updateProgress();
 
   moveToNextSuggestion();
   renderReceiptSuggestions();
-}
-
-function renderReceiptSuggestions(){
-
-  closeReceiptSuggestions();
-
-  const item = data[currentIndex];
-
-  const panel = document.createElement("div");
-  panel.id = "receiptSuggestionPanel";
-
-  panel.style.position = "fixed";
-  panel.style.right = "0";
-  panel.style.top = "0";
-  panel.style.width = "380px";
-  panel.style.height = "100vh";
-  panel.style.background = "white";
-  panel.style.boxShadow = "-4px 0 20px rgba(0,0,0,.2)";
-  panel.style.overflowY = "auto";
-  panel.style.zIndex = "90000"; // 👈 BELOW modal now
-  panel.style.padding = "16px";
-  panel.style.boxSizing = "border-box";
-
-  panel.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-      <h3 style="margin:0;">Receipt Items</h3>
-      <button onclick="closeReceiptSuggestions()" style="
-        background:#c62828;
-        color:white;
-        border:none;
-        padding:6px 10px;
-        border-radius:8px;
-      ">✕</button>
-    </div>
-  `;
-
-  receiptSuggestions.forEach((s, index)=>{
-
-    const acceptedStyle = s._accepted
-      ? "opacity:.5;"
-      : "";
-
-    const lockedBadge = s._locked
-      ? `<div style="font-size:11px;color:#999;">Auto-added</div>`
-      : "";
-
-    panel.innerHTML += `
-      <div id="suggestion_${index}" style="
-        border:1px solid #eee;
-        border-radius:12px;
-        padding:10px;
-        margin-bottom:10px;
-        ${acceptedStyle}
-      ">
-
-        <div style="font-weight:600;">
-          ${s.normalized_description || s.raw_description}
-        </div>
-
-        <div style="font-size:14px;">
-          $${parseFloat(s.amount).toFixed(2)}
-        </div>
-
-        <div style="font-size:13px; color:#555; margin-bottom:6px;">
-          Suggested: ${s.suggested_category || "Needs Review"}
-        </div>
-
-        ${lockedBadge}
-
-        ${!s._accepted && !s._locked ? `
-          <button onclick="acceptSuggestion(${index})" style="
-            background:#2e7d32;
-            color:white;
-            padding:6px 10px;
-            border-radius:8px;
-            width:100%;
-            margin-bottom:6px;
-          ">
-            Accept
-          </button>
-
-          <button onclick="openReceiptCategorySelector(${index})" style="
-            background:#1565c0;
-            color:white;
-            padding:6px 10px;
-            border-radius:8px;
-            width:100%;
-            margin-bottom:6px;
-          ">
-            Change Category
-          </button>
-
-          <button onclick="askAIForReceiptItem(${index})" style="
-            background:#000;
-            color:white;
-            padding:6px 10px;
-            border-radius:8px;
-            width:100%;
-          ">
-            Ask AI
-          </button>
-        ` : ""}
-      </div>
-    `;
-  });
-
-  document.body.appendChild(panel);
-
-  highlightCurrentSuggestion();
 }
 
 
@@ -2076,17 +1973,20 @@ function updateRemainingUI(){
 
   let total = 0;
 
-  if(item.Splits){
-    item.Splits.forEach(s => {
-      total += Math.round(parseFloat(s.Amount) * 100);
-    });
-    total = total / 100;
+  if(item.Splits && item.Splits.length){
+    total = item.Splits.reduce((sum, s) => {
+      return sum + Math.round(parseFloat(s.Amount) * 100);
+    }, 0) / 100;
   }
 
   const remaining = parseFloat((item.Amount - total).toFixed(2));
 
   const el = document.getElementById("remainingBar");
-  if(!el) return;
+
+  if(!el){
+    console.log("⚠️ remainingBar not found");
+    return;
+  }
 
   el.innerText = "Remaining: $" + remaining.toFixed(2);
 
@@ -2128,11 +2028,13 @@ async function applySplit(category, amount){
 
   const remaining = parseFloat((item.Amount - total).toFixed(2));
 
+  // 🚫 prevent over allocation
   if(amount > remaining + 0.01){
     alert("Amount exceeds remaining balance.");
     return false;
   }
 
+  // ✅ snap to exact remaining (fix rounding)
   if(Math.abs(amount - remaining) < 0.01){
     amount = remaining;
   }
@@ -2148,15 +2050,14 @@ async function applySplit(category, amount){
   });
 
   item.Category = "SPLIT";
-  window.lastCategoryUsed = category;
 
-  // 🔥 CRITICAL FIXES
+  // 🔥 CRITICAL UI UPDATES
   updateRemainingUI();
   updateSplitSummaryUI();
   updateTotals();
   updateProgress();
 
-  // Save
+  // 💾 SAVE
   if(item.id){
     const { error } = await supabaseClient
       .from("transactions")
@@ -2172,13 +2073,13 @@ async function applySplit(category, amount){
     }
   }
 
-  const newTotal = item.Splits.reduce((sum, s) => {
+  // 🔥 FINAL REMAINING CHECK
+  let newTotal = item.Splits.reduce((sum, s) => {
     return sum + Math.round(parseFloat(s.Amount) * 100);
   }, 0) / 100;
 
   const newRemaining = parseFloat((item.Amount - newTotal).toFixed(2));
 
-  // 🔥 AUTO CLOSE WHEN DONE
   if(Math.abs(newRemaining) < 0.01){
     updateRemainingUI();
     alert("Split complete");
