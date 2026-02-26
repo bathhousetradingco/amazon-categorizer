@@ -45,7 +45,7 @@ background:rgba(0,0,0,.6);
 display:none;
 justify-content:center;
 align-items:center;
-z-index:9999;
+z-index:100000; /* 👈 increased */
 overflow:auto;
 }
 
@@ -1385,7 +1385,7 @@ ${item.receipt_url ? `
         pointer-events:none;
         z-index:5;
       ">
-        Remaining: $${item.Amount.toFixed(2)}
+        Remaining: $${calculateReceiptRemaining().toFixed(2)}
       </div>
 
     </div>
@@ -1754,10 +1754,7 @@ async function analyzeReceipt(){
 
   const suggestion = receiptSuggestions[index];
 
-  // 🚫 Prevent double allocation
-  if(suggestion._accepted){
-    return;
-  }
+  if(suggestion._accepted) return;
 
   const amount = parseFloat(suggestion.amount);
 
@@ -1770,9 +1767,10 @@ async function analyzeReceipt(){
 
   suggestion._accepted = true;
 
-  // 🔥 Move to next item automatically
-  moveToNextSuggestion();
+  // 🔥 FIX: UPDATE REMAINING UI IMMEDIATELY
+  updateRemainingUI();
 
+  moveToNextSuggestion();
   renderReceiptSuggestions();
 }
 
@@ -1793,7 +1791,7 @@ function renderReceiptSuggestions(){
   panel.style.background = "white";
   panel.style.boxShadow = "-4px 0 20px rgba(0,0,0,.2)";
   panel.style.overflowY = "auto";
-  panel.style.zIndex = "999999";
+  panel.style.zIndex = "90000"; // 👈 BELOW modal now
   panel.style.padding = "16px";
   panel.style.boxSizing = "border-box";
 
@@ -2074,25 +2072,19 @@ async function submitReceiptAI(){
 function updateRemainingUI(){
 
   const item = data[currentIndex];
+  if(!item) return;
 
   let total = 0;
+
   if(item.Splits){
-    item.Splits.forEach(s => total += parseFloat(s.Amount));
-total = parseFloat(total.toFixed(2));
+    item.Splits.forEach(s => {
+      total += Math.round(parseFloat(s.Amount) * 100);
+    });
+    total = total / 100;
   }
 
   const remaining = parseFloat((item.Amount - total).toFixed(2));
-  
-// If already over-split from previous bad data → reset automatically
-if(remaining < -0.01){
-  console.warn("Over-split detected. Auto-correcting.");
 
-  // Trim last split instead of nuking everything
-  item.Splits.pop();
-
-  updateRemainingUI();
-  return;
-}
   const el = document.getElementById("remainingBar");
   if(!el) return;
 
@@ -2101,7 +2093,6 @@ if(remaining < -0.01){
   el.style.color =
     Math.abs(remaining) < 0.01 ? "green" :
     remaining < 0 ? "red" : "orange";
-
 }
 
 function updateSplitSummaryUI(){
@@ -2131,31 +2122,26 @@ async function applySplit(category, amount){
 
   if(!item.Splits) item.Splits = [];
 
-  // ✅ Accurate math (no floating errors)
   let total = item.Splits.reduce((sum, s) => {
     return sum + Math.round(parseFloat(s.Amount) * 100);
   }, 0) / 100;
 
   const remaining = parseFloat((item.Amount - total).toFixed(2));
 
-  // 🚫 Block over-allocation
   if(amount > remaining + 0.01){
-  alert("Amount exceeds remaining balance.");
-  return false;
-}
+    alert("Amount exceeds remaining balance.");
+    return false;
+  }
 
-  // 🧠 Snap to exact remaining if close
   if(Math.abs(amount - remaining) < 0.01){
     amount = remaining;
   }
 
-  // 🚫 Block invalid values
   if(amount <= 0){
     alert("Enter a valid amount.");
-    return;
+    return false;
   }
 
-  // ✅ Add split
   item.Splits.push({
     Category: category,
     Amount: amount
@@ -2164,13 +2150,13 @@ async function applySplit(category, amount){
   item.Category = "SPLIT";
   window.lastCategoryUsed = category;
 
-  // ✅ Update UI (NO showCard here)
+  // 🔥 CRITICAL FIXES
   updateRemainingUI();
   updateSplitSummaryUI();
   updateTotals();
   updateProgress();
 
-  // ✅ Save to Supabase
+  // Save
   if(item.id){
     const { error } = await supabaseClient
       .from("transactions")
@@ -2186,18 +2172,20 @@ async function applySplit(category, amount){
     }
   }
 
-  // 🔥 Auto-finish when done
   const newTotal = item.Splits.reduce((sum, s) => {
     return sum + Math.round(parseFloat(s.Amount) * 100);
   }, 0) / 100;
 
   const newRemaining = parseFloat((item.Amount - newTotal).toFixed(2));
 
+  // 🔥 AUTO CLOSE WHEN DONE
   if(Math.abs(newRemaining) < 0.01){
+    updateRemainingUI();
     alert("Split complete");
     closeModal();
-    showCard(); // only now refresh main screen
+    showCard();
   }
+
   return true;
 }
 
@@ -2223,7 +2211,7 @@ overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
     overlay.style.boxShadow = "0 -4px 20px rgba(0,0,0,.2)";
     
     overlay.style.overflowY = "auto";
-    overlay.style.zIndex = "99999";
+  overlay.style.zIndex = "200000"; // 👈 ALWAYS on top
 
     let html = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
