@@ -52,12 +52,12 @@ overflow:auto;
 .modalBox {
   background:white;
   width:95%;
-  max-width:1200px;
-  height:90vh;
-  display:flex;
-  flex-direction:column;
-  overflow:hidden; /* 👈 important */
+  max-width:600px;   /* 👈 smaller */
+  height:auto;       /* 👈 not full height */
+  max-height:75vh;   /* 👈 scrollable */
+  border-radius:16px;
 }
+
 #modalContent {
   flex:1;
   overflow:auto;
@@ -1097,10 +1097,17 @@ alert("Receipt removed successfully.");
 /* Filter */
 
 function toggleFilter(){
-showOnlyUncategorized=!showOnlyUncategorized;
-filterToggle.innerText=showOnlyUncategorized?"Show All Transactions":"Show Only Uncategorized";
-updateProgress();
-showCard();
+  showOnlyUncategorized = !showOnlyUncategorized;
+
+  const btn = document.getElementById("filterToggle");
+  if(btn){
+    btn.innerText = showOnlyUncategorized
+      ? "Show All Transactions"
+      : "Show Only Uncategorized";
+  }
+
+  updateProgress();
+  showCard();
 }
 
 function getVisibleIndexes(){
@@ -1695,7 +1702,14 @@ async function analyzeReceipt(){
       const codeData = extractProductCode(li.raw_description || "");
 
       return {
-        normalized_description: li.normalized_description || li.description || li.raw_description,
+        normalized_description: (
+  li.normalized_description ||
+  li.description ||
+  li.raw_description
+)
+.replace(/\b\d{2,}\b/g, "") // remove stray numbers like "25"
+.replace(/\s{2,}/g, " ")
+.trim(),
         raw_description: li.raw_description || li.description,
         description: li.description,
 
@@ -1785,9 +1799,14 @@ function calculateReceiptRemaining(){
 
   const item = data[currentIndex];
 
-  let total = item.Splits.reduce((sum, s) => {
-    return sum + Math.round(parseFloat(s.Amount) * 100);
-  }, 0) / 100;
+  let total = 0;
+
+  // ✅ ONLY count actual splits
+  item.Splits.forEach(s => {
+    total += Math.round(parseFloat(s.Amount) * 100);
+  });
+
+  total = total / 100;
 
   return parseFloat((item.Amount - total).toFixed(2));
 }
@@ -1808,27 +1827,53 @@ function moveToNextSuggestion(){
 function renderReceiptSuggestions(){
 
   const item = data[currentIndex];
+  const total = item.Amount;
+
+let allocated = 0;
+
+item.Splits.forEach(s => {
+  allocated += parseFloat(s.Amount || 0);
+});
+
+allocated = parseFloat(allocated.toFixed(2));
+
+
+
+
+const remaining = parseFloat((total - allocated).toFixed(2));
 
   let html = `
 
-  <div id="remainingBar" style="
-    font-weight:700;
-    margin-bottom:10px;
-    font-size:16px;
-    background:#f4f4f4;
-    padding:10px 12px;
-    border-radius:10px;
-  ">
-    Remaining: $${calculateReceiptRemaining().toFixed(2)}
-  </div>
+ <div id="remainingBar" style="
+  font-weight:700;
+  margin-bottom:10px;
+  font-size:15px;
+  background:#f4f4f4;
+  padding:12px;
+  border-radius:12px;
+  line-height:1.4;
+">
+  Total: $${total.toFixed(2)}<br>
+  Allocated: $${allocated.toFixed(2)}<br>
+  <span style="color:${
+    Math.abs(remaining) < 0.01 ? "green" :
+    remaining < 0 ? "red" : "orange"
+  }">
+    Remaining: $${remaining.toFixed(2)}
+  </span>
+</div>
 
   `;
 
   receiptSuggestions.forEach((s, i) => {
-
+const isLocked = s._accepted || s._locked;
+const isTax = s.normalized_description === "Sales Tax";
     html += `
       <div id="suggestion_${i}" style="
-        background:white;
+  background:${s._accepted ? "#f5f5f5" : "white"};
+  opacity:${s._accepted ? "0.5" : "1"};
+  text-decoration:${s._accepted ? "line-through" : "none"};
+  pointer-events:${s._accepted ? "none" : "auto"};
         border-radius:12px;
         padding:12px;
         margin-bottom:10px;
@@ -1847,37 +1892,54 @@ function renderReceiptSuggestions(){
           Suggested: ${s.suggested_category || "Needs Review"}
         </div>
 
-        <button onclick="acceptSuggestion(${i})" style="
-          width:100%;
-          background:#2e7d32;
-          color:white;
-          padding:10px;
-          border-radius:10px;
-          margin-bottom:6px;
-        ">
-          Accept
-        </button>
+       ${isTax ? `
+<div style="
+  background:#eee;
+  padding:10px;
+  border-radius:10px;
+  text-align:center;
+  font-weight:600;
+  margin-bottom:6px;
+">
+  ✅ Sales Tax Applied
+</div>
+` : `
+<button onclick="acceptSuggestion(${i})"
+${isLocked ? "disabled" : ""}
+style="
+  width:100%;
+  background:#2e7d32;
+  color:white;
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:6px;
+">
+  ${isLocked ? "✅ Accepted" : "Accept"}
+</button>
+`}
 
-        <button onclick="openReceiptCategorySelector(${i})" style="
-          width:100%;
-          background:#1565c0;
-          color:white;
-          padding:10px;
-          border-radius:10px;
-          margin-bottom:6px;
-        ">
-          Change Category
-        </button>
+<button onclick="openReceiptCategorySelector(${i})"
+style="
+  width:100%;
+  background:#1565c0;
+  color:white;
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:6px;
+">
+  Change Category
+</button>
 
-        <button onclick="askAIForReceiptItem(${i})" style="
-          width:100%;
-          background:#000;
-          color:white;
-          padding:10px;
-          border-radius:10px;
-        ">
-          Ask AI
-        </button>
+<button onclick="askAIForReceiptItem(${i})"
+style="
+  width:100%;
+  background:#000;
+  color:white;
+  padding:10px;
+  border-radius:10px;
+">
+  Ask AI
+</button>
 
       </div>
     `;
@@ -1886,7 +1948,7 @@ function renderReceiptSuggestions(){
   modalTitle.innerText = "Receipt Items";
   modalContent.innerHTML = html;
 
-  openModal(100000);
+  openModal(300000);
 
   // 🔥 ensure UI updates AFTER render
   setTimeout(() => {
@@ -1943,7 +2005,7 @@ function openReceiptCategorySelector(index){
     </div>
   `;
 
-  openModal(100000);
+  openModal(300000);
 }
 
 function askAIForReceiptItem(index){
@@ -2064,28 +2126,28 @@ function updateRemainingUI(){
 
   let total = 0;
 
-  if(item.Splits && item.Splits.length){
-    total = item.Splits.reduce((sum, s) => {
-      return sum + Math.round(parseFloat(s.Amount) * 100);
-    }, 0) / 100;
-  }
+  item.Splits.forEach(s => {
+    total += Math.round(parseFloat(s.Amount || 0) * 100);
+  });
+
+  total = total / 100;
 
   const remaining = parseFloat((item.Amount - total).toFixed(2));
 
-  // 🔥 Wait until DOM is ready
   requestAnimationFrame(() => {
     const el = document.getElementById("remainingBar");
+    if(!el) return;
 
-    if(!el){
-      console.log("⏳ waiting for remainingBar...");
-      return;
-    }
-
-    el.innerText = "Remaining: $" + remaining.toFixed(2);
-
-    el.style.color =
-      Math.abs(remaining) < 0.01 ? "green" :
-      remaining < 0 ? "red" : "orange";
+    el.innerHTML = `
+      Total: $${item.Amount.toFixed(2)}<br>
+      Allocated: $${total.toFixed(2)}<br>
+      <span style="color:${
+        Math.abs(remaining) < 0.01 ? "green" :
+        remaining < 0 ? "red" : "orange"
+      }">
+        Remaining: $${remaining.toFixed(2)}
+      </span>
+    `;
   });
 }
 
@@ -2206,7 +2268,7 @@ overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
     overlay.style.boxShadow = "0 -4px 20px rgba(0,0,0,.2)";
     
     overlay.style.overflowY = "auto";
-  overlay.style.zIndex = "200000"; // 👈 ALWAYS on top
+  overlay.style.zIndex = "400000"; // 👈 ALWAYS on top
 
     let html = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
