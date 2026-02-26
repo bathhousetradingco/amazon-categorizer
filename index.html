@@ -1604,8 +1604,8 @@ async function analyzeReceipt(){
     return;
   }
 
-  // 🔎 STEP 1: Check if analysis already exists
-  const { data: existing, error: fetchError } = await supabaseClient
+  // Check if saved analysis exists
+  const { data: existing } = await supabaseClient
     .from("transactions")
     .select("receipt_analysis")
     .eq("id", item.id)
@@ -1613,12 +1613,10 @@ async function analyzeReceipt(){
 
   if(existing?.receipt_analysis){
 
-    console.log("Loaded saved receipt analysis");
-
     receiptSuggestions = existing.receipt_analysis.line_items || [];
     currentSuggestionIndex = 0;
 
-    // Inject tax if needed (same behavior as before)
+    // Inject saved tax if present
     if(existing.receipt_analysis.tax_amount > 0){
 
       receiptSuggestions.push({
@@ -1640,122 +1638,60 @@ async function analyzeReceipt(){
       }
     }
 
-    function renderReceiptSuggestions(){
+    renderReceiptSuggestions();
+    return;
+  }
 
-  closeReceiptSuggestions();
+  // If no saved analysis, call edge function
+  try {
 
-  const item = data[currentIndex];
+    const response = await fetch(
+      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
+      {
+        method: "POST",
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({
+          filePath: item.receipt_url
+        })
+      }
+    );
 
-  const panel = document.createElement("div");
-  panel.id = "receiptSuggestionPanel";
+    const result = await response.json();
 
-  panel.style.position = "fixed";
-  panel.style.right = "0";
-  panel.style.top = "0";
-  panel.style.width = "100%";
-  panel.style.maxWidth = "420px";
-  panel.style.height = "100vh";
-  panel.style.background = "white";
-  panel.style.boxShadow = "-4px 0 20px rgba(0,0,0,.2)";
-  panel.style.overflowY = "auto";
-  panel.style.zIndex = "999999";
-  panel.style.padding = "16px";
-  panel.style.boxSizing = "border-box";
+    if(!response.ok){
+      throw new Error(result.error || "OCR failed");
+    }
 
-  panel.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-      <h3 style="margin:0;">Receipt Items</h3>
-      <button onclick="closeReceiptSuggestions()" style="
-        background:#c62828;
-        color:white;
-        border:none;
-        padding:8px 12px;
-        border-radius:10px;
-      ">✕</button>
-    </div>
-  `;
+    receiptSuggestions = result.line_items || [];
+    currentSuggestionIndex = 0;
 
-  receiptSuggestions.forEach((s, index)=>{
+    // Add tax line if present
+    if(result.tax_amount > 0){
+      receiptSuggestions.push({
+        normalized_description: "Sales Tax",
+        raw_description: "Sales Tax",
+        amount: result.tax_amount,
+        suggested_category: "Sales Tax Paid",
+        confidence: 1,
+        _accepted: true,
+        _locked: true
+      });
+    }
 
-    const description =
-      s.normalized_description ||
-      s.raw_description ||
-      s.description ||
-      s.name ||
-      s.item ||
-      "Unknown Item";
+    // Save analysis
+    await supabaseClient
+      .from("transactions")
+      .update({
+        receipt_analysis: result
+      })
+      .eq("id", item.id);
 
-    const acceptedStyle = s._accepted
-      ? "opacity:.5;"
-      : "";
+    renderReceiptSuggestions();
 
-    const lockedBadge = s._locked
-      ? `<div style="font-size:12px;color:#999;margin-bottom:6px;">Auto-added</div>`
-      : "";
-
-    panel.innerHTML += `
-      <div id="suggestion_${index}" style="
-        border:1px solid #eee;
-        border-radius:14px;
-        padding:14px;
-        margin-bottom:14px;
-        ${acceptedStyle}
-      ">
-
-        <div style="font-weight:600; font-size:16px; margin-bottom:4px;">
-          ${description}
-        </div>
-
-        <div style="font-size:15px; margin-bottom:6px;">
-          $${parseFloat(s.amount).toFixed(2)}
-        </div>
-
-        <div style="font-size:13px; color:#555; margin-bottom:8px;">
-          Suggested: ${s.suggested_category || "Needs Review"}
-        </div>
-
-        ${lockedBadge}
-
-        ${!s._accepted && !s._locked ? `
-          <button onclick="acceptSuggestion(${index})" style="
-            background:#2e7d32;
-            color:white;
-            padding:10px;
-            border-radius:10px;
-            width:100%;
-            margin-bottom:8px;
-          ">
-            Accept
-          </button>
-
-          <button onclick="openReceiptCategorySelector(${index})" style="
-            background:#1565c0;
-            color:white;
-            padding:10px;
-            border-radius:10px;
-            width:100%;
-            margin-bottom:8px;
-          ">
-            Change Category
-          </button>
-
-          <button onclick="askAIForReceiptItem(${index})" style="
-            background:#000;
-            color:white;
-            padding:10px;
-            border-radius:10px;
-            width:100%;
-          ">
-            Ask AI
-          </button>
-        ` : ""}
-      </div>
-    `;
-  });
-
-  document.body.appendChild(panel);
-
-  highlightCurrentSuggestion();
+  } catch(err){
+    console.error(err);
+    alert("Receipt analysis failed.");
+  }
 }
 
  function acceptSuggestion(index){
