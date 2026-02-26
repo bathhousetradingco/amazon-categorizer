@@ -1604,7 +1604,9 @@ async function analyzeReceipt(){
     return;
   }
 
-  // Check if saved analysis exists
+  // =============================
+  // 1️⃣ Check if analysis already saved
+  // =============================
   const { data: existing } = await supabaseClient
     .from("transactions")
     .select("receipt_analysis")
@@ -1613,7 +1615,17 @@ async function analyzeReceipt(){
 
   if(existing?.receipt_analysis){
 
-    receiptSuggestions = existing.receipt_analysis.line_items || [];
+    receiptSuggestions = (existing.receipt_analysis.line_items || []).map(li => ({
+      normalized_description: li.normalized_description || li.description || li.raw_description,
+      raw_description: li.raw_description || li.description,
+      description: li.description,
+      amount: parseFloat(li.amount),
+      suggested_category: li.suggested_category || "Needs Review",
+      confidence: li.confidence || 0,
+      _accepted: li._accepted || false,
+      _locked: li._locked || false
+    }));
+
     currentSuggestionIndex = 0;
 
     // Inject saved tax if present
@@ -1622,7 +1634,8 @@ async function analyzeReceipt(){
       receiptSuggestions.push({
         normalized_description: "Sales Tax",
         raw_description: "Sales Tax",
-        amount: existing.receipt_analysis.tax_amount,
+        description: "Sales Tax",
+        amount: parseFloat(existing.receipt_analysis.tax_amount),
         suggested_category: "Sales Tax Paid",
         confidence: 1,
         _accepted: true,
@@ -1642,7 +1655,9 @@ async function analyzeReceipt(){
     return;
   }
 
-  // If no saved analysis, call edge function
+  // =============================
+  // 2️⃣ Call Edge Function
+  // =============================
   try {
 
     const response = await fetch(
@@ -1662,15 +1677,27 @@ async function analyzeReceipt(){
       throw new Error(result.error || "OCR failed");
     }
 
-    receiptSuggestions = result.line_items || [];
+    // 🔥 NORMALIZE STRUCTURE HERE
+    receiptSuggestions = (result.line_items || []).map(li => ({
+      normalized_description: li.normalized_description || li.description || li.raw_description,
+      raw_description: li.raw_description || li.description,
+      description: li.description,
+      amount: parseFloat(li.amount),
+      suggested_category: li.suggested_category || "Needs Review",
+      confidence: li.confidence || 0,
+      _accepted: false,
+      _locked: false
+    }));
+
     currentSuggestionIndex = 0;
 
-    // Add tax line if present
+    // Inject tax if present
     if(result.tax_amount > 0){
       receiptSuggestions.push({
         normalized_description: "Sales Tax",
         raw_description: "Sales Tax",
-        amount: result.tax_amount,
+        description: "Sales Tax",
+        amount: parseFloat(result.tax_amount),
         suggested_category: "Sales Tax Paid",
         confidence: 1,
         _accepted: true,
@@ -1678,7 +1705,9 @@ async function analyzeReceipt(){
       });
     }
 
-    // Save analysis
+    // =============================
+    // 3️⃣ Persist analysis
+    // =============================
     await supabaseClient
       .from("transactions")
       .update({
