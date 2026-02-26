@@ -1655,12 +1655,12 @@ async function analyzeReceipt(){
   s => s.normalized_description === "Sales Tax"
 );
 
-if(!alreadyHasTax && result.tax_amount > 0){
+if(!alreadyHasTax && existing.receipt_analysis.tax_amount > 0){
   receiptSuggestions.push({
     normalized_description: "Sales Tax",
     raw_description: "Sales Tax",
     description: "Sales Tax",
-    amount: parseFloat(result.tax_amount),
+    amount: parseFloat(existing.receipt_analysis.tax_amount),
     suggested_category: "Sales Tax Paid",
     confidence: 1,
     _accepted: true,
@@ -1668,16 +1668,6 @@ if(!alreadyHasTax && result.tax_amount > 0){
     _isTax: true
   });
 }
-        normalized_description: "Sales Tax",
-        raw_description: "Sales Tax",
-        description: "Sales Tax",
-        amount: parseFloat(existing.receipt_analysis.tax_amount),
-        suggested_category: "Sales Tax Paid",
-        confidence: 1,
-        _accepted: true,
-        _locked: true
-      });
-    }
 
     renderReceiptSuggestions();
     return;
@@ -1762,16 +1752,7 @@ if(!alreadyHasTax && result.tax_amount > 0){
     _isTax: true
   });
 }
-        normalized_description: "Sales Tax",
-        raw_description: "Sales Tax",
-        description: "Sales Tax",
-        amount: parseFloat(result.tax_amount),
-        suggested_category: "Sales Tax Paid",
-        confidence: 1,
-        _accepted: true,
-        _locked: true
-      });
-    }
+        
 
     // =============================
     // 3️⃣ Save enhanced result
@@ -1859,70 +1840,83 @@ function renderReceiptSuggestions(){
   const item = data[currentIndex];
   const total = item.Amount;
 
-let allocated = 0;
+  // =============================
+  // 🔥 APPLY TAX ONCE (SAFE)
+  // =============================
+  const taxSuggestion = receiptSuggestions.find(s => s._isTax);
 
-item.Splits.forEach(s => {
-  allocated += parseFloat(s.Amount || 0);
-});
-
-allocated = parseFloat(allocated.toFixed(2));
-
-
-
-
-const remaining = parseFloat((total - allocated).toFixed(2));
-// 🔥 AUTO-APPLY TAX IF NOT ALREADY IN SPLITS
-receiptSuggestions.forEach(s => {
-  if(s._isTax && !s._appliedToSplit){
+  if(taxSuggestion){
 
     const alreadySplit = item.Splits.some(split =>
       split.Category === "Sales Tax Paid" &&
-      Math.abs(parseFloat(split.Amount) - parseFloat(s.amount)) < 0.01
+      Math.abs(parseFloat(split.Amount) - parseFloat(taxSuggestion.amount)) < 0.01
     );
 
     if(!alreadySplit){
-      applySplit("Sales Tax Paid", parseFloat(s.amount));
+      item.Splits.push({
+        Category: "Sales Tax Paid",
+        Amount: parseFloat(taxSuggestion.amount)
+      });
     }
 
-    s._appliedToSplit = true;
+    // Lock tax UI
+    taxSuggestion._accepted = true;
+    taxSuggestion._locked = true;
   }
-});
+
+  // =============================
+  // 💰 CALCULATE ALLOCATED
+  // =============================
+  let allocated = 0;
+
+  item.Splits.forEach(s => {
+    allocated += parseFloat(s.Amount || 0);
+  });
+
+  allocated = parseFloat(allocated.toFixed(2));
+
+  const remaining = parseFloat((total - allocated).toFixed(2));
+
+  // =============================
+  // 🎨 HEADER UI
+  // =============================
   let html = `
-
- <div id="remainingBar" style="
-  font-weight:700;
-  margin-bottom:10px;
-  font-size:15px;
-  background:#f4f4f4;
-  padding:12px;
-  border-radius:12px;
-  line-height:1.4;
-">
-  Total: $${total.toFixed(2)}<br>
-  Allocated: $${allocated.toFixed(2)}<br>
-  <span style="color:${
-    Math.abs(remaining) < 0.01 ? "green" :
-    remaining < 0 ? "red" : "orange"
-  }">
-    Remaining: $${remaining.toFixed(2)}
-  </span>
-</div>
-
+    <div id="remainingBar" style="
+      font-weight:700;
+      margin-bottom:10px;
+      font-size:15px;
+      background:#f4f4f4;
+      padding:12px;
+      border-radius:12px;
+      line-height:1.4;
+    ">
+      Total: $${total.toFixed(2)}<br>
+      Allocated: $${allocated.toFixed(2)}<br>
+      <span style="color:${
+        Math.abs(remaining) < 0.01 ? "green" :
+        remaining < 0 ? "red" : "orange"
+      }">
+        Remaining: $${remaining.toFixed(2)}
+      </span>
+    </div>
   `;
 
+  // =============================
+  // 📦 LINE ITEMS
+  // =============================
   receiptSuggestions.forEach((s, i) => {
-const isLocked = s._accepted || s._locked;
-const isTax = s.normalized_description === "Sales Tax";
+
+    const isLocked = s._accepted || s._locked;
+    const isTax = s._isTax;
+
     html += `
       <div id="suggestion_${i}" style="
-  background:white;
-  opacity:1;
-  text-decoration:none;
-  pointer-events:${s._accepted ? "none" : "auto"};
+        background:white;
         border-radius:12px;
         padding:12px;
         margin-bottom:10px;
         box-shadow:0 2px 8px rgba(0,0,0,.08);
+        opacity:${isLocked ? 0.6 : 1};
       ">
 
         <div style="font-weight:600; margin-bottom:4px;">
@@ -1937,54 +1931,54 @@ const isTax = s.normalized_description === "Sales Tax";
           Suggested: ${s.suggested_category || "Needs Review"}
         </div>
 
-       ${isTax ? `
-<div style="
-  background:#eee;
-  padding:10px;
-  border-radius:10px;
-  text-align:center;
-  font-weight:600;
-  margin-bottom:6px;
-">
-  ✅ Sales Tax Applied
-</div>
-` : `
-<button onclick="acceptSuggestion(${i})"
-${isLocked ? "disabled" : ""}
-style="
-  width:100%;
-  background:#2e7d32;
-  color:white;
-  padding:10px;
-  border-radius:10px;
-  margin-bottom:6px;
-">
-  ${isLocked ? "✅ Accepted" : "Accept"}
-</button>
-`}
+        ${isTax ? `
+          <div style="
+            background:#eee;
+            padding:10px;
+            border-radius:10px;
+            text-align:center;
+            font-weight:600;
+            margin-bottom:6px;
+          ">
+            ✅ Sales Tax Applied
+          </div>
+        ` : `
+          <button onclick="acceptSuggestion(${i})"
+            ${isLocked ? "disabled" : ""}
+            style="
+              width:100%;
+              background:#2e7d32;
+              color:white;
+              padding:10px;
+              border-radius:10px;
+              margin-bottom:6px;
+            ">
+            ${isLocked ? "✅ Accepted" : "Accept"}
+          </button>
+        `}
 
-<button onclick="openReceiptCategorySelector(${i})"
-style="
-  width:100%;
-  background:#1565c0;
-  color:white;
-  padding:10px;
-  border-radius:10px;
-  margin-bottom:6px;
-">
-  Change Category
-</button>
+        <button onclick="openReceiptCategorySelector(${i})"
+          style="
+            width:100%;
+            background:#1565c0;
+            color:white;
+            padding:10px;
+            border-radius:10px;
+            margin-bottom:6px;
+          ">
+          Change Category
+        </button>
 
-<button onclick="askAIForReceiptItem(${i})"
-style="
-  width:100%;
-  background:#000;
-  color:white;
-  padding:10px;
-  border-radius:10px;
-">
-  Ask AI
-</button>
+        <button onclick="askAIForReceiptItem(${i})"
+          style="
+            width:100%;
+            background:#000;
+            color:white;
+            padding:10px;
+            border-radius:10px;
+          ">
+          Ask AI
+        </button>
 
       </div>
     `;
@@ -1995,7 +1989,9 @@ style="
 
   openModal(300000);
 
-  // 🔥 ensure UI updates AFTER render
+  // =============================
+  // 🔄 FINAL UI SYNC
+  // =============================
   setTimeout(() => {
     updateRemainingUI();
     highlightCurrentSuggestion();
