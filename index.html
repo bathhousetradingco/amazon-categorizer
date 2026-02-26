@@ -1651,8 +1651,23 @@ async function analyzeReceipt(){
 
     currentSuggestionIndex = 0;
 
-    if(existing.receipt_analysis.tax_amount > 0){
-      receiptSuggestions.push({
+    const alreadyHasTax = receiptSuggestions.some(
+  s => s.normalized_description === "Sales Tax"
+);
+
+if(!alreadyHasTax && result.tax_amount > 0){
+  receiptSuggestions.push({
+    normalized_description: "Sales Tax",
+    raw_description: "Sales Tax",
+    description: "Sales Tax",
+    amount: parseFloat(result.tax_amount),
+    suggested_category: "Sales Tax Paid",
+    confidence: 1,
+    _accepted: true,
+    _locked: true,
+    _isTax: true
+  });
+}
         normalized_description: "Sales Tax",
         raw_description: "Sales Tax",
         description: "Sales Tax",
@@ -1730,8 +1745,23 @@ async function analyzeReceipt(){
     // =============================
     // Inject tax if present
     // =============================
-    if(result.tax_amount > 0){
-      receiptSuggestions.push({
+    const alreadyHasTax = receiptSuggestions.some(
+  s => s.normalized_description === "Sales Tax"
+);
+
+if(!alreadyHasTax && result.tax_amount > 0){
+  receiptSuggestions.push({
+    normalized_description: "Sales Tax",
+    raw_description: "Sales Tax",
+    description: "Sales Tax",
+    amount: parseFloat(result.tax_amount),
+    suggested_category: "Sales Tax Paid",
+    confidence: 1,
+    _accepted: true,
+    _locked: true,
+    _isTax: true
+  });
+}
         normalized_description: "Sales Tax",
         raw_description: "Sales Tax",
         description: "Sales Tax",
@@ -1841,7 +1871,22 @@ allocated = parseFloat(allocated.toFixed(2));
 
 
 const remaining = parseFloat((total - allocated).toFixed(2));
+// 🔥 AUTO-APPLY TAX IF NOT ALREADY IN SPLITS
+receiptSuggestions.forEach(s => {
+  if(s._isTax && !s._appliedToSplit){
 
+    const alreadySplit = item.Splits.some(split =>
+      split.Category === "Sales Tax Paid" &&
+      Math.abs(parseFloat(split.Amount) - parseFloat(s.amount)) < 0.01
+    );
+
+    if(!alreadySplit){
+      applySplit("Sales Tax Paid", parseFloat(s.amount));
+    }
+
+    s._appliedToSplit = true;
+  }
+});
   let html = `
 
  <div id="remainingBar" style="
@@ -1870,9 +1915,9 @@ const isLocked = s._accepted || s._locked;
 const isTax = s.normalized_description === "Sales Tax";
     html += `
       <div id="suggestion_${i}" style="
-  background:${s._accepted ? "#f5f5f5" : "white"};
-  opacity:${s._accepted ? "0.5" : "1"};
-  text-decoration:${s._accepted ? "line-through" : "none"};
+  background:white;
+  opacity:1;
+  text-decoration:none;
   pointer-events:${s._accepted ? "none" : "auto"};
         border-radius:12px;
         padding:12px;
