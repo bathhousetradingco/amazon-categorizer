@@ -1605,7 +1605,23 @@ async function analyzeReceipt(){
   }
 
   // =============================
-  // 1️⃣ Check if analysis already saved
+  // 🔧 HELPER: Extract product code correctly
+  // =============================
+  function extractProductCode(line){
+    const match = line.match(/\b\d{5,15}\b/);
+    if(!match) return null;
+
+    const raw = match[0];
+    const normalized = raw.replace(/^0+/, "") || raw;
+
+    return {
+      raw,
+      normalized
+    };
+  }
+
+  // =============================
+  // 1️⃣ Check if already analyzed
   // =============================
   const { data: existing } = await supabaseClient
     .from("transactions")
@@ -1628,9 +1644,7 @@ async function analyzeReceipt(){
 
     currentSuggestionIndex = 0;
 
-    // Inject saved tax if present
     if(existing.receipt_analysis.tax_amount > 0){
-
       receiptSuggestions.push({
         normalized_description: "Sales Tax",
         raw_description: "Sales Tax",
@@ -1641,14 +1655,6 @@ async function analyzeReceipt(){
         _accepted: true,
         _locked: true
       });
-
-      const existingTax = item.Splits?.find(
-        s => s.Category === "Sales Tax Paid"
-      );
-
-      if(!existingTax){
-        applySplit("Sales Tax Paid", existing.receipt_analysis.tax_amount);
-      }
     }
 
     renderReceiptSuggestions();
@@ -1656,7 +1662,7 @@ async function analyzeReceipt(){
   }
 
   // =============================
-  // 2️⃣ Call Edge Function
+  // 2️⃣ Call Edge Function WITH CODE CONTEXT
   // =============================
   try {
 
@@ -1666,9 +1672,12 @@ async function analyzeReceipt(){
         method: "POST",
         headers: await getAuthHeaders(),
         body: JSON.stringify({
-  filePath: item.receipt_url,
-  categories: categories.map(c => c.name)
-})
+          filePath: item.receipt_url,
+          categories: categories.map(c => c.name),
+
+          // 🔥 THIS ENABLES CODE-AWARE PROCESSING
+          use_code_logic: true
+        })
       }
     );
 
@@ -1678,21 +1687,35 @@ async function analyzeReceipt(){
       throw new Error(result.error || "OCR failed");
     }
 
-    // 🔥 NORMALIZE STRUCTURE HERE
-    receiptSuggestions = (result.line_items || []).map(li => ({
-      normalized_description: li.normalized_description || li.description || li.raw_description,
-      raw_description: li.raw_description || li.description,
-      description: li.description,
-      amount: parseFloat(li.amount),
-      suggested_category: li.suggested_category || "Needs Review",
-      confidence: li.confidence || 0,
-      _accepted: false,
-      _locked: false
-    }));
+    // =============================
+    // 🔥 ENHANCE WITH CODE EXTRACTION
+    // =============================
+    receiptSuggestions = (result.line_items || []).map(li => {
+
+      const codeData = extractProductCode(li.raw_description || "");
+
+      return {
+        normalized_description: li.normalized_description || li.description || li.raw_description,
+        raw_description: li.raw_description || li.description,
+        description: li.description,
+
+        // 🔥 ADD CODE DATA
+        code_raw: codeData?.raw || null,
+        code_normalized: codeData?.normalized || null,
+
+        amount: parseFloat(li.amount),
+        suggested_category: li.suggested_category || "Needs Review",
+        confidence: li.confidence || 0,
+        _accepted: false,
+        _locked: false
+      };
+    });
 
     currentSuggestionIndex = 0;
 
+    // =============================
     // Inject tax if present
+    // =============================
     if(result.tax_amount > 0){
       receiptSuggestions.push({
         normalized_description: "Sales Tax",
@@ -1707,12 +1730,15 @@ async function analyzeReceipt(){
     }
 
     // =============================
-    // 3️⃣ Persist analysis
+    // 3️⃣ Save enhanced result
     // =============================
     await supabaseClient
       .from("transactions")
       .update({
-        receipt_analysis: result
+        receipt_analysis: {
+          ...result,
+          line_items: receiptSuggestions
+        }
       })
       .eq("id", item.id);
 
