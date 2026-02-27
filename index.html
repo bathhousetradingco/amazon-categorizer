@@ -1606,11 +1606,29 @@ let currentSuggestionIndex = 0;
 
 async function analyzeReceipt(){
 
+  const btn = document.querySelector("button[onclick='analyzeReceipt()']");
+  if(btn?.dataset.loading === "true") return;
+
+  if(btn){
+    btn.dataset.loading = "true";
+    btn.disabled = true;
+    btn.innerText = "⏳ Analyzing...";
+  }
+
   const item = data[currentIndex];
 
   if(!item.receipt_url){
     alert("No receipt attached.");
+    resetButton();
     return;
+  }
+
+  function resetButton(){
+    if(btn){
+      btn.dataset.loading = "false";
+      btn.disabled = false;
+      btn.innerText = "🤖 Analyze Receipt";
+    }
   }
 
   function extractProductCode(line){
@@ -1623,9 +1641,7 @@ async function analyzeReceipt(){
     return { raw, normalized };
   }
 
-  // 🔥 SALES TAX HELPER
   function ensureSalesTaxApplied(taxAmount){
-
     if(!taxAmount || taxAmount <= 0) return;
 
     const alreadyExists = receiptSuggestions.some(s => s._isTax);
@@ -1644,39 +1660,6 @@ async function analyzeReceipt(){
     });
   }
 
-  // =============================
-  // EXISTING ANALYSIS
-  // =============================
-  const { data: existing } = await supabaseClient
-    .from("transactions")
-    .select("receipt_analysis")
-    .eq("id", item.id)
-    .single();
-
-  if(existing?.receipt_analysis){
-
-    receiptSuggestions = (existing.receipt_analysis.line_items || []).map(li => ({
-      normalized_description: li.normalized_description || li.description || li.raw_description,
-      raw_description: li.raw_description || li.description,
-      description: li.description,
-      amount: parseFloat(li.amount),
-      suggested_category: li.suggested_category || "Needs Review",
-      confidence: li.confidence || 0,
-      _accepted: li._accepted || false,
-      _locked: li._locked || false
-    }));
-
-    // ✅ FIX TAX
-    ensureSalesTaxApplied(existing.receipt_analysis.tax_amount);
-
-    currentSuggestionIndex = 0;
-    renderReceiptSuggestions();
-    return;
-  }
-
-  // =============================
-  // CALL EDGE FUNCTION
-  // =============================
   try {
 
     const response = await fetch(
@@ -1726,7 +1709,7 @@ async function analyzeReceipt(){
       };
     });
 
-    // ✅ FIX TAX
+    // ✅ Apply tax BEFORE rendering totals
     ensureSalesTaxApplied(result.tax_amount);
 
     currentSuggestionIndex = 0;
@@ -1747,14 +1730,19 @@ async function analyzeReceipt(){
     console.error(err);
     alert("Receipt analysis failed.");
   }
+
+  resetButton();
 }
 
  function acceptSuggestion(index){
 
   const suggestion = receiptSuggestions[index];
 
-  // 🚫 Prevent double clicks
-  if(suggestion._accepted || suggestion._locked) return;
+  // 🚫 Prevent duplicate split creation
+  if(suggestion._accepted) return;
+
+  // 🚫 Tax should never be manually accepted
+  if(suggestion._isTax) return;
 
   const amount = parseFloat(suggestion.amount);
 
@@ -1765,17 +1753,14 @@ async function analyzeReceipt(){
 
   if(success === false) return;
 
-  // ✅ LOCK + ACCEPT
+  // ✅ Mark accepted (but NOT locked)
   suggestion._accepted = true;
-  suggestion._locked = true;
 
-  // 🔥 FORCE UI SYNC
   updateRemainingUI();
   updateSplitSummaryUI();
   updateTotals();
   updateProgress();
 
-  moveToNextSuggestion();
   renderReceiptSuggestions();
 }
 
@@ -3008,26 +2993,43 @@ function applyAISuggestion(category){
 
 function selectCategory(category){
 
-  // 🔥 RECEIPT MODE (THIS IS THE FIX)
+  // 🔒 If coming from receipt modal
   if(aiContext && aiContext.type === "receipt"){
 
     const suggestion = receiptSuggestions[aiContext.index];
 
-    // Update category ONLY
+    // ✅ Update category
     suggestion.suggested_category = category;
 
-    // 🔥 DO NOT CLOSE EVERYTHING
-    closeModal(); // closes picker only
+    // ✅ If already accepted → update existing split
+    if(suggestion._accepted){
+      const item = data[currentIndex];
 
-    // 🔥 RETURN TO RECEIPT SCREEN
+      if(item.Splits){
+        const split = item.Splits.find(s =>
+          Math.abs(parseFloat(s.Amount)) === Math.abs(parseFloat(suggestion.amount))
+        );
+
+        if(split){
+          split.Category = category;
+        }
+      }
+    }
+
+    // ✅ Close ONLY category picker
+    closeModal();
+
+    // ✅ Stay in receipt modal and re-render
     renderReceiptSuggestions();
+    updateRemainingUI();
+    updateSplitSummaryUI();
+    updateTotals();
 
     aiContext = null;
-
     return;
   }
 
-  // NORMAL MODE (leave unchanged)
+  // 🔁 Normal transaction flow (unchanged)
   categorize(category);
   closeModal();
 }
