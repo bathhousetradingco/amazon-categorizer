@@ -1836,36 +1836,42 @@ function renderReceiptSuggestions(){
 
   modalTitle.innerText = "Receipt Items";
 
-  // Force solid white behind everything (prevents receipt showing through)
-  modalContent.style.background = "#fff";
-
   const tx = data[currentIndex];
   if(!tx) return;
 
-  // Wrapper gives padding + room for sticky pill
+  // Force solid white behind everything (prevents receipt showing through)
+  modalContent.style.background = "#fff";
+
+  // Wrapper + bottom padding so sticky pill never covers last card
   modalContent.innerHTML = `
     <div id="receiptUIWrapper" style="
       background:#fff;
       padding:10px;
-      padding-bottom:110px; /* space so pill doesn’t cover last card */
+      padding-bottom:130px; /* space for sticky totals pill */
       min-height:100%;
       box-sizing:border-box;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
     ">
       <div id="receiptItems"></div>
+      <div id="receiptTotalsSlot" style="height:1px;"></div>
     </div>
   `;
 
   const container = document.getElementById("receiptItems");
   container.innerHTML = "";
 
-  // helper for currency formatting
   const money = (n)=> (Math.round(parseFloat(n || 0) * 100) / 100).toFixed(2);
 
+  // ==========================
+  // Render suggestion cards
+  // ==========================
   receiptSuggestions.forEach((s, index)=>{
 
     const isTax = !!s._isTax;
     const isAccepted = !!s._accepted;
-    const isLocked = !!s._locked; // tax stays locked, others can stay editable
+    const isLocked = !!s._locked; // tax typically locked; others may be locked based on your logic
 
     const suggested = s.suggested_category || "Needs Review";
     const confPct = Math.round((parseFloat(s.confidence || 0) * 100));
@@ -1967,64 +1973,85 @@ function renderReceiptSuggestions(){
     container.appendChild(card);
   });
 
-  // ✅ Floating sticky totals pill (Allocated / Remaining / Total)
-  const allocatedCents = (tx.Splits || []).reduce((sum, s)=>{
-    return sum + Math.round(parseFloat(s.Amount || 0) * 100);
-  }, 0);
-
-  const totalCents = Math.round(parseFloat(tx.Amount || 0) * 100);
-  const remainingCents = totalCents - allocatedCents;
-
-  const allocated = (allocatedCents / 100);
-  const remaining = (remainingCents / 100);
-  const total = (totalCents / 100);
-
+  // ==========================
+  // ✅ Sticky centered pill (inside the scrolling modal content)
+  // ==========================
   // Remove any previous pill so it never duplicates
   const oldPill = document.getElementById("receiptTotalsPill");
   if(oldPill) oldPill.remove();
 
-  const pill = document.createElement("div");
-  pill.id = "receiptTotalsPill";
-  pill.style = `
-    position: sticky;
-    bottom: 10px;
-    margin-top: 12px;
-    width: fit-content;
-    max-width: 100%;
-    background: rgba(255,255,255,0.96);
-    border: 1px solid #eee;
-    border-radius: 999px;
-    padding: 10px 14px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.18);
-    font-weight: 800;
-    z-index: 50;
-    left: 50%;
-    transform: translateX(-50%);
-    text-align: center;
-    backdrop-filter: blur(6px);
-  `;
+  // Base allocated from saved splits
+  const splits = tx.Splits || [];
+  const allocatedFromSplitsCents = splits.reduce((sum, s)=>{
+    return sum + Math.round(parseFloat(s.Amount || 0) * 100);
+  }, 0);
+
+  const totalCents = Math.round(parseFloat(tx.Amount || 0) * 100);
+
+  // ✅ ADD TAX INTO ALLOCATED IF NOT ALREADY IN SPLITS
+  const taxSuggestion = receiptSuggestions.find(x => x && x._isTax);
+  const taxCents = taxSuggestion ? Math.round(parseFloat(taxSuggestion.amount || 0) * 100) : 0;
+
+  const splitHasTaxAlready = splits.some(s => (s.Category || "") === "Sales Tax Paid");
+
+  // Only count tax from suggestion if splits don't already include it
+  const allocatedCents = allocatedFromSplitsCents + (splitHasTaxAlready ? 0 : taxCents);
+
+  const remainingCents = totalCents - allocatedCents;
+
+  const allocated = allocatedCents / 100;
+  const remaining = remainingCents / 100;
+  const total = totalCents / 100;
 
   const remainingColor =
     Math.abs(remaining) < 0.01 ? "green" :
     remaining < 0 ? "red" : "#ff9800";
 
-  pill.innerHTML = `
-    <span style="margin-right:10px;">Allocated: <span style="color:#1565c0;">$${money(allocated)}</span></span>
-    <span style="margin-right:10px;">Total: <span style="color:#000;">$${money(total)}</span></span>
-    <span>Remaining: <span style="color:${remainingColor};">$${money(remaining)}</span></span>
+  const pill = document.createElement("div");
+  pill.id = "receiptTotalsPill";
+
+  // Sticky in the scroll container: #modalContent (your modalContent div scrolls)
+  pill.style = `
+    position: sticky;
+    bottom: 12px;
+    z-index: 9999;
+
+    width: calc(100% - 24px);
+    max-width: 560px;
+    margin: 0 auto;
+
+    background: rgba(255,255,255,0.98);
+    border: 1px solid #eee;
+    border-radius: 999px;
+    padding: 12px 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+    font-weight: 800;
+    text-align: center;
+    backdrop-filter: blur(6px);
   `;
 
-  // Append pill to wrapper so it sticks above bottom padding
+  pill.innerHTML = `
+    <span style="margin-right:10px;">
+      Allocated: <span style="color:#1565c0;">$${money(allocated)}</span>
+    </span>
+    <span style="margin-right:10px;">
+      Total: <span style="color:#000;">$${money(total)}</span>
+    </span>
+    <span>
+      Remaining: <span style="color:${remainingColor};">$${money(remaining)}</span>
+    </span>
+  `;
+
+  // Append pill at end of wrapper so sticky works as you scroll
   const wrapper = document.getElementById("receiptUIWrapper");
   wrapper.appendChild(pill);
 
-  // Highlight the current suggestion (if you’re using the step-through flow)
+  // Optional: highlight current suggestion (if you’re using step-through)
   if(typeof highlightCurrentSuggestion === "function"){
     highlightCurrentSuggestion();
   }
 
-  // ✅ Ensure main screen reflects accepted splits even if user closes now
-  // (this keeps your split summary on the transaction card accurate)
+  // ✅ Ensure main screen reflects current selected line items/splits
   if(typeof updateSplitSummaryUI === "function") updateSplitSummaryUI();
   if(typeof showCard === "function") showCard();
 }
