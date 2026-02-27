@@ -1363,39 +1363,23 @@ async function openSplitModal(){
       ">
         Enable Split Mode
       </button>
-${item.receipt_url ? `
-<button onclick="analyzeReceipt()" style="
-  position:absolute;
-  top:60px;
-  right:10px;
-  z-index:10;
-  background:#000;
-  color:white;
-  padding:8px 12px;
-  border-radius:10px;
-">
-  🤖 Analyze Receipt
-</button>
-` : ``}
-      ${receiptView}
 
-      <div id="remainingBar" style="
-  position:absolute;
-  top:10px;
-  right:10px;
-  background:rgba(255,255,255,0.95);
-  padding:10px 12px;
-  border-radius:14px;
-  box-shadow:0 4px 12px rgba(0,0,0,.15);
-  font-weight:700;
-  pointer-events:none;
-  z-index:20;
-  max-width:260px;
-  text-align:right;
-  line-height:1.25;
-">
-        Remaining: $${calculateReceiptRemaining().toFixed(2)}
-      </div>
+      ${item.receipt_url ? `
+      <button id="analyzeBtn" onclick="analyzeReceipt(data[currentIndex])" style="
+        position:absolute;
+        top:60px;
+        right:10px;
+        z-index:10;
+        background:#000;
+        color:white;
+        padding:8px 12px;
+        border-radius:10px;
+      ">
+        🤖 Analyze Receipt
+      </button>
+      ` : ``}
+
+      ${receiptView}
 
     </div>
   `;
@@ -1403,13 +1387,6 @@ ${item.receipt_url ? `
   openModal();
   setTimeout(initTapToSplit, 50);
 }
-
-
-let startY = 0;
-let startHeight = 0;
-
-
-
 function initTapToSplit(){
 
   const container = document.getElementById("tapSplitContainer");
@@ -1602,34 +1579,77 @@ inputBox.style.left = Math.min(
 }
 let receiptSuggestions = [];
 let currentSuggestionIndex = 0;
+async function analyzeReceipt(item){
 
+  if(item._analyzing) return;
 
-async function analyzeReceipt(){
-
-  const btn = document.querySelector("button[onclick='analyzeReceipt()']");
-  if(btn?.dataset.loading === "true") return;
-
-  if(btn){
-    btn.dataset.loading = "true";
-    btn.disabled = true;
-    btn.innerText = "⏳ Analyzing...";
-  }
-
-  const item = data[currentIndex];
-
-  if(!item.receipt_url){
-    alert("No receipt attached.");
-    resetButton();
+  // 🔁 already analyzed → just reopen
+  if(item.receipt_analysis){
+    await ensureSalesTaxApplied(item.receipt_analysis.tax_amount);
+    renderReceiptSuggestions(item, item.receipt_analysis.items);
     return;
   }
 
-  function resetButton(){
-    if(btn){
-      btn.dataset.loading = "false";
-      btn.disabled = false;
-      btn.innerText = "🤖 Analyze Receipt";
-    }
+  const btn = document.getElementById("analyzeBtn");
+
+  item._analyzing = true;
+
+  // 🔒 LOCK BUTTON
+  if(btn){
+    btn.disabled = true;
+    btn.innerText = "⏳ Analyzing...";
+    btn.style.opacity = "0.6";
   }
+
+  try {
+
+    const res = await fetch(
+  "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
+  {
+    method: "POST",
+    headers: await getAuthHeaders(),
+    body: JSON.stringify({
+      filePath: item.receipt_url,
+      categories: categories.map(c => c.name)
+    })
+  }
+);
+
+    const result = await res.json();
+
+    item.receipt_analysis = {
+  items: result.line_items,
+  tax_amount: result.tax_amount
+};
+
+    // ✅ APPLY TAX FIRST
+    await ensureSalesTaxApplied(result.tax_amount);
+
+    // ✅ OPEN RECEIPT UI
+    renderReceiptSuggestions(item, result.line_items);
+
+  } catch (e) {
+    console.error(e);
+    alert("Receipt analysis failed.");
+  }
+
+  // 🔓 UNLOCK BUTTON
+  item._analyzing = false;
+
+  if(btn){
+    btn.disabled = false;
+    btn.innerText = "🤖 Analyze Receipt";
+    btn.style.opacity = "1";
+  }
+}
+
+  function resetButton(){
+  if(btn){
+    btn.dataset.loading = "false";
+    btn.disabled = false;
+    btn.innerText = "🤖 Analyze Receipt";
+  }
+}
 
   function extractProductCode(line){
     const match = line.match(/\b\d{5,15}\b/);
@@ -1641,127 +1661,33 @@ async function analyzeReceipt(){
     return { raw, normalized };
   }
 
-  function ensureSalesTaxApplied(taxAmount){
-    if(!taxAmount || taxAmount <= 0) return;
+  
 
-    const alreadyExists = receiptSuggestions.some(s => s._isTax);
-    if(alreadyExists) return;
+ function acceptSuggestion(itemId, index){
 
-    receiptSuggestions.push({
-      normalized_description: "Sales Tax",
-      raw_description: "Sales Tax",
-      description: "Sales Tax",
-      amount: parseFloat(taxAmount),
-      suggested_category: "Sales Tax Paid",
-      confidence: 1,
-      _accepted: true,
-      _locked: true,
-      _isTax: true
-    });
-  }
+  const item = data.find(d => d.id === itemId);
+  const suggestion = item.receipt_analysis.items[index];
 
-  try {
+  if(!item.Splits) item.Splits = [];
 
-    const response = await fetch(
-      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
-      {
-        method: "POST",
-        headers: await getAuthHeaders(),
-        body: JSON.stringify({
-          filePath: item.receipt_url,
-          categories: categories.map(c => c.name),
-          use_code_logic: true
-        })
-      }
-    );
+  // 🚫 prevent duplicate
+  const exists = item.Splits.find(s => s.item_index === index);
+  if(exists) return;
 
-    const result = await response.json();
+  item.Splits.push({
+    item_index: index,
+    Category: suggestion.suggested_category,
+    Amount: suggestion.amount
+  });
 
-    if(!response.ok){
-      throw new Error(result.error || "OCR failed");
-    }
-
-    receiptSuggestions = (result.line_items || []).map(li => {
-
-      const codeData = extractProductCode(li.raw_description || "");
-
-      return {
-        normalized_description: (
-          li.normalized_description ||
-          li.description ||
-          li.raw_description
-        )
-        .replace(/\b\d{2,}\b/g, "")
-        .replace(/\s{2,}/g, " ")
-        .trim(),
-
-        raw_description: li.raw_description || li.description,
-        description: li.description,
-
-        code_raw: codeData?.raw || null,
-        code_normalized: codeData?.normalized || null,
-
-        amount: parseFloat(li.amount),
-        suggested_category: li.suggested_category || "Needs Review",
-        confidence: li.confidence || 0,
-        _accepted: false,
-        _locked: false
-      };
-    });
-
-    // ✅ Apply tax BEFORE rendering totals
-    ensureSalesTaxApplied(result.tax_amount);
-
-    currentSuggestionIndex = 0;
-
-    await supabaseClient
-      .from("transactions")
-      .update({
-        receipt_analysis: {
-          ...result,
-          line_items: receiptSuggestions
-        }
-      })
-      .eq("id", item.id);
-
-    renderReceiptSuggestions();
-
-  } catch(err){
-    console.error(err);
-    alert("Receipt analysis failed.");
-  }
-
-  resetButton();
-}
-
- function acceptSuggestion(index){
-
-  const suggestion = receiptSuggestions[index];
-
-  // 🚫 Prevent duplicate split creation
-  if(suggestion._accepted) return;
-
-  // 🚫 Tax should never be manually accepted
-  if(suggestion._isTax) return;
-
-  const amount = parseFloat(suggestion.amount);
-
-  const success = applySplit(
-    suggestion.suggested_category,
-    amount
-  );
-
-  if(success === false) return;
-
-  // ✅ Mark accepted (but NOT locked)
+  // 🔥 mark as accepted
   suggestion._accepted = true;
+
+  renderReceiptSuggestions(item, item.receipt_analysis.items);
 
   updateRemainingUI();
   updateSplitSummaryUI();
   updateTotals();
-  updateProgress();
-
-  renderReceiptSuggestions();
 }
 
 
@@ -1782,22 +1708,29 @@ function calculateReceiptRemaining(){
 }
 
 async function ensureSalesTaxApplied(taxAmount){
+
   const item = data[currentIndex];
   if(!item || !taxAmount) return;
 
   const tax = parseFloat(taxAmount);
   if(isNaN(tax) || tax <= 0) return;
 
-  // Already applied?
-  const already = (item.Splits || []).some(s => s.Category === "Sales Tax Paid");
+  // Prevent duplicate
+  const already = (item.Splits || []).some(
+    s => s.Category === "Sales Tax Paid"
+  );
+
   if(already) return;
 
-  // Apply as a split immediately
+  // Apply tax as split
   await applySplit("Sales Tax Paid", tax);
 
-  // Mark suggestion as applied if it exists
-  receiptSuggestions.forEach(s=>{
-    if(s._isTax){
+  // Mark tax line as accepted (SAFE FIX)
+  (item.receipt_analysis?.items || []).forEach(s=>{
+    if(
+      s.normalized_description?.toLowerCase().includes("tax") ||
+      s.raw_description?.toLowerCase().includes("tax")
+    ){
       s._accepted = true;
       s._locked = true;
     }
@@ -1817,230 +1750,163 @@ function moveToNextSuggestion(){
   highlightCurrentSuggestion();
 }
 
-function renderReceiptSuggestions(){
+function renderReceiptSuggestions(item, suggestions){
 
-  modalTitle.innerText = "Receipt Items";
+  receiptSuggestions = suggestions;
 
-  const tx = data[currentIndex];
-  if(!tx) return;
+  const total = parseFloat(item.Amount || 0);
 
-  // Force solid white behind everything (prevents receipt showing through)
-  modalContent.style.background = "#fff";
+  let allocated = 0;
+  (item.Splits || []).forEach(s=>{
+    allocated += parseFloat(s.Amount || 0);
+  });
 
-  // Wrapper + bottom padding so sticky pill never covers last card
+  allocated = parseFloat(allocated.toFixed(2));
+  const remaining = parseFloat((total - allocated).toFixed(2));
+
+  modalTitle.innerText = "Review Receipt";
+
   modalContent.innerHTML = `
-    <div id="receiptUIWrapper" style="
-      background:#fff;
-      padding:10px;
-      padding-bottom:130px; /* space for sticky totals pill */
-      min-height:100%;
-      box-sizing:border-box;
+    <div style="display:flex; gap:12px; height:75vh;">
+
+      <!-- LEFT: RECEIPT -->
+      <div style="
+        width:55%;
+        overflow:auto;
+        background:#000;
+        border-radius:12px;
+      ">
+        ${item.receipt_url ? `
+          <img id="receiptImage" style="
+            width:100%;
+            height:auto;
+          ">
+        ` : `
+          <div style="
+            color:white;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            height:100%;
+          ">
+            No Receipt
+          </div>
+        `}
+      </div>
+
+      <!-- RIGHT: ITEMS -->
+      <div style="
+        width:45%;
+        overflow-y:auto;
+        padding-right:6px;
+      ">
+
+        ${suggestions.map((s, i)=>{
+
+          const existing = (item.Splits || []).find(sp => sp.item_index === i);
+          const isAccepted = !!existing;
+
+          const category = existing
+            ? existing.Category
+            : s.suggested_category;
+
+          const amount = parseFloat(s.amount || 0);
+
+          return `
+            <div style="
+              background:white;
+              border-radius:12px;
+              padding:10px;
+              margin-bottom:8px;
+              border:${isAccepted ? "2px solid #2e7d32" : "1px solid #eee"};
+              opacity:${isAccepted ? "0.6" : "1"};
+            ">
+
+              <div style="font-weight:600; font-size:14px;">
+                ${s.normalized_description || s.raw_description}
+              </div>
+
+              <div style="font-size:13px; margin-top:4px;">
+                $${amount.toFixed(2)}
+              </div>
+
+              <div style="font-size:13px; margin-top:4px;">
+                <strong>${category || "Needs Review"}</strong>
+              </div>
+
+              <div style="display:flex; gap:6px; margin-top:8px;">
+
+                ${
+                  !isAccepted
+                  ? `<button onclick="this.disabled=true; acceptSuggestion(${item.id}, ${i})"
+                      style="flex:1; background:#2e7d32; color:white;">
+                      Accept
+                    </button>`
+                  : ``
+                }
+
+                <button onclick="changeCategory(${item.id}, ${i})"
+                  style="flex:1; background:#1565c0; color:white;">
+                  Change
+                </button>
+
+                <button onclick="askAIForReceiptItem(${i})"
+                  style="flex:1; background:#000; color:white;">
+                  Ask AI
+                </button>
+
+              </div>
+
+            </div>
+          `;
+        }).join("")}
+
+      </div>
+    </div>
+
+    <!-- STICKY TOTAL BAR -->
+    <div id="remainingBar" style="
+      position:sticky;
+      bottom:0;
+      margin-top:10px;
+      background:white;
+      padding:12px;
+      border-radius:14px;
+      box-shadow:0 -4px 20px rgba(0,0,0,.08);
+      font-weight:600;
       display:flex;
-      flex-direction:column;
-      gap:10px;
+      justify-content:space-between;
     ">
-      <div id="receiptItems"></div>
-      <div id="receiptTotalsSlot" style="height:1px;"></div>
+      <div>Total: $${total.toFixed(2)}</div>
+      <div>Allocated: $${allocated.toFixed(2)}</div>
+      <div style="
+        color:${
+          Math.abs(remaining) < 0.01
+            ? "green"
+            : remaining < 0
+            ? "red"
+            : "orange"
+        };
+      ">
+        Remaining: $${remaining.toFixed(2)}
+      </div>
     </div>
   `;
 
-  const container = document.getElementById("receiptItems");
-  container.innerHTML = "";
-
-  const money = (n)=> (Math.round(parseFloat(n || 0) * 100) / 100).toFixed(2);
-
-  // ==========================
-  // Render suggestion cards
-  // ==========================
-  receiptSuggestions.forEach((s, index)=>{
-
-    const isTax = !!s._isTax;
-    const isAccepted = !!s._accepted;
-    const isLocked = !!s._locked; // tax typically locked; others may be locked based on your logic
-
-    const suggested = s.suggested_category || "Needs Review";
-    const confPct = Math.round((parseFloat(s.confidence || 0) * 100));
-
-    const card = document.createElement("div");
-    card.id = `suggestion_${index}`;
-
-    card.style = `
-      background:#fff;
-      border-radius:14px;
-      padding:12px;
-      margin-bottom:10px;
-      box-shadow:0 4px 14px rgba(0,0,0,0.08);
-      border-left:${isAccepted ? "5px solid #2e7d32" : "5px solid transparent"};
-      box-sizing:border-box;
-    `;
-
-    card.innerHTML = `
-      <div style="display:flex; justify-content:space-between; gap:10px;">
-        <div style="flex:1; min-width:0;">
-          <div style="font-weight:700; font-size:15px; margin-bottom:4px;">
-            ${s.normalized_description || s.description || s.raw_description || "Item"}
-          </div>
-
-          ${
-            s.code_normalized
-              ? `<div style="font-size:12px; color:#666;">Code: ${s.code_normalized}</div>`
-              : ""
-          }
-
-          <div style="font-size:12px; color:#666; margin-top:2px;">
-            Suggested: <strong>${suggested}</strong>
-            ${confPct ? ` • Conf: ${confPct}%` : ``}
-          </div>
-        </div>
-
-        <div style="font-weight:800; font-size:16px; white-space:nowrap;">
-          $${money(s.amount)}
-        </div>
-      </div>
-
-      <div style="display:flex; gap:8px; margin-top:10px;">
-        <button
-          style="
-            flex:1;
-            background:${isAccepted ? "#e8f5e9" : "#2e7d32"};
-            color:${isAccepted ? "#2e7d32" : "white"};
-            border:none;
-            padding:12px;
-            border-radius:12px;
-            font-weight:800;
-          "
-          onclick="acceptSuggestion(${index})"
-          ${isLocked ? "disabled" : ""}
-        >
-          ${isAccepted ? "Accepted" : "Accept"}
-        </button>
-
-        <button
-          style="
-            flex:1;
-            background:#1565c0;
-            color:white;
-            border:none;
-            padding:12px;
-            border-radius:12px;
-            font-weight:800;
-          "
-          onclick="openReceiptCategorySelector(${index})"
-        >
-          Change
-        </button>
-
-        <button
-          style="
-            flex:1;
-            background:#000;
-            color:white;
-            border:none;
-            padding:12px;
-            border-radius:12px;
-            font-weight:800;
-          "
-          onclick="askAIForReceiptItem(${index})"
-        >
-          Ask AI
-        </button>
-      </div>
-
-      ${
-        isTax
-          ? `<div style="font-size:12px; color:#666; margin-top:8px;">
-               Sales Tax is auto-applied and locked.
-             </div>`
-          : ``
-      }
-    `;
-
-    container.appendChild(card);
-  });
-
-  // ==========================
-  // ✅ Sticky centered pill (inside the scrolling modal content)
-  // ==========================
-  // Remove any previous pill so it never duplicates
-  const oldPill = document.getElementById("receiptTotalsPill");
-  if(oldPill) oldPill.remove();
-
-  // Base allocated from saved splits
-  const splits = tx.Splits || [];
-  const allocatedFromSplitsCents = splits.reduce((sum, s)=>{
-    return sum + Math.round(parseFloat(s.Amount || 0) * 100);
-  }, 0);
-
-  const totalCents = Math.round(parseFloat(tx.Amount || 0) * 100);
-
-  // ✅ ADD TAX INTO ALLOCATED IF NOT ALREADY IN SPLITS
-  const taxSuggestion = receiptSuggestions.find(x => x && x._isTax);
-  const taxCents = taxSuggestion ? Math.round(parseFloat(taxSuggestion.amount || 0) * 100) : 0;
-
-  const splitHasTaxAlready = splits.some(s => (s.Category || "") === "Sales Tax Paid");
-
-  // Only count tax from suggestion if splits don't already include it
-  const allocatedCents = allocatedFromSplitsCents + (splitHasTaxAlready ? 0 : taxCents);
-
-  const remainingCents = totalCents - allocatedCents;
-
-  const allocated = allocatedCents / 100;
-  const remaining = remainingCents / 100;
-  const total = totalCents / 100;
-
-  const remainingColor =
-    Math.abs(remaining) < 0.01 ? "green" :
-    remaining < 0 ? "red" : "#ff9800";
-
-  const pill = document.createElement("div");
-  pill.id = "receiptTotalsPill";
-
-  // Sticky in the scroll container: #modalContent (your modalContent div scrolls)
-  pill.style = `
-    position: sticky;
-    bottom: 12px;
-    z-index: 9999;
-
-    width: calc(100% - 24px);
-    max-width: 560px;
-    margin: 0 auto;
-
-    background: rgba(255,255,255,0.98);
-    border: 1px solid #eee;
-    border-radius: 999px;
-    padding: 12px 14px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.18);
-    font-weight: 800;
-    text-align: center;
-    backdrop-filter: blur(6px);
-  `;
-
-  pill.innerHTML = `
-    <span style="margin-right:10px;">
-      Allocated: <span style="color:#1565c0;">$${money(allocated)}</span>
-    </span>
-    <span style="margin-right:10px;">
-      Total: <span style="color:#000;">$${money(total)}</span>
-    </span>
-    <span>
-      Remaining: <span style="color:${remainingColor};">$${money(remaining)}</span>
-    </span>
-  `;
-
-  // Append pill at end of wrapper so sticky works as you scroll
-  const wrapper = document.getElementById("receiptUIWrapper");
-  wrapper.appendChild(pill);
-
-  // Optional: highlight current suggestion (if you’re using step-through)
-  if(typeof highlightCurrentSuggestion === "function"){
-    highlightCurrentSuggestion();
+  // ✅ FIX: load signed URL (CRITICAL)
+  if(item.receipt_url){
+    supabaseClient
+      .storage
+      .from("receipts")
+      .createSignedUrl(item.receipt_url, 60)
+      .then(({ data })=>{
+        if(data?.signedUrl){
+          const img = document.getElementById("receiptImage");
+          if(img) img.src = data.signedUrl;
+        }
+      });
   }
-
-  // ✅ Ensure main screen reflects current selected line items/splits
-  if(typeof updateSplitSummaryUI === "function") updateSplitSummaryUI();
-  if(typeof showCard === "function") showCard();
 }
-
 
   function highlightCurrentSuggestion(){
 
@@ -2961,7 +2827,8 @@ function applyAISuggestion(category){
     closeModal();
 
     // ✅ RETURN TO RECEIPT SCREEN
-    renderReceiptSuggestions();
+    const item = data[currentIndex];
+renderReceiptSuggestions(item, item.receipt_analysis.items);
 
     aiContext = null;
     return;
@@ -2990,37 +2857,58 @@ function applyAISuggestion(category){
   goNext();
 }
 
+function changeCategory(itemId, index){
+
+  const item = data.find(d => d.id === itemId);
+
+  // 🔥 store context
+  aiContext = {
+    type: "receipt",
+    index: index,
+    itemId: itemId,
+    mode: "change"
+  };
+
+  // 🔥 open category picker (reuse your existing UI)
+  openReceiptCategorySelector(index);
+}
 
 function selectCategory(category){
 
-  // 🔒 If coming from receipt modal
+  // 🔒 RECEIPT MODE
   if(aiContext && aiContext.type === "receipt"){
 
-    const suggestion = receiptSuggestions[aiContext.index];
+    const item = data[currentIndex];
+    const index = aiContext.index;
+    const suggestion = item.receipt_analysis.items[index];
 
-    // ✅ Update category
-    suggestion.suggested_category = category;
+    if(!item.Splits) item.Splits = [];
 
-    // ✅ If already accepted → update existing split
-    if(suggestion._accepted){
-      const item = data[currentIndex];
+    // 🔥 find existing split
+    let existing = item.Splits.find(s => s.item_index === index);
 
-      if(item.Splits){
-        const split = item.Splits.find(s =>
-          Math.abs(parseFloat(s.Amount)) === Math.abs(parseFloat(suggestion.amount))
-        );
-
-        if(split){
-          split.Category = category;
-        }
-      }
+    if(existing){
+      // ✅ UPDATE (this is the fix for "Change")
+      existing.Category = category;
+    } else {
+      // ✅ FIRST TIME APPLY
+      item.Splits.push({
+        item_index: index,
+        Category: category,
+        Amount: suggestion.amount
+      });
     }
 
-    // ✅ Close ONLY category picker
+    // 🔥 mark suggestion state
+    suggestion._accepted = true;
+
+    // ✅ CLOSE ONLY CATEGORY PICKER
     closeModal();
 
-    // ✅ Stay in receipt modal and re-render
-    renderReceiptSuggestions();
+    // ✅ STAY IN RECEIPT FLOW
+    renderReceiptSuggestions(item, item.receipt_analysis.items);
+
+    // ✅ UPDATE UI
     updateRemainingUI();
     updateSplitSummaryUI();
     updateTotals();
@@ -3029,7 +2917,7 @@ function selectCategory(category){
     return;
   }
 
-  // 🔁 Normal transaction flow (unchanged)
+  // 🔁 NORMAL FLOW
   categorize(category);
   closeModal();
 }
