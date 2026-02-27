@@ -2177,7 +2177,17 @@ async function applySplit(category, amount){
 
   const item = data[currentIndex];
 
-  if(!item.Splits) item.Splits = [];
+  if (!item.Splits) {
+  item.Splits = [];
+
+  // fallback: use suggested category if present
+  if (item.Category && item.Price) {
+    item.Splits.push({
+      Category: item.Category,
+      Amount: item.Price
+    });
+  }
+}
 
   let total = item.Splits.reduce((sum, s) => {
     return sum + Math.round(parseFloat(s.Amount) * 100);
