@@ -1604,175 +1604,130 @@ let receiptSuggestions = [];
 let currentSuggestionIndex = 0;
 
 
-async function analyzeReceipt(){
-
-  const item = data[currentIndex];
-
-  if(!item.receipt_url){
-    alert("No receipt attached.");
-    return;
-  }
-
-  // =============================
-  // 🔧 HELPER: Extract product code correctly
-  // =============================
-  function extractProductCode(line){
-    const match = line.match(/\b\d{5,15}\b/);
-    if(!match) return null;
-
-    const raw = match[0];
-    const normalized = raw.replace(/^0+/, "") || raw;
-
-    return {
-      raw,
-      normalized
-    };
-  }
-
-  // =============================
-  // 1️⃣ Check if already analyzed
-  // =============================
-  const { data: existing } = await supabaseClient
-    .from("transactions")
-    .select("receipt_analysis")
-    .eq("id", item.id)
-    .single();
-
-  if(existing?.receipt_analysis){
-
-    receiptSuggestions = (existing.receipt_analysis.line_items || []).map(li => ({
-      normalized_description: li.normalized_description || li.description || li.raw_description,
-      raw_description: li.raw_description || li.description,
-      description: li.description,
-      amount: parseFloat(li.amount),
-      suggested_category: li.suggested_category || "Needs Review",
-      confidence: li.confidence || 0,
-      _accepted: li._accepted || false,
-      _locked: li._locked || false
-    }));
-
-    currentSuggestionIndex = 0;
-
-    const alreadyHasTax = receiptSuggestions.some(
-  s => s.normalized_description === "Sales Tax"
-);
-
-if(!alreadyHasTax && existing.receipt_analysis.tax_amount > 0){
-  receiptSuggestions.push({
-    normalized_description: "Sales Tax",
-    raw_description: "Sales Tax",
-    description: "Sales Tax",
-    amount: parseFloat(existing.receipt_analysis.tax_amount),
-    suggested_category: "Sales Tax Paid",
-    confidence: 1,
-    _accepted: true,
-    _locked: true,
-    _isTax: true
-  });
-}
-
-    renderReceiptSuggestions();
-    return;
-  }
-
-  // =============================
-  // 2️⃣ Call Edge Function WITH CODE CONTEXT
-  // =============================
+async function analyzeReceipt() {
   try {
-
-    const response = await fetch(
-      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
-      {
-        method: "POST",
-        headers: await getAuthHeaders(),
-        body: JSON.stringify({
-          filePath: item.receipt_url,
-          categories: categories.map(c => c.name),
-
-          // 🔥 THIS ENABLES CODE-AWARE PROCESSING
-          use_code_logic: true
-        })
-      }
-    );
-
-    const result = await response.json();
-
-    if(!response.ok){
-      throw new Error(result.error || "OCR failed");
+    if (!currentTransaction?.receipt_url) {
+      alert("No receipt attached.");
+      return;
     }
 
-    // =============================
-    // 🔥 ENHANCE WITH CODE EXTRACTION
-    // =============================
-    receiptSuggestions = (result.line_items || []).map(li => {
+    console.log("🔍 Starting receipt analysis...");
 
-      const codeData = extractProductCode(li.raw_description || "");
-
-      return {
-        normalized_description: (
-  li.normalized_description ||
-  li.description ||
-  li.raw_description
-)
-.replace(/\b\d{2,}\b/g, "") // remove stray numbers like "25"
-.replace(/\s{2,}/g, " ")
-.trim(),
-        raw_description: li.raw_description || li.description,
-        description: li.description,
-
-        // 🔥 ADD CODE DATA
-        code_raw: codeData?.raw || null,
-        code_normalized: codeData?.normalized || null,
-
-        amount: parseFloat(li.amount),
-        suggested_category: li.suggested_category || "Needs Review",
-        confidence: li.confidence || 0,
-        _accepted: false,
-        _locked: false
-      };
-    });
-
-    currentSuggestionIndex = 0;
-
-    // =============================
-    // Inject tax if present
-    // =============================
-    const alreadyHasTax = receiptSuggestions.some(
-  s => s.normalized_description === "Sales Tax"
-);
-
-if(!alreadyHasTax && result.tax_amount > 0){
-  receiptSuggestions.push({
-    normalized_description: "Sales Tax",
-    raw_description: "Sales Tax",
-    description: "Sales Tax",
-    amount: parseFloat(result.tax_amount),
-    suggested_category: "Sales Tax Paid",
-    confidence: 1,
-    _accepted: true,
-    _locked: true,
-    _isTax: true
-  });
-}
-        
-
-    // =============================
-    // 3️⃣ Save enhanced result
-    // =============================
-    await supabaseClient
+    // =========================
+    // CHECK EXISTING ANALYSIS
+    // =========================
+    const { data: existing } = await supabase
       .from("transactions")
-      .update({
-        receipt_analysis: {
-          ...result,
-          line_items: receiptSuggestions
+      .select("receipt_analysis")
+      .eq("id", currentTransaction.id)
+      .single();
+
+    let receiptSuggestions = [];
+
+    // =========================
+    // IF ALREADY ANALYZED
+    // =========================
+    if (existing?.receipt_analysis) {
+      console.log("📦 Using existing receipt analysis");
+
+      receiptSuggestions = existing.receipt_analysis.line_items.map(li => ({
+        description: li.normalized_description || li.description,
+        amount: li.amount,
+        category: li.suggested_category || "Needs Review",
+        confidence: li.confidence,
+        code: li.raw_description?.match(/\d+/)?.[0] || "",
+        _accepted: false
+      }));
+
+      // ✅ HANDLE SALES TAX CORRECTLY
+      if (existing.receipt_analysis.tax_amount) {
+        receiptSuggestions.unshift({
+          description: "Sales Tax",
+          amount: existing.receipt_analysis.tax_amount,
+          category: "Sales Tax Paid",
+          confidence: 1,
+          _accepted: false,
+          _locked: true,
+          _isTax: true
+        });
+
+        // 🔥 THIS FIXES YOUR TOTAL ISSUE
+        await ensureSalesTaxApplied(existing.receipt_analysis.tax_amount);
+      }
+    }
+
+    // =========================
+    // OTHERWISE CALL EDGE FUNCTION
+    // =========================
+    else {
+      console.log("🚀 Calling edge function...");
+
+      const res = await fetch(
+        `${SUPABASE_URL}/functions/v1/analyzeReceipt`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+          },
+          body: JSON.stringify({
+            filePath: currentTransaction.receipt_url,
+            categories: categoryList
+          })
         }
-      })
-      .eq("id", item.id);
+      );
 
-    renderReceiptSuggestions();
+      const result = await res.json();
 
-  } catch(err){
-    console.error(err);
+      if (!result?.line_items) {
+        throw new Error("Invalid receipt response");
+      }
+
+      console.log("📥 Edge function result:", result);
+
+      receiptSuggestions = result.line_items.map(li => ({
+        description: li.normalized_description || li.description,
+        amount: li.amount,
+        category: li.suggested_category || "Needs Review",
+        confidence: li.confidence,
+        code: li.raw_description?.match(/\d+/)?.[0] || "",
+        _accepted: false
+      }));
+
+      // ✅ HANDLE SALES TAX CORRECTLY
+      if (result.tax_amount) {
+        receiptSuggestions.unshift({
+          description: "Sales Tax",
+          amount: result.tax_amount,
+          category: "Sales Tax Paid",
+          confidence: 1,
+          _accepted: false,
+          _locked: true,
+          _isTax: true
+        });
+
+        // 🔥 THIS FIXES YOUR TOTAL ISSUE
+        await ensureSalesTaxApplied(result.tax_amount);
+      }
+
+      // 💾 SAVE ANALYSIS
+      await supabase
+        .from("transactions")
+        .update({
+          receipt_analysis: result
+        })
+        .eq("id", currentTransaction.id);
+    }
+
+    // =========================
+    // STORE + OPEN MODAL
+    // =========================
+    window.receiptSuggestions = receiptSuggestions;
+
+    renderReceiptModal(receiptSuggestions);
+
+  } catch (err) {
+    console.error("❌ Receipt analysis failed:", err);
     alert("Receipt analysis failed.");
   }
 }
@@ -1822,6 +1777,29 @@ function calculateReceiptRemaining(){
   total = total / 100;
 
   return parseFloat((item.Amount - total).toFixed(2));
+}
+
+async function ensureSalesTaxApplied(taxAmount){
+  const item = data[currentIndex];
+  if(!item || !taxAmount) return;
+
+  const tax = parseFloat(taxAmount);
+  if(isNaN(tax) || tax <= 0) return;
+
+  // Already applied?
+  const already = (item.Splits || []).some(s => s.Category === "Sales Tax Paid");
+  if(already) return;
+
+  // Apply as a split immediately
+  await applySplit("Sales Tax Paid", tax);
+
+  // Mark suggestion as applied if it exists
+  receiptSuggestions.forEach(s=>{
+    if(s._isTax){
+      s._accepted = true;
+      s._locked = true;
+    }
+  });
 }
 
 function moveToNextSuggestion(){
