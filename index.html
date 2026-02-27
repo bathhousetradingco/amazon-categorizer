@@ -1843,7 +1843,7 @@ function renderReceiptSuggestions(item, suggestions){
                 ${
                   !isAccepted
 ? `<button 
-      onclick="acceptSuggestion(${item.id}, ${i})"
+      onclick="acceptSuggestion('${item.id}', ${i})"
       style="flex:1; background:#2e7d32; color:white;">
       Accept
     </button>`
@@ -1854,7 +1854,7 @@ function renderReceiptSuggestions(item, suggestions){
                   : ``
                 }
 
-                <button onclick="changeCategory(${item.id}, ${i})"
+                <button onclick="changeCategory('${item.id}', ${i})"
                   style="flex:1; background:#1565c0; color:white;">
                   Change
                 </button>
