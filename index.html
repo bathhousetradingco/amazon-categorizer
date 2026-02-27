@@ -1835,118 +1835,176 @@ function moveToNextSuggestion(){
   highlightCurrentSuggestion();
 }
 
-function renderReceiptSuggestions(items, total, taxSuggestion) {
-  const container = document.getElementById("receiptItems");
-  container.innerHTML = "";
+function renderReceiptSuggestions(){
+  // This version renders from your global receiptSuggestions[] array
+  // and creates the container automatically if it doesn't exist.
 
-  let totalAllocatedCents = 0;
+  const host = document.getElementById("tapSplitContainer") || modalContent;
+  if(!host){
+    console.error("renderReceiptSuggestions: no host container found");
+    return;
+  }
 
-  items.forEach((item, index) => {
+  // Create (or reuse) a right-side / bottom sheet panel
+  let panel = document.getElementById("receiptSuggestionsPanel");
+  if(!panel){
+    panel = document.createElement("div");
+    panel.id = "receiptSuggestionsPanel";
+    host.appendChild(panel);
+  }
 
-    if (!item.Splits) item.Splits = [];
+  // Responsive layout: right panel on desktop, bottom sheet on mobile
+  const isMobile = window.innerWidth < 700;
 
-    // ✅ Ensure Sales Tax is added ONLY once
-    const hasTax = item.Splits.some(s => s.Category === "Sales Tax Paid");
+  panel.style.position = "absolute";
+  panel.style.zIndex = "99999";
+  panel.style.background = "rgba(255,255,255,0.97)";
+  panel.style.borderRadius = "14px";
+  panel.style.boxShadow = "0 6px 25px rgba(0,0,0,.18)";
+  panel.style.backdropFilter = "blur(8px)";
+  panel.style.overflow = "hidden";
 
-    if (!hasTax && taxSuggestion && taxSuggestion.amount && index === 0) {
-      const taxAmount = Math.round(parseFloat(taxSuggestion.amount) * 100) / 100;
+  if(isMobile){
+    panel.style.left = "10px";
+    panel.style.right = "10px";
+    panel.style.bottom = "70px";
+    panel.style.top = "auto";
+    panel.style.maxHeight = "45vh";
+    panel.style.width = "auto";
+  } else {
+    panel.style.top = "110px";
+    panel.style.right = "10px";
+    panel.style.bottom = "10px";
+    panel.style.left = "auto";
+    panel.style.width = "38%";
+    panel.style.maxWidth = "420px";
+  }
 
-      item.Splits.push({
-        Category: "Sales Tax Paid",
-        Amount: taxAmount
-      });
-    }
+  const remaining = calculateReceiptRemaining();
 
-    // ✅ Calculate allocated (CENTS SAFE)
-    let allocatedCents = 0;
-
-    item.Splits.forEach(s => {
-      allocatedCents += Math.round(parseFloat(s.Amount || 0) * 100);
-    });
-
-    const allocated = allocatedCents / 100;
-
-    const itemTotalCents = Math.round(parseFloat(item.Price || 0) * 100);
-
-    const remainingCents = itemTotalCents - allocatedCents;
-    const remaining = remainingCents / 100;
-
-    totalAllocatedCents += allocatedCents;
-
-    const isLocked = remainingCents <= 0;
-
-    const div = document.createElement("div");
-    div.style = `
-      background:white;
-      padding:12px;
-      border-radius:12px;
-      margin-bottom:10px;
-      border-left:${isLocked ? "4px solid #2e7d32" : "none"};
-      box-shadow:0 4px 12px rgba(0,0,0,0.06);
-    `;
-
-    div.innerHTML = `
-      <div style="font-weight:600;">${item.Name}</div>
-      <div>$${parseFloat(item.Price).toFixed(2)}</div>
-      <div style="font-size:13px; color:#666;">
-        Remaining: $${remaining.toFixed(2)}
+  // Header
+  let html = `
+    <div style="padding:12px 12px 10px 12px; border-bottom:1px solid #eee;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <div style="font-weight:700;">Receipt Items</div>
+        <div style="font-size:12px; color:#666;">
+          Remaining: <strong style="color:${remaining < 0 ? "#c62828" : (Math.abs(remaining) < 0.01 ? "#2e7d32" : "#ff9800")}">
+            $${remaining.toFixed(2)}
+          </strong>
+        </div>
       </div>
+      <div style="font-size:12px; color:#666; margin-top:6px;">
+        Tap <strong>Accept</strong> to apply a split using the suggested category. Use <strong>Change</strong> if needed.
+      </div>
+    </div>
+    <div id="receiptSuggestionsList" style="overflow:auto; max-height:${isMobile ? "38vh" : "calc(100% - 70px)"}; padding:10px;">
+  `;
 
-      ${
-        item.Splits.map(s => `
-          <div style="font-size:12px; margin-top:4px;">
-            ${s.Category}: $${parseFloat(s.Amount).toFixed(2)}
+  if(!Array.isArray(receiptSuggestions) || receiptSuggestions.length === 0){
+    html += `
+      <div style="padding:14px; color:#666; text-align:center;">
+        No suggestions yet. Tap <strong>🤖 Analyze Receipt</strong>.
+      </div>
+    `;
+  } else {
+    receiptSuggestions.forEach((s, i) => {
+
+      const isActive = i === currentSuggestionIndex;
+      const isDone = !!s._accepted || !!s._locked;
+
+      const title = (s.normalized_description || s.description || s.raw_description || "Item").toString();
+      const amt = Number.parseFloat(s.amount || 0) || 0;
+
+      html += `
+        <div id="suggestion_${i}" style="
+          background:${isActive ? "#f5f5f5" : "white"};
+          border:1px solid ${isActive ? "#ddd" : "#eee"};
+          border-left:4px solid ${isDone ? "#2e7d32" : (isActive ? "#ff9800" : "transparent")};
+          border-radius:12px;
+          padding:10px;
+          margin-bottom:10px;
+        ">
+          <div style="display:flex; justify-content:space-between; gap:10px;">
+            <div style="font-weight:650; font-size:14px; line-height:1.2;">
+              ${title}
+              ${s.code_normalized ? `<div style="font-size:11px; color:#777; margin-top:4px;">Code: ${s.code_normalized}</div>` : ``}
+            </div>
+            <div style="font-weight:700; white-space:nowrap;">
+              $${amt.toFixed(2)}
+            </div>
           </div>
-        `).join("")
-      }
 
-      <button onclick="acceptLine(${index})" style="
-        margin-top:8px;
-        background:#2e7d32;
-        color:white;
-        border:none;
-        padding:8px;
-        border-radius:8px;
-        width:100%;
-      ">Accept</button>
+          <div style="font-size:12px; color:#666; margin-top:6px;">
+            Suggested: <strong>${s.suggested_category || "Needs Review"}</strong>
+            ${typeof s.confidence === "number" ? ` · Conf: ${(s.confidence * 100).toFixed(0)}%` : ``}
+          </div>
 
-      <button onclick="openCategoryPicker(${index})" style="
-        margin-top:6px;
-        background:#1976d2;
-        color:white;
-        border:none;
-        padding:8px;
-        border-radius:8px;
-        width:100%;
-      ">Change Category</button>
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <button
+              ${isDone ? "disabled" : ""}
+              onclick="acceptSuggestion(${i})"
+              style="
+                flex:1;
+                background:${isDone ? "#cfcfcf" : "#2e7d32"};
+                color:white;
+                border:none;
+                padding:10px;
+                border-radius:10px;
+                font-weight:700;
+              ">
+              ${isDone ? "✅ Applied" : "Accept"}
+            </button>
 
-      <button onclick="askAI(${index})" style="
-        margin-top:6px;
-        background:black;
-        color:white;
-        border:none;
-        padding:8px;
-        border-radius:8px;
-        width:100%;
-      ">Ask AI</button>
-    `;
+            <button
+              onclick="openReceiptCategorySelector(${i})"
+              style="
+                flex:1;
+                background:#1565c0;
+                color:white;
+                border:none;
+                padding:10px;
+                border-radius:10px;
+                font-weight:700;
+              ">
+              Change
+            </button>
+          </div>
 
-    container.appendChild(div);
-  });
+          <button
+            onclick="askAIForReceiptItem(${i})"
+            style="
+              margin-top:8px;
+              width:100%;
+              background:#000;
+              color:white;
+              border:none;
+              padding:10px;
+              border-radius:10px;
+              font-weight:700;
+            ">
+            Ask AI
+          </button>
+        </div>
+      `;
+    });
+  }
 
-  // ✅ TOTAL + REMAINING BAR (CENTS SAFE)
-  const totalCents = Math.round(parseFloat(total) * 100);
-  const remainingTotalCents = totalCents - totalAllocatedCents;
-  const remainingTotal = remainingTotalCents / 100;
+  html += `</div>`;
 
-  const remainingBar = document.getElementById("remainingBar");
+  panel.innerHTML = html;
 
-  if (remainingBar) {
-    remainingBar.innerText = `
-      Remaining: $${remainingTotal.toFixed(2)} 
-      | Allocated: $${(totalAllocatedCents / 100).toFixed(2)} 
-      | Total: $${parseFloat(total).toFixed(2)}
-    `;
+  // Keep the highlight system working (your highlightCurrentSuggestion expects these IDs)
+  try {
+    highlightCurrentSuggestion();
+  } catch(e) {
+    // safe fail
+  }
+
+  // Also keep the remaining bar in sync
+  try {
+    updateRemainingUI();
+  } catch(e) {
+    // safe fail
   }
 }
 
