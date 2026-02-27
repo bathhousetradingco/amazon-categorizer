@@ -1591,22 +1591,42 @@ async function acceptReceiptItem(itemId, idx) {
 
   if (!item.Splits) item.Splits = [];
 
-  // If exists, update; else create
   let existing = item.Splits.find(s => s.item_index === idx);
+
+  const finalCategory =
+    (existing && existing.Category) ||
+    suggestion.suggested_category ||
+    "Needs Review";
+
+  // =========================
+  // 🚀 SAVE LEARNING (NEW)
+  // =========================
+  try {
+    await supabaseClient.from("product_mappings").upsert({
+      raw_description: suggestion.raw_description,
+      normalized_description: suggestion.normalized_description,
+      category: finalCategory
+    });
+  } catch (err) {
+    console.error("Mapping save failed:", err);
+  }
+
+  // =========================
+  // EXISTING LOGIC (unchanged)
+  // =========================
   if (existing) {
     existing.Amount = amt;
-    existing.Category = existing.Category || suggestion.suggested_category || "Needs Review";
+    existing.Category = finalCategory;
   } else {
-    // block over-allocation
     const rem = calculateRemaining(item);
     if (amt > rem + 0.01) {
-      alert("This item exceeds remaining balance. Add manual splits or reset.");
+      alert("This item exceeds remaining balance.");
       return;
     }
 
     item.Splits.push({
       item_index: idx,
-      Category: suggestion.suggested_category || "Needs Review",
+      Category: finalCategory,
       Amount: amt,
       type: "receipt"
     });
