@@ -1835,175 +1835,119 @@ function moveToNextSuggestion(){
   highlightCurrentSuggestion();
 }
 
-function renderReceiptSuggestions(){
+function renderReceiptSuggestions(items, total, taxSuggestion) {
+  const container = document.getElementById("receiptItems");
+  container.innerHTML = "";
 
-  const item = data[currentIndex];
-  const total = item.Amount;
+  let totalAllocatedCents = 0;
 
-  // =============================
-  // 🔥 APPLY TAX ONCE (FIX DUPES)
-  // =============================
-  const taxSuggestion = receiptSuggestions.find(s => s._isTax);
+  items.forEach((item, index) => {
 
-  if(taxSuggestion){
+    if (!item.Splits) item.Splits = [];
 
-    const alreadySplit = item.Splits.some(split =>
-      split.Category === "Sales Tax Paid" &&
-      Math.abs(parseFloat(split.Amount) - parseFloat(taxSuggestion.amount)) < 0.01
-    );
+    // ✅ Ensure Sales Tax is added ONLY once
+    const hasTax = item.Splits.some(s => s.Category === "Sales Tax Paid");
 
-    if(!alreadySplit){
+    if (!hasTax && taxSuggestion && taxSuggestion.amount && index === 0) {
+      const taxAmount = Math.round(parseFloat(taxSuggestion.amount) * 100) / 100;
+
       item.Splits.push({
         Category: "Sales Tax Paid",
-        Amount: parseFloat(taxSuggestion.amount)
+        Amount: taxAmount
       });
     }
 
-    taxSuggestion._accepted = true;
-    taxSuggestion._locked = true;
-  }
+    // ✅ Calculate allocated (CENTS SAFE)
+    let allocatedCents = 0;
 
-  // =============================
-  // 💰 CALCULATE ALLOCATED
-  // =============================
-  let allocated = 0;
+    item.Splits.forEach(s => {
+      allocatedCents += Math.round(parseFloat(s.Amount || 0) * 100);
+    });
 
-  item.Splits.forEach(s => {
-    allocated += parseFloat(s.Amount || 0);
-  });
+    const allocated = allocatedCents / 100;
 
-  allocated = parseFloat(allocated.toFixed(2));
+    const itemTotalCents = Math.round(parseFloat(item.Price || 0) * 100);
 
-  const remaining = parseFloat((total - allocated).toFixed(2));
+    const remainingCents = itemTotalCents - allocatedCents;
+    const remaining = remainingCents / 100;
 
-  // =============================
-  // 🎨 HEADER
-  // =============================
-  let html = `
-    <div id="remainingBar" style="
-      font-weight:700;
-      margin-bottom:10px;
-      font-size:15px;
-      background:#fff;
+    totalAllocatedCents += allocatedCents;
+
+    const isLocked = remainingCents <= 0;
+
+    const div = document.createElement("div");
+    div.style = `
+      background:white;
       padding:12px;
       border-radius:12px;
-      line-height:1.4;
-      box-shadow:0 2px 8px rgba(0,0,0,.08);
-    ">
-      Total: $${total.toFixed(2)}<br>
-      Allocated: $${allocated.toFixed(2)}<br>
-      <span style="color:${
-        Math.abs(remaining) < 0.01 ? "green" :
-        remaining < 0 ? "red" : "orange"
-      }">
-        Remaining: $${remaining.toFixed(2)}
-      </span>
-    </div>
-  `;
-
-  // =============================
-  // 📦 LINE ITEMS
-  // =============================
-  receiptSuggestions.forEach((s, i) => {
-
-    const isLocked = s._accepted || s._locked;
-    const isTax = s._isTax;
-
-    html += `
-      <div id="suggestion_${i}" style="
-        background:white;
-        border-radius:12px;
-        padding:12px;
-        margin-bottom:10px;
-        box-shadow:0 2px 8px rgba(0,0,0,.08);
-        opacity:${isLocked ? 0.6 : 1};
-        border-left:${isLocked ? "4px solid #2e7d32" : "none"};
-      ">
-
-        <div style="font-weight:600; margin-bottom:4px;">
-          ${s.normalized_description || s.description || s.raw_description}
-        </div>
-
-        <div style="font-size:14px; margin-bottom:6px;">
-          $${parseFloat(s.amount).toFixed(2)}
-        </div>
-
-        <div style="font-size:13px; margin-bottom:8px;">
-          Suggested: ${s.suggested_category || "Needs Review"}
-        </div>
-
-        ${isTax ? `
-          <div style="
-            background:#eee;
-            padding:10px;
-            border-radius:10px;
-            text-align:center;
-            font-weight:600;
-            margin-bottom:6px;
-          ">
-            ✅ Sales Tax Applied
-          </div>
-        ` : isLocked ? `
-          <div style="
-            text-align:center;
-            font-weight:600;
-            color:#2e7d32;
-            padding:10px;
-          ">
-            ✔ Accepted
-          </div>
-        ` : `
-          <button onclick="acceptSuggestion(${i})"
-            style="
-              width:100%;
-              background:#2e7d32;
-              color:white;
-              padding:10px;
-              border-radius:10px;
-              margin-bottom:6px;
-            ">
-            Accept
-          </button>
-        `}
-
-        ${!isTax ? `
-          <button onclick="openReceiptCategorySelector(${i})"
-            style="
-              width:100%;
-              background:#1565c0;
-              color:white;
-              padding:10px;
-              border-radius:10px;
-              margin-bottom:6px;
-            ">
-            Change Category
-          </button>
-
-          <button onclick="askAIForReceiptItem(${i})"
-            style="
-              width:100%;
-              background:#000;
-              color:white;
-              padding:10px;
-              border-radius:10px;
-            ">
-            Ask AI
-          </button>
-        ` : ``}
-
-      </div>
+      margin-bottom:10px;
+      border-left:${isLocked ? "4px solid #2e7d32" : "none"};
+      box-shadow:0 4px 12px rgba(0,0,0,0.06);
     `;
+
+    div.innerHTML = `
+      <div style="font-weight:600;">${item.Name}</div>
+      <div>$${parseFloat(item.Price).toFixed(2)}</div>
+      <div style="font-size:13px; color:#666;">
+        Remaining: $${remaining.toFixed(2)}
+      </div>
+
+      ${
+        item.Splits.map(s => `
+          <div style="font-size:12px; margin-top:4px;">
+            ${s.Category}: $${parseFloat(s.Amount).toFixed(2)}
+          </div>
+        `).join("")
+      }
+
+      <button onclick="acceptLine(${index})" style="
+        margin-top:8px;
+        background:#2e7d32;
+        color:white;
+        border:none;
+        padding:8px;
+        border-radius:8px;
+        width:100%;
+      ">Accept</button>
+
+      <button onclick="openCategoryPicker(${index})" style="
+        margin-top:6px;
+        background:#1976d2;
+        color:white;
+        border:none;
+        padding:8px;
+        border-radius:8px;
+        width:100%;
+      ">Change Category</button>
+
+      <button onclick="askAI(${index})" style="
+        margin-top:6px;
+        background:black;
+        color:white;
+        border:none;
+        padding:8px;
+        border-radius:8px;
+        width:100%;
+      ">Ask AI</button>
+    `;
+
+    container.appendChild(div);
   });
 
-  modalTitle.innerText = "Receipt Items";
-  modalContent.innerHTML = html;
+  // ✅ TOTAL + REMAINING BAR (CENTS SAFE)
+  const totalCents = Math.round(parseFloat(total) * 100);
+  const remainingTotalCents = totalCents - totalAllocatedCents;
+  const remainingTotal = remainingTotalCents / 100;
 
-  openModal(300000);
+  const remainingBar = document.getElementById("remainingBar");
 
-  setTimeout(() => {
-    updateRemainingUI();
-    highlightCurrentSuggestion();
-  }, 50);
+  if (remainingBar) {
+    remainingBar.innerText = `
+      Remaining: $${remainingTotal.toFixed(2)} 
+      | Allocated: $${(totalAllocatedCents / 100).toFixed(2)} 
+      | Total: $${parseFloat(total).toFixed(2)}
+    `;
+  }
 }
 
 
