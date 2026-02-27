@@ -1797,6 +1797,18 @@ async function applyReceiptCategory(category) {
 
   const idx = aiContext.itemIndex;
   const suggestion = item.receipt_analysis.items[idx];
+  // =========================
+// 🚀 SAVE LEARNING (NEW)
+// =========================
+try {
+  await supabaseClient.from("product_mappings").upsert({
+    raw_description: suggestion.raw_description,
+    normalized_description: suggestion.normalized_description,
+    category: category
+  });
+} catch (err) {
+  console.error("Mapping save failed:", err);
+}
   const amt = Number(suggestion.amount || 0);
   if (!item.Splits) item.Splits = [];
 
