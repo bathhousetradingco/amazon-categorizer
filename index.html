@@ -51,17 +51,18 @@ overflow:auto;
 
 .modalBox {
   background:white;
-  width:95%;
-  max-width:600px;   /* 👈 smaller */
-  height:auto;       /* 👈 not full height */
-  max-height:75vh;   /* 👈 scrollable */
+  width:98%;
+  max-width:1100px;   /* 👈 BIGGER */
+  height:90vh;        /* 👈 FULL HEIGHT */
   border-radius:16px;
+  display:flex;
+  flex-direction:column;
 }
 
 #modalContent {
   flex:1;
   overflow:auto;
-  min-height:0; /* 👈 CRITICAL fix for flex scrolling */
+  padding:10px;
 }
 
 .modalClose {
@@ -1666,28 +1667,31 @@ async function analyzeReceipt(item){
  function acceptSuggestion(itemId, index){
 
   const item = data.find(d => d.id === itemId);
+  if(!item) return;
+
   const suggestion = item.receipt_analysis.items[index];
 
   if(!item.Splits) item.Splits = [];
 
-  // 🚫 prevent duplicate
+  // 🚫 prevent duplicate clicks
   const exists = item.Splits.find(s => s.item_index === index);
   if(exists) return;
 
   item.Splits.push({
     item_index: index,
-    Category: suggestion.suggested_category,
-    Amount: suggestion.amount
+    Category: suggestion.suggested_category || "Needs Review",
+    Amount: parseFloat(suggestion.amount || 0)
   });
 
-  // 🔥 mark as accepted
+  // 🔥 mark accepted
   suggestion._accepted = true;
 
-  renderReceiptSuggestions(item, item.receipt_analysis.items);
-
+  // 🔥 FORCE UI refresh (this is what was missing)
   updateRemainingUI();
   updateSplitSummaryUI();
   updateTotals();
+
+  renderReceiptSuggestions(item, item.receipt_analysis.items);
 }
 
 
@@ -1838,7 +1842,12 @@ function renderReceiptSuggestions(item, suggestions){
 
                 ${
                   !isAccepted
-                  ? `<button onclick="this.disabled=true; acceptSuggestion(${item.id}, ${i})"
+? `<button 
+      onclick="acceptSuggestion(${item.id}, ${i})"
+      style="flex:1; background:#2e7d32; color:white;">
+      Accept
+    </button>`
+: ``
                       style="flex:1; background:#2e7d32; color:white;">
                       Accept
                     </button>`
@@ -2859,9 +2868,6 @@ renderReceiptSuggestions(item, item.receipt_analysis.items);
 
 function changeCategory(itemId, index){
 
-  const item = data.find(d => d.id === itemId);
-
-  // 🔥 store context
   aiContext = {
     type: "receipt",
     index: index,
@@ -2869,13 +2875,13 @@ function changeCategory(itemId, index){
     mode: "change"
   };
 
-  // 🔥 open category picker (reuse your existing UI)
+  // 🔥 IMPORTANT: do NOT close modal
   openReceiptCategorySelector(index);
 }
 
 function selectCategory(category){
 
-  // 🔒 RECEIPT MODE
+  // ✅ RECEIPT MODE
   if(aiContext && aiContext.type === "receipt"){
 
     const item = data[currentIndex];
@@ -2884,31 +2890,28 @@ function selectCategory(category){
 
     if(!item.Splits) item.Splits = [];
 
-    // 🔥 find existing split
     let existing = item.Splits.find(s => s.item_index === index);
 
     if(existing){
-      // ✅ UPDATE (this is the fix for "Change")
+      // 🔁 CHANGE EXISTING
       existing.Category = category;
     } else {
-      // ✅ FIRST TIME APPLY
+      // ✅ FIRST ACCEPT
       item.Splits.push({
         item_index: index,
         Category: category,
-        Amount: suggestion.amount
+        Amount: parseFloat(suggestion.amount || 0)
       });
     }
 
-    // 🔥 mark suggestion state
     suggestion._accepted = true;
 
-    // ✅ CLOSE ONLY CATEGORY PICKER
+    // 🔥 ONLY close picker
     closeModal();
 
-    // ✅ STAY IN RECEIPT FLOW
+    // 🔥 RE-OPEN receipt modal correctly
     renderReceiptSuggestions(item, item.receipt_analysis.items);
 
-    // ✅ UPDATE UI
     updateRemainingUI();
     updateSplitSummaryUI();
     updateTotals();
@@ -2917,7 +2920,7 @@ function selectCategory(category){
     return;
   }
 
-  // 🔁 NORMAL FLOW
+  // NORMAL FLOW
   categorize(category);
   closeModal();
 }
