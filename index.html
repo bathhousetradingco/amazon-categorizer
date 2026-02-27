@@ -1645,6 +1645,7 @@ async function analyzeReceipt(item){
 }
 
   function resetButton(){
+  const btn = document.getElementById("analyzeBtn");
   if(btn){
     btn.dataset.loading = "false";
     btn.disabled = false;
@@ -1773,37 +1774,17 @@ function renderReceiptSuggestions(item, suggestions){
   modalContent.innerHTML = `
     <div style="display:flex; gap:12px; height:75vh;">
 
-      <!-- LEFT: RECEIPT -->
-      <div style="
-        width:55%;
-        overflow:auto;
-        background:#000;
-        border-radius:12px;
-      ">
-        ${item.receipt_url ? `
-          <img id="receiptImage" style="
-            width:100%;
-            height:auto;
-          ">
-        ` : `
-          <div style="
-            color:white;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            height:100%;
-          ">
+      <!-- LEFT -->
+      <div style="width:55%; overflow:auto; background:#000; border-radius:12px;">
+        ${item.receipt_url ? `<img id="receiptImage" style="width:100%; height:auto;">` : `
+          <div style="color:white; display:flex; align-items:center; justify-content:center; height:100%;">
             No Receipt
           </div>
         `}
       </div>
 
-      <!-- RIGHT: ITEMS -->
-      <div style="
-        width:45%;
-        overflow-y:auto;
-        padding-right:6px;
-      ">
+      <!-- RIGHT -->
+      <div style="width:45%; overflow-y:auto; padding-right:6px;">
 
         ${suggestions.map((s, i)=>{
 
@@ -1826,33 +1807,22 @@ function renderReceiptSuggestions(item, suggestions){
               opacity:${isAccepted ? "0.6" : "1"};
             ">
 
-              <div style="font-weight:600; font-size:14px;">
+              <div style="font-weight:600;">
                 ${s.normalized_description || s.raw_description}
               </div>
 
-              <div style="font-size:13px; margin-top:4px;">
-                $${amount.toFixed(2)}
-              </div>
+              <div>$${amount.toFixed(2)}</div>
 
-              <div style="font-size:13px; margin-top:4px;">
-                <strong>${category || "Needs Review"}</strong>
-              </div>
+              <div><strong>${category || "Needs Review"}</strong></div>
 
               <div style="display:flex; gap:6px; margin-top:8px;">
 
-                ${
-                  !isAccepted
-? `<button 
-      onclick="acceptSuggestion('${item.id}', ${i})"
-      style="flex:1; background:#2e7d32; color:white;">
-      Accept
-    </button>`
-: ``
-                      style="flex:1; background:#2e7d32; color:white;">
-                      Accept
-                    </button>`
-                  : ``
-                }
+                ${!isAccepted ? `
+                  <button onclick="acceptSuggestion('${item.id}', ${i})"
+                    style="flex:1; background:#2e7d32; color:white;">
+                    Accept
+                  </button>
+                ` : ``}
 
                 <button onclick="changeCategory('${item.id}', ${i})"
                   style="flex:1; background:#1565c0; color:white;">
@@ -1873,36 +1843,28 @@ function renderReceiptSuggestions(item, suggestions){
       </div>
     </div>
 
-    <!-- STICKY TOTAL BAR -->
     <div id="remainingBar" style="
       position:sticky;
       bottom:0;
-      margin-top:10px;
       background:white;
       padding:12px;
       border-radius:14px;
       box-shadow:0 -4px 20px rgba(0,0,0,.08);
-      font-weight:600;
       display:flex;
       justify-content:space-between;
+      font-weight:600;
     ">
       <div>Total: $${total.toFixed(2)}</div>
       <div>Allocated: $${allocated.toFixed(2)}</div>
       <div style="
-        color:${
-          Math.abs(remaining) < 0.01
-            ? "green"
-            : remaining < 0
-            ? "red"
-            : "orange"
-        };
+        color:${Math.abs(remaining) < 0.01 ? "green" : remaining < 0 ? "red" : "orange"};
       ">
         Remaining: $${remaining.toFixed(2)}
       </div>
     </div>
   `;
 
-  // ✅ FIX: load signed URL (CRITICAL)
+  // load image
   if(item.receipt_url){
     supabaseClient
       .storage
