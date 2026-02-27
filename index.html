@@ -1836,139 +1836,197 @@ function renderReceiptSuggestions(){
 
   modalTitle.innerText = "Receipt Items";
 
-  const item = data[currentIndex];
+  // Force solid white behind everything (prevents receipt showing through)
+  modalContent.style.background = "#fff";
 
-  let html = `
-    <div id="receiptItems" style="padding:10px;"></div>
-  `;
+  const tx = data[currentIndex];
+  if(!tx) return;
 
-  modalContent.innerHTML = html;
-
-  const container = document.getElementById("receiptItems");
-
-  let totalAllocatedCents = 0;
-
-  receiptSuggestions.forEach((s, index)=>{
-
-    const amountCents = Math.round(parseFloat(s.amount) * 100);
-
-    if(s._accepted){
-      totalAllocatedCents += amountCents;
-    }
-
-    const isLocked = s._locked;
-
-    const div = document.createElement("div");
-
-    div.style = `
-      background:white;
-      padding:12px;
-      border-radius:12px;
-      margin-bottom:10px;
-      border-left:${isLocked ? "4px solid #2e7d32" : "none"};
-      box-shadow:0 4px 12px rgba(0,0,0,0.06);
-    `;
-
-    div.innerHTML = `
-      <div style="display:flex; justify-content:space-between;">
-        <div style="font-weight:600;">
-          ${s.normalized_description}
-        </div>
-        <div>
-          $${parseFloat(s.amount).toFixed(2)}
-        </div>
-      </div>
-
-      ${s.code_normalized ? `
-        <div style="font-size:12px; color:#666;">
-          Code: ${s.code_normalized}
-        </div>
-      ` : ""}
-
-      <div style="font-size:12px; color:#666;">
-        Suggested: ${s.suggested_category} • Conf: ${Math.round(s.confidence * 100)}%
-      </div>
-
-      ${
-        s._accepted
-        ? `<div style="color:#2e7d32; font-weight:600; margin-top:6px;">✔ Accepted</div>`
-        : `
-          <button onclick="acceptSuggestion(${index})" style="
-            margin-top:8px;
-            background:#2e7d32;
-            color:white;
-            border:none;
-            padding:10px;
-            border-radius:10px;
-            width:100%;
-          ">Accept</button>
-
-          <button onclick="openReceiptCategorySelector(${index})" style="
-            margin-top:6px;
-            background:#1976d2;
-            color:white;
-            border:none;
-            padding:10px;
-            border-radius:10px;
-            width:100%;
-          ">Change</button>
-
-          <button onclick="askAIForReceiptItem(${index})" style="
-            margin-top:6px;
-            background:black;
-            color:white;
-            border:none;
-            padding:10px;
-            border-radius:10px;
-            width:100%;
-          ">Ask AI</button>
-        `
-      }
-    `;
-
-    container.appendChild(div);
-  });
-
-  // =============================
-  // ✅ ONLY ONE REMAINING BAR (BOTTOM)
-  // =============================
-
-  const totalCents = Math.round(parseFloat(item.Amount) * 100);
-  const remainingCents = totalCents - totalAllocatedCents;
-
-  const total = totalCents / 100;
-  const allocated = totalAllocatedCents / 100;
-  const remaining = remainingCents / 100;
-
-  const bottomBar = document.createElement("div");
-
-  bottomBar.style = `
-    position:sticky;
-    bottom:0;
-    left:0;
-    width:100%;
-    background:white;
-    padding:12px;
-    border-top:1px solid #eee;
-    box-shadow:0 -4px 12px rgba(0,0,0,0.1);
-    font-size:14px;
-  `;
-
-  bottomBar.innerHTML = `
-    <div>Total: $${total.toFixed(2)}</div>
-    <div>Allocated: $${allocated.toFixed(2)}</div>
-    <div style="
-      color:${
-        Math.abs(remaining) < 0.01 ? "green" :
-        remaining < 0 ? "red" : "orange"
-      };
-      font-weight:600;
+  // Wrapper gives padding + room for sticky pill
+  modalContent.innerHTML = `
+    <div id="receiptUIWrapper" style="
+      background:#fff;
+      padding:10px;
+      padding-bottom:110px; /* space so pill doesn’t cover last card */
+      min-height:100%;
+      box-sizing:border-box;
     ">
-      Remaining: $${remaining.toFixed(2)}
+      <div id="receiptItems"></div>
     </div>
   `;
 
-  modalContent.appendChild(bottomBar);
+  const container = document.getElementById("receiptItems");
+  container.innerHTML = "";
+
+  // helper for currency formatting
+  const money = (n)=> (Math.round(parseFloat(n || 0) * 100) / 100).toFixed(2);
+
+  receiptSuggestions.forEach((s, index)=>{
+
+    const isTax = !!s._isTax;
+    const isAccepted = !!s._accepted;
+    const isLocked = !!s._locked; // tax stays locked, others can stay editable
+
+    const suggested = s.suggested_category || "Needs Review";
+    const confPct = Math.round((parseFloat(s.confidence || 0) * 100));
+
+    const card = document.createElement("div");
+    card.id = `suggestion_${index}`;
+
+    card.style = `
+      background:#fff;
+      border-radius:14px;
+      padding:12px;
+      margin-bottom:10px;
+      box-shadow:0 4px 14px rgba(0,0,0,0.08);
+      border-left:${isAccepted ? "5px solid #2e7d32" : "5px solid transparent"};
+      box-sizing:border-box;
+    `;
+
+    card.innerHTML = `
+      <div style="display:flex; justify-content:space-between; gap:10px;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:700; font-size:15px; margin-bottom:4px;">
+            ${s.normalized_description || s.description || s.raw_description || "Item"}
+          </div>
+
+          ${
+            s.code_normalized
+              ? `<div style="font-size:12px; color:#666;">Code: ${s.code_normalized}</div>`
+              : ""
+          }
+
+          <div style="font-size:12px; color:#666; margin-top:2px;">
+            Suggested: <strong>${suggested}</strong>
+            ${confPct ? ` • Conf: ${confPct}%` : ``}
+          </div>
+        </div>
+
+        <div style="font-weight:800; font-size:16px; white-space:nowrap;">
+          $${money(s.amount)}
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button
+          style="
+            flex:1;
+            background:${isAccepted ? "#e8f5e9" : "#2e7d32"};
+            color:${isAccepted ? "#2e7d32" : "white"};
+            border:none;
+            padding:12px;
+            border-radius:12px;
+            font-weight:800;
+          "
+          onclick="acceptSuggestion(${index})"
+          ${isLocked ? "disabled" : ""}
+        >
+          ${isAccepted ? "Accepted" : "Accept"}
+        </button>
+
+        <button
+          style="
+            flex:1;
+            background:#1565c0;
+            color:white;
+            border:none;
+            padding:12px;
+            border-radius:12px;
+            font-weight:800;
+          "
+          onclick="openReceiptCategorySelector(${index})"
+        >
+          Change
+        </button>
+
+        <button
+          style="
+            flex:1;
+            background:#000;
+            color:white;
+            border:none;
+            padding:12px;
+            border-radius:12px;
+            font-weight:800;
+          "
+          onclick="askAIForReceiptItem(${index})"
+        >
+          Ask AI
+        </button>
+      </div>
+
+      ${
+        isTax
+          ? `<div style="font-size:12px; color:#666; margin-top:8px;">
+               Sales Tax is auto-applied and locked.
+             </div>`
+          : ``
+      }
+    `;
+
+    container.appendChild(card);
+  });
+
+  // ✅ Floating sticky totals pill (Allocated / Remaining / Total)
+  const allocatedCents = (tx.Splits || []).reduce((sum, s)=>{
+    return sum + Math.round(parseFloat(s.Amount || 0) * 100);
+  }, 0);
+
+  const totalCents = Math.round(parseFloat(tx.Amount || 0) * 100);
+  const remainingCents = totalCents - allocatedCents;
+
+  const allocated = (allocatedCents / 100);
+  const remaining = (remainingCents / 100);
+  const total = (totalCents / 100);
+
+  // Remove any previous pill so it never duplicates
+  const oldPill = document.getElementById("receiptTotalsPill");
+  if(oldPill) oldPill.remove();
+
+  const pill = document.createElement("div");
+  pill.id = "receiptTotalsPill";
+  pill.style = `
+    position: sticky;
+    bottom: 10px;
+    margin-top: 12px;
+    width: fit-content;
+    max-width: 100%;
+    background: rgba(255,255,255,0.96);
+    border: 1px solid #eee;
+    border-radius: 999px;
+    padding: 10px 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+    font-weight: 800;
+    z-index: 50;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    backdrop-filter: blur(6px);
+  `;
+
+  const remainingColor =
+    Math.abs(remaining) < 0.01 ? "green" :
+    remaining < 0 ? "red" : "#ff9800";
+
+  pill.innerHTML = `
+    <span style="margin-right:10px;">Allocated: <span style="color:#1565c0;">$${money(allocated)}</span></span>
+    <span style="margin-right:10px;">Total: <span style="color:#000;">$${money(total)}</span></span>
+    <span>Remaining: <span style="color:${remainingColor};">$${money(remaining)}</span></span>
+  `;
+
+  // Append pill to wrapper so it sticks above bottom padding
+  const wrapper = document.getElementById("receiptUIWrapper");
+  wrapper.appendChild(pill);
+
+  // Highlight the current suggestion (if you’re using the step-through flow)
+  if(typeof highlightCurrentSuggestion === "function"){
+    highlightCurrentSuggestion();
+  }
+
+  // ✅ Ensure main screen reflects accepted splits even if user closes now
+  // (this keeps your split summary on the transaction card accurate)
+  if(typeof updateSplitSummaryUI === "function") updateSplitSummaryUI();
+  if(typeof showCard === "function") showCard();
 }
 
 
