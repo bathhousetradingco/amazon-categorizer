@@ -1577,17 +1577,24 @@ async function analyzeReceipt(item){
       <div style="padding:40px; text-align:center;">
         <div style="font-size:18px;">🤖 Analyzing Receipt...</div>
         <div style="margin-top:10px; font-size:14px; opacity:.6;">
-          Extracting line items...
+          Extracting clean line items...
         </div>
       </div>
     `;
 
-    // ✅ FIXED LINE
+    // ✅ SESSION (correct client)
     const { data: { session } } = await supabaseClient.auth.getSession();
 
     if(!session){
       throw new Error("No session found");
     }
+
+    const payload = {
+      filePath: item.receipt_url,
+      categories: categories.map(c => c.name)
+    };
+
+    console.log("📤 Sending to edge:", payload);
 
     const res = await fetch(
       "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
@@ -1597,33 +1604,52 @@ async function analyzeReceipt(item){
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({
-          filePath: item.receipt_url,
-          categories: categories.map(c => c.name)
-        })
+        body: JSON.stringify(payload)
       }
     );
 
-    const result = await res.json();
+    // 🔥 CRITICAL FIX — read as text first
+    const rawText = await res.text();
+    console.log("📥 RAW EDGE RESPONSE:", rawText);
+
+    let result;
+
+    try {
+      result = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error("❌ JSON PARSE FAILED:", rawText);
+      throw new Error("Edge function returned invalid JSON");
+    }
 
     if(!res.ok){
       throw new Error(result.error || "Analyze failed");
     }
 
-    // ✅ Store result (like your system expects)
+    console.log("✅ Parsed result:", result);
+
+    // ✅ Normalize expected structure
+    const lineItems = result.line_items || result.items || [];
+    const taxAmount = result.tax_amount ?? result.tax ?? 0;
+
+    // 🚫 Prevent empty results
+    if(lineItems.length === 0){
+      throw new Error("No valid line items detected");
+    }
+
+    // ✅ Store result
     item.receipt_analysis = {
-      items: result.line_items,
-      tax_amount: result.tax_amount
+      items: lineItems,
+      tax_amount: taxAmount
     };
 
     // ✅ Apply tax
-    await ensureSalesTaxApplied(result.tax_amount);
+    await ensureSalesTaxApplied(taxAmount);
 
     // ✅ Render UI
-    renderReceiptSuggestions(item, result.line_items);
+    renderReceiptSuggestions(item, lineItems);
 
   } catch (err) {
-    console.error(err);
+    console.error("❌ Analyze error:", err);
 
     modalContent.innerHTML = `
       <div style="padding:40px; text-align:center; color:red;">
