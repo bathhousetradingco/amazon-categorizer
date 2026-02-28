@@ -834,8 +834,7 @@ const response = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions
   merchant_name: vendor,
   date: formattedDate,
   amount: amount,
-  category: "",
-  source: "manual"
+  category: ""
 })
 });
 
@@ -937,16 +936,15 @@ complete: async (res) => {
 
   const userId = session.user.id;
 
-  const rowsToInsert = res.data.map(row => ({
-    user_id: userId,
-    date: row.date,
-    source: "csv",
-    name: row.title,
-    merchant_name: row.vendor || row.Vendor || row.VENDOR || "",
-    amount: parseFloat(row.amount) || 0,
-    category: row.category || "",
-    splits: []
-  }));
+const rowsToInsert = res.data.map(row => ({
+  user_id: userId,
+  date: row.date,
+  name: row.title,
+  merchant_name: row.vendor || row.Vendor || row.VENDOR || "",
+  amount: parseFloat(row.amount) || 0,
+  category: row.category || "",
+  splits: []
+}));
 
   const { error } = await supabaseClient
     .from("transactions")
