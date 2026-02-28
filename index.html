@@ -682,6 +682,7 @@ async function forcePlaidSync(){
   try {
 
     const { data: { session } } = await supabaseClient.auth.getSession();
+
     if(!session){
       alert("Not logged in");
       return;
@@ -697,6 +698,25 @@ async function forcePlaidSync(){
         })
       }
     );
+
+    const result = await res.json();
+
+    if(!res.ok){
+      console.error(result);
+      alert("Transaction sync failed");
+      return;
+    }
+
+    await loadTransactions();
+
+    alert("Transactions synced!");
+
+  } catch(err){
+    console.error(err);
+    alert("Sync error");
+  }
+
+}
 function applyYearFilter(){
   const val = document.getElementById("yearFilter").value;
   activeYearFilter = val || null;
