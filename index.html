@@ -269,14 +269,20 @@ async function loadTransactions() {
 
   data = rows.map(r => ({
   id: r.id,
-  Title: r.title,
-  Vendor: r.vendor,
+
+  // 🔥 FIXED MAPPING
+  Title: r.name || r.title || "",
+  Vendor: r.merchant_name || r.vendor || r.name || "",
+
   Date: r.date,
   Amount: r.amount,
+
   Category: r.category || "",
   Splits: r.splits || [],
+
   receipt_url: r.receipt_url,
-  Institution: r.institution || ""   // 👈 ADD THIS LINE
+
+  Institution: r.institution_name || r.institution || ""
 }));
 
   app.style.display = "block";
