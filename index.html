@@ -681,33 +681,22 @@ async function forcePlaidSync(){
 
   try {
 
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if(!session){
+      alert("Not logged in");
+      return;
+    }
+
     const res = await fetch(
       "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions",
       {
         method: "POST",
-        headers: await getAuthHeaders()
+        headers: await getAuthHeaders(),
+        body: JSON.stringify({
+          user_id: session.user.id
+        })
       }
     );
-
-    const data = await res.json();
-
-    if(!res.ok){
-      console.error(data);
-      alert("Sync failed");
-      return;
-    }
-
-    console.log("Sync result:", data);
-
-    await loadTransactions();
-
-    alert(`Sync complete. Inserted: ${data.inserted}`);
-
-  } catch(err){
-    console.error(err);
-    alert("Error triggering sync");
-  }
-}
 function applyYearFilter(){
   const val = document.getElementById("yearFilter").value;
   activeYearFilter = val || null;
@@ -2691,14 +2680,19 @@ async function connectBank() {
         return;
       }
 
-      // Sync transactions
-      const syncRes = await fetch(
-        "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions",
-        {
-          method: "POST",
-          headers: await getAuthHeaders()
-        }
-      );
+// Sync transactions
+const { data: { session } } = await supabaseClient.auth.getSession();
+
+const syncRes = await fetch(
+  "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-plaid-transactions",
+  {
+    method: "POST",
+    headers: await getAuthHeaders(),
+    body: JSON.stringify({
+      user_id: session.user.id
+    })
+  }
+);
 
       const syncData = await syncRes.json();
 
