@@ -1551,67 +1551,83 @@ inputBox.style.left = Math.min(
 }
 let receiptSuggestions = [];
 let currentSuggestionIndex = 0;
-async function analyzeReceipt(item){
+async function analyzeReceipt(filePath, btn){
 
-  if(item._analyzing) return;
-
-  // 🔁 already analyzed → just reopen
-  if(item.receipt_analysis){
-    await ensureSalesTaxApplied(item.receipt_analysis.tax_amount);
-    renderReceiptSuggestions(item, item.receipt_analysis.items);
+  // 🚫 HARD STOP if already processing
+  if(btn && btn.dataset.loading === "true"){
+    console.log("Already analyzing — blocked duplicate click");
     return;
   }
 
-  const btn = document.getElementById("analyzeBtn");
-
-  item._analyzing = true;
-
   // 🔒 LOCK BUTTON
   if(btn){
+    btn.dataset.loading = "true";
     btn.disabled = true;
     btn.innerText = "⏳ Analyzing...";
     btn.style.opacity = "0.6";
+    btn.style.cursor = "not-allowed";
   }
 
   try {
 
-    const res = await fetch(
-  "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
-  {
-    method: "POST",
-    headers: await getAuthHeaders(),
-    body: JSON.stringify({
-      filePath: item.receipt_url,
-      categories: categories.map(c => c.name)
-    })
-  }
-);
+    openModal();
 
-    const result = await res.json();
+    modalContent.innerHTML = `
+      <div style="padding:40px; text-align:center;">
+        <div style="font-size:18px;">🤖 Analyzing Receipt...</div>
+        <div style="margin-top:10px; font-size:14px; opacity:.6;">
+          Please wait — extracting line items
+        </div>
+      </div>
+    `;
 
-    item.receipt_analysis = {
-  items: result.line_items,
-  tax_amount: result.tax_amount
-};
+    const session = await supabase.auth.getSession();
 
-    // ✅ APPLY TAX FIRST
-    await ensureSalesTaxApplied(result.tax_amount);
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/analyze-receipt`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session.data.session.access_token}`
+      },
+      body: JSON.stringify({ filePath })
+    });
 
-    // ✅ OPEN RECEIPT UI
-    renderReceiptSuggestions(item, result.line_items);
+    const data = await res.json();
 
-  } catch (e) {
-    console.error(e);
-    alert("Receipt analysis failed.");
-  }
+    if(!res.ok){
+      throw new Error(data.error || "Analyze failed");
+    }
 
-  // 🔓 UNLOCK BUTTON
-  item._analyzing = false;
+    if(!data.line_items || data.line_items.length === 0){
+      modalContent.innerHTML = `
+        <div style="padding:40px; text-align:center;">
+          <div style="font-size:18px;">⚠️ No items found</div>
+        </div>
+      `;
+      return;
+    }
 
-  if(btn){
-    btn.disabled = false;
-    btn.innerText = "🤖 Analyze Receipt";
-    btn.style.opacity = "1";
+    renderLineItems(data.line_items, data.tax_amount);
+
+  } catch (err) {
+    console.error(err);
+
+    modalContent.innerHTML = `
+      <div style="padding:40px; text-align:center; color:red;">
+        ❌ ${err.message}
+      </div>
+    `;
+  } finally {
+
+    // 🔓 ALWAYS UNLOCK BUTTON
+    if(btn){
+      btn.dataset.loading = "false";
+      btn.disabled = false;
+      btn.innerText = "Analyze Receipt";
+      btn.style.opacity = "1";
+      btn.style.cursor = "pointer";
+    }
+
   }
 }
 
