@@ -1636,7 +1636,7 @@ async function analyzeReceipt(item){
 
   
 
- function acceptSuggestion(itemId, index){
+ async function acceptSuggestion(itemId, index){
 
   const item = data.find(d => d.id === itemId);
   if(!item) return;
@@ -1649,16 +1649,53 @@ async function analyzeReceipt(item){
   const exists = item.Splits.find(s => s.item_index === index);
   if(exists) return;
 
+  // =============================
+  // ✅ APPLY SPLIT
+  // =============================
   item.Splits.push({
     item_index: index,
     Category: suggestion.suggested_category || "Needs Review",
     Amount: parseFloat(suggestion.amount || 0)
   });
 
-  // 🔥 mark accepted
   suggestion._accepted = true;
 
-  // 🔥 FORCE UI refresh (this is what was missing)
+  // =============================
+  // 🧠 SAVE TO MEMORY (NEW)
+  // =============================
+  try {
+
+    // Extract product code if available
+    const codeMatch = suggestion.raw_description?.match(/\b\d{5,15}\b/);
+
+    if(codeMatch){
+
+      const rawCode = codeMatch[0];
+      const normalizedCode = rawCode.replace(/^0+/, "") || rawCode;
+
+      const productName =
+        suggestion.normalized_description ||
+        suggestion.raw_description;
+
+      await supabaseClient
+        .from("product_match_memory")
+        .upsert({
+          product_code: normalizedCode,
+          product_name: productName
+        }, {
+          onConflict: "product_code"
+        });
+
+      console.log("✅ Learned product:", normalizedCode, productName);
+    }
+
+  } catch(e){
+    console.warn("Memory save failed:", e);
+  }
+
+  // =============================
+  // 🔄 UI UPDATES
+  // =============================
   updateRemainingUI();
   updateSplitSummaryUI();
   updateTotals();
