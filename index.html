@@ -1551,21 +1551,22 @@ inputBox.style.left = Math.min(
 }
 let receiptSuggestions = [];
 let currentSuggestionIndex = 0;
-async function analyzeReceipt(filePath, btn){
+async function analyzeReceipt(item){
 
-  // 🚫 HARD STOP if already processing
+  const btn = document.getElementById("analyzeBtn");
+
+  // 🚫 Prevent double click
   if(btn && btn.dataset.loading === "true"){
-    console.log("Already analyzing — blocked duplicate click");
+    console.log("Blocked duplicate analyze");
     return;
   }
 
-  // 🔒 LOCK BUTTON
+  // 🔒 Lock button
   if(btn){
     btn.dataset.loading = "true";
     btn.disabled = true;
     btn.innerText = "⏳ Analyzing...";
     btn.style.opacity = "0.6";
-    btn.style.cursor = "not-allowed";
   }
 
   try {
@@ -1576,38 +1577,50 @@ async function analyzeReceipt(filePath, btn){
       <div style="padding:40px; text-align:center;">
         <div style="font-size:18px;">🤖 Analyzing Receipt...</div>
         <div style="margin-top:10px; font-size:14px; opacity:.6;">
-          Please wait — extracting line items
+          Extracting line items...
         </div>
       </div>
     `;
 
-    const session = await supabase.auth.getSession();
+    // ✅ FIXED LINE
+    const { data: { session } } = await supabaseClient.auth.getSession();
 
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/analyze-receipt`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${session.data.session.access_token}`
-      },
-      body: JSON.stringify({ filePath })
-    });
+    if(!session){
+      throw new Error("No session found");
+    }
 
-    const data = await res.json();
+    const res = await fetch(
+      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          filePath: item.receipt_url,
+          categories: categories.map(c => c.name)
+        })
+      }
+    );
+
+    const result = await res.json();
 
     if(!res.ok){
-      throw new Error(data.error || "Analyze failed");
+      throw new Error(result.error || "Analyze failed");
     }
 
-    if(!data.line_items || data.line_items.length === 0){
-      modalContent.innerHTML = `
-        <div style="padding:40px; text-align:center;">
-          <div style="font-size:18px;">⚠️ No items found</div>
-        </div>
-      `;
-      return;
-    }
+    // ✅ Store result (like your system expects)
+    item.receipt_analysis = {
+      items: result.line_items,
+      tax_amount: result.tax_amount
+    };
 
-    renderLineItems(data.line_items, data.tax_amount);
+    // ✅ Apply tax
+    await ensureSalesTaxApplied(result.tax_amount);
+
+    // ✅ Render UI
+    renderReceiptSuggestions(item, result.line_items);
 
   } catch (err) {
     console.error(err);
@@ -1617,15 +1630,15 @@ async function analyzeReceipt(filePath, btn){
         ❌ ${err.message}
       </div>
     `;
+
   } finally {
 
-    // 🔓 ALWAYS UNLOCK BUTTON
+    // 🔓 Always unlock button
     if(btn){
       btn.dataset.loading = "false";
       btn.disabled = false;
-      btn.innerText = "Analyze Receipt";
+      btn.innerText = "🤖 Analyze Receipt";
       btn.style.opacity = "1";
-      btn.style.cursor = "pointer";
     }
 
   }
