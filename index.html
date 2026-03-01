@@ -1167,21 +1167,47 @@ return vendorMatch || amountMatch;
 /* Navigation */
 
 function goNext(){
-const visible=getVisibleIndexes();
-let pos=visible.indexOf(currentIndex);
-if(pos<visible.length-1){
-currentIndex=visible[pos+1];
-showCard();
-}
+  const visible = getVisibleIndexes();
+
+  let pos = visible.indexOf(currentIndex);
+
+  // 🔥 FIX: if index not found, don't reset to 0
+  if(pos === -1){
+    // try to move forward based on raw index instead
+    const next = visible.find(i => i > currentIndex);
+
+    if(next !== undefined){
+      currentIndex = next;
+      showCard();
+    }
+    return;
+  }
+
+  if(pos < visible.length - 1){
+    currentIndex = visible[pos + 1];
+    showCard();
+  }
 }
 
 function goBack(){
-const visible=getVisibleIndexes();
-let pos=visible.indexOf(currentIndex);
-if(pos>0){
-currentIndex=visible[pos-1];
-showCard();
-}
+  const visible = getVisibleIndexes();
+
+  let pos = visible.indexOf(currentIndex);
+
+  if(pos === -1){
+    const prev = [...visible].reverse().find(i => i < currentIndex);
+
+    if(prev !== undefined){
+      currentIndex = prev;
+      showCard();
+    }
+    return;
+  }
+
+  if(pos > 0){
+    currentIndex = visible[pos - 1];
+    showCard();
+  }
 }
 
 /* Category Buttons */
@@ -1287,31 +1313,34 @@ function showCategoryInfo(name){
   
 async function categorize(name){
 
-const item = data[currentIndex];
+  const item = data[currentIndex];
 
-item.Category = name;
-item.Splits = [];
+  item.Category = name;
+  item.Splits = [];
 
-updateTotals();
-updateProgress();
+  updateTotals();
+  updateProgress();
 
-if(item.id){
-  const { error } = await supabaseClient
-    .from("transactions")
-    .update({
-      category: name,
-      splits: []
-    })
-    .eq("id", item.id);
+  if(item.id){
+    const { error } = await supabaseClient
+      .from("transactions")
+      .update({
+        category: name,
+        splits: []
+      })
+      .eq("id", item.id);
 
-  if(error){
-    console.error("Category save error:", error);
-    alert("Error saving category to database.");
-    return;
+    if(error){
+      console.error("Category save error:", error);
+      alert("Error saving category to database.");
+      return;
+    }
   }
-}
 
-goNext();
+  // 🔥 slight delay prevents UI race condition
+  setTimeout(() => {
+    goNext();
+  }, 0);
 }
 
 async function openSplitModal(){
