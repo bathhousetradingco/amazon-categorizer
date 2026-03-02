@@ -677,11 +677,25 @@ function populateYearFilter(){
   const select = document.getElementById("yearFilter");
   select.innerHTML = `<option value="">All Years</option>`;
 
-  Array.from(years)
-    .sort((a,b)=>b-a)
+  const sortedYears = Array.from(years)
+    .sort((a,b)=>b-a);
+
+  sortedYears
     .forEach(y=>{
       select.innerHTML += `<option value="${y}">${y}</option>`;
     });
+
+  if (sortedYears.length === 0) {
+    activeYearFilter = null;
+    select.value = "";
+    return;
+  }
+
+  const shouldKeepCurrentYear =
+    activeYearFilter && sortedYears.includes(activeYearFilter);
+
+  activeYearFilter = shouldKeepCurrentYear ? activeYearFilter : sortedYears[0];
+  select.value = activeYearFilter;
 }
 async function forcePlaidSync(){
 
