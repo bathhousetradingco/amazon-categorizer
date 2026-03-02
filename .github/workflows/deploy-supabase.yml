@@ -15,13 +15,14 @@ jobs:
       - uses: supabase/setup-cli@v1
 
       - run: |
-          supabase functions deploy analyze-receipt --project-ref xbayklklcdohewvnbglq --no-verify-jwt
-          supabase functions deploy ask-ai --project-ref xbayklklcdohewvnbglq --no-verify-jwt
-          supabase functions deploy create-link-token --project-ref xbayklklcdohewvnbglq --no-verify-jwt
-          supabase functions deploy exchange-token --project-ref xbayklklcdohewvnbglq --no-verify-jwt
-          supabase functions deploy parse-receipt --project-ref xbayklklcdohewvnbglq --no-verify-jwt
-          supabase functions deploy plaid-webhook --project-ref xbayklklcdohewvnbglq --no-verify-jwt
-          supabase functions deploy sync-plaid-transactions --project-ref xbayklklcdohewvnbglq --no-verify-jwt
-          supabase functions deploy sync-transactions --project-ref xbayklklcdohewvnbglq --no-verify-jwt
+          # JWT behavior is controlled in supabase/config.toml.
+          supabase functions deploy analyze-receipt --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy ask-ai --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy create-link-token --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy exchange-token --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy parse-receipt --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy plaid-webhook --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy sync-plaid-transactions --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy sync-transactions --project-ref xbayklklcdohewvnbglq
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
