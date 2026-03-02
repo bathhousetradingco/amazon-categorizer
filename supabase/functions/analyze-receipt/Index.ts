@@ -15,6 +15,8 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req) => {
+  console.log("ANALYZE RECEIPT VERSION TEST-001");
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -25,6 +27,7 @@ Deno.serve(async (req) => {
     const categories: string[] = Array.isArray(body?.categories) ? body.categories : [];
 
     if (!filePath) throw new Error("Missing filePath");
+    if (!Array.isArray(body?.categories)) throw new Error("Missing categories array");
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -35,14 +38,17 @@ Deno.serve(async (req) => {
       .download(filePath);
 
     if (dlErr || !fileBlob) throw new Error("Download failed");
+    if (fileBlob.size === 0) throw new Error("Downloaded file is empty");
 
     const base64 = await blobToBase64(fileBlob);
 
     /* ================= OCR TEXT ================= */
     const ocrText = await openaiVisionOCR(base64);
+    console.log("Raw OCR text length:", ocrText.length);
 
     /* ================= STAGE 1: STRUCTURED EXTRACTION ================= */
     const structured = parseReceiptStructured(ocrText);
+    console.log("Number of parsed items:", structured.items.length);
 
     // Backward-compatible fallback if OCR happened to return legacy JSON
     if (!structured.items.length) {
@@ -66,14 +72,19 @@ Deno.serve(async (req) => {
     }
 
     if (!structured.items.length) {
-      throw new Error("OCR did not return parsable receipt line items");
+      return new Response(
+        JSON.stringify({
+          error: "No valid line items detected"
+        }),
+        { status: 400 }
+      );
     }
 
     /* ================= STAGE 2: CONTROLLED AI REFINEMENT ================= */
     const refinedDescriptions = await refineStructuredItemsWithAI(structured.items);
 
     /* ================= POST-FILTER (kill non-products) ================= */
-    const cleanedItems = structured.items
+    const postFilteredItems = structured.items
       .map((item, idx) => ({
         name: String(refinedDescriptions[idx] || item.description || item.raw_line).trim(),
         amount: Number(item.total_price),
@@ -81,11 +92,11 @@ Deno.serve(async (req) => {
       }))
       .filter((x: any) => isValidProductLine(x.name, x.amount));
 
-    const taxAmount = Number(structured.tax || 0) || 0;
+    const parsedTaxAmount = Number(structured.tax || 0);
 
     /* ================= ENRICH + NORMALIZE ================= */
-    const enriched = await Promise.all(
-      cleanedItems.map(async (item: any) => {
+    const enrichedItems = await Promise.all(
+      postFilteredItems.map(async (item: any) => {
         const raw = item.name;
         const amount = Number(item.amount) || 0;
 
@@ -119,23 +130,44 @@ Deno.serve(async (req) => {
         }
 
         return {
-          raw_description: raw,
-          normalized_description: normalizedName || raw,
+          raw_description: cleanDescription(raw),
+          normalized_description: cleanDescription(normalizedName || raw),
           amount,
           suggested_category: suggestedCategory || "Needs Review",
-          product_code: codeNormalized || null,
         };
       }),
     );
 
+    const cleanedItems = Array.isArray(enrichedItems)
+      ? enrichedItems
+        .map((item) => ({
+          raw_description: cleanDescription(item.raw_description),
+          normalized_description: cleanDescription(item.normalized_description),
+          amount: Number(item.amount),
+          suggested_category: cleanDescription(item.suggested_category || "Needs Review"),
+        }))
+        .filter((item) => isValidProductLine(item.normalized_description, item.amount))
+      : [];
+
+    console.log("Final cleaned item count:", cleanedItems.length);
+
+    if (!cleanedItems.length) {
+      return new Response(
+        JSON.stringify({
+          error: "No valid line items detected"
+        }),
+        { status: 400 }
+      );
+    }
+
+    const taxAmount = Number.isFinite(parsedTaxAmount) ? parsedTaxAmount : 0;
+
     return new Response(
       JSON.stringify({
-        line_items: enriched,
-        tax_amount: taxAmount,
+        line_items: cleanedItems,
+        tax_amount: taxAmount
       }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      { headers: { "Content-Type": "application/json" } }
     );
   } catch (err: any) {
     console.error("analyze-receipt error:", err);
@@ -436,6 +468,17 @@ function isValidProductLine(name: string, amount: number): boolean {
   if (/^\s*\d+\s+at\b/i.test(n)) return false;
 
   return true;
+}
+
+
+function cleanDescription(input: string): string {
+  const cleaned = String(input || "")
+    .replace(/\s+/g, " ")
+    .replace(/[|`~^<>]+/g, " ")
+    .replace(/[\u0000-\u001F]+/g, " ")
+    .trim();
+
+  return cleaned;
 }
 
 function extractProductCode(line: string): { raw: string; normalized: string } | null {
