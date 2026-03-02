@@ -156,6 +156,7 @@ justify-content:center;
 align-items:center;
 z-index:100000; /* 👈 increased */
 overflow:auto;
+padding: 8px;
 }
 
 .modalBox {
@@ -166,6 +167,15 @@ overflow:auto;
   border-radius:16px;
   display:flex;
   flex-direction:column;
+  overflow: hidden;
+  transform: translateY(12px) scale(.99);
+  opacity: 0;
+  transition: transform .24s ease, opacity .2s ease;
+}
+
+.modalOverlay.isOpen .modalBox {
+  transform: translateY(0) scale(1);
+  opacity: 1;
 }
 
 #modalContent {
@@ -228,32 +238,91 @@ margin-top:8px;
 }
 
 /* SPLIT LAYOUT */
-.splitSideBySide {
-  display:flex;
-  gap:12px;
-  height:80vh;
+.splitModalLayout { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:100%; gap:10px; }
+.splitTotalsCard {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap:8px;
+  transition: box-shadow .2s ease, border-color .2s ease;
 }
-
-.splitLeft {
-  width:65%;
-  overflow-y:auto;
-  background:#fff;
+.splitMetric { font-size:12px; color:var(--text-soft); }
+.splitMetric strong { display:block; margin-top:2px; font-size:17px; color:var(--text); }
+.splitMetric.remaining strong { transition: color .2s ease, transform .2s ease; }
+.splitMetric.remaining.nearDone strong { color:#c47f00; }
+.splitMetric.remaining.done strong { color:#2e7d32; transform: scale(1.03); }
+.splitBody {
+  min-height: 0;
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:10px;
+}
+.receiptCard {
+  border:1px solid var(--border);
   border-radius:12px;
-  padding:4px;
+  background:#fff;
+  padding:8px;
+  box-shadow: 0 4px 16px rgba(23,32,51,.08);
 }
-
-.splitLeft iframe,
-.splitLeft img {
+.receiptViewport {
   width:100%;
-  height:auto;
-  min-height:700px;
-  border:none;
+  max-height: 32vh;
+  overflow:auto;
+  border-radius:10px;
+  background:#0f172a;
+  touch-action: pan-y pinch-zoom;
+}
+.receiptViewport img, .receiptViewport iframe { width:100%; height:auto; display:block; border:none; object-fit:contain; }
+.lineItemsScroller {
+  min-height: 0;
+  overflow:auto;
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:10px;
+  background: var(--panel-alt);
+}
+.splitItemRow {
+  display:grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap:8px;
+  align-items:center;
+  padding:8px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  margin-bottom:8px;
+  background:#fff;
+  transition: background-color .25s ease, border-color .25s ease;
+}
+.splitItemRow.justAdded { animation: splitPulse .45s ease; border-color:#2e7d32; background:#f1fbf2; }
+@keyframes splitPulse { 0%{transform:scale(.99)} 60%{transform:scale(1.01)} 100%{transform:scale(1)} }
+.splitFooterSticky {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding:10px;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  justify-content:space-between;
+  box-shadow: 0 -6px 18px rgba(23,32,51,.1);
+}
+.touchButton { min-height:44px; }
+
+@media (min-width: 860px) {
+  .splitBody { grid-template-columns: minmax(300px, 40%) minmax(0,1fr); }
+  .receiptViewport { max-height: 52vh; }
 }
 
-.splitRight {
-  width:35%;
-  overflow-y:auto;
-  padding-left:6px;
+@media (max-width: 620px) {
+  .modalOverlay { padding: 0; align-items: flex-end; }
+  .modalBox { width:100%; height:95vh; border-bottom-left-radius:0; border-bottom-right-radius:0; }
+  .splitTotalsCard { grid-template-columns: 1fr; gap:4px; }
+  .splitItemRow { grid-template-columns: minmax(0, 1fr); }
 }
 
 
@@ -462,6 +531,32 @@ const currentCategory = document.getElementById("currentCategory");
 const totals = document.getElementById("totals");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
+
+// UI COMPONENTS
+const UIComponents = {
+  updateHTML(el, html){ if(el) el.innerHTML = html; },
+  setText(el, text){ if(el) el.innerText = text; }
+};
+
+// STATE MANAGEMENT
+const AppState = {
+  get currentItem(){ return data[currentIndex]; },
+  get isModalOpen(){ return modalOverlay.style.display === "flex"; }
+};
+
+// API LAYER
+const Api = {
+  async updateTransaction(id, payload){
+    if(!id) return { error: null };
+    return supabaseClient.from("transactions").update(payload).eq("id", id);
+  }
+};
+
+// UTILITIES
+const Utils = {
+  cents(value){ return Math.round(parseFloat(value || 0) * 100); },
+  money(value){ return `$${parseFloat(value || 0).toFixed(2)}`; }
+};
 
 function toggleQuickActionsMenu() {
   const menu = document.getElementById("quickActionsMenu");
@@ -1317,36 +1412,18 @@ modalTitle.innerText = "Receipt Preview";
 const url = signedData.signedUrl;
 const isPDF = url.toLowerCase().includes(".pdf");
 
-if(isPDF){
-  modalContent.innerHTML = `
-  <div class="receiptPreview">
-    <iframe src="${url}"></iframe>
+modalContent.innerHTML = `
+  <div style="height:100%;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:10px;">
+    <div class="receiptViewport" style="max-height:100%;">
+      ${isPDF ? `<iframe src="${url}" title="Receipt PDF"></iframe>` : `<img src="${url}" alt="Receipt image">`}
+    </div>
+    <button class="touchButton" style="background:#111827;color:white;" onclick="openReceiptFullscreen('${url}')">Expand Fullscreen</button>
   </div>
-  `;
-} else {
-  modalContent.innerHTML = `
-  <div style="
-    width:100%;
-    height:100%;
-    overflow:auto;
-    display:flex;
-    justify-content:center;
-    align-items:flex-start;
-    background:#000;
-  ">
-    <img src="${url}" style="
-      max-width:100%;
-      height:auto;
-      touch-action:manipulation;
-    ">
-  </div>
-  `;
-}
-
-
+`;
 
 openModal();
 }
+
 async function removeReceipt(){
 
 const item = data[currentIndex];
@@ -1608,13 +1685,10 @@ async function categorize(name){
   updateProgress();
 
   if(item.id){
-    const { error } = await supabaseClient
-      .from("transactions")
-      .update({
-        category: name,
-        splits: []
-      })
-      .eq("id", item.id);
+    const { error } = await Api.updateTransaction(item.id, {
+      category: name,
+      splits: []
+    });
 
     if(error){
       console.error("Category save error:", error);
@@ -1629,162 +1703,205 @@ async function categorize(name){
   }, 0);
 }
 
+const SplitState = {
+  manualAmount: 0,
+  manualCategory: null,
+  highlightedIndex: null
+};
+
+function calculateSplitStats(item){
+  const allocated = (item.Splits || []).reduce((sum, s) => sum + Math.round(parseFloat(s.Amount || 0) * 100), 0) / 100;
+  const remaining = parseFloat((item.Amount - allocated).toFixed(2));
+  return { allocated, remaining };
+}
+
+function renderSplitTotals(item){
+  const { allocated, remaining } = calculateSplitStats(item);
+  const remainingClass = Math.abs(remaining) < 0.01 ? "done" : remaining <= item.Amount * 0.2 ? "nearDone" : "";
+  return `
+    <div id="remainingBar" class="splitTotalsCard">
+      <div class="splitMetric">Total<strong>$${item.Amount.toFixed(2)}</strong></div>
+      <div class="splitMetric">Assigned<strong>$${allocated.toFixed(2)}</strong></div>
+      <div class="splitMetric remaining ${remainingClass}">Remaining<strong>$${remaining.toFixed(2)}</strong></div>
+    </div>
+  `;
+}
+
+function renderSplitItems(item){
+  if(!(item.Splits || []).length){
+    return `<div class="small">No line items assigned yet. Add your first split below.</div>`;
+  }
+
+  return item.Splits.map((s, i) => `
+    <div class="splitItemRow ${SplitState.highlightedIndex === i ? "justAdded" : ""}">
+      <div><strong>${s.Category || "Uncategorized"}</strong></div>
+      <div class="small">$${parseFloat(s.Amount || 0).toFixed(2)}</div>
+      <button class="touchButton" style="background:#c62828;color:#fff;padding:8px 10px;" onclick="removeSplitAtIndex(${i})">Remove</button>
+    </div>
+  `).join("");
+}
+
 async function openSplitModal(){
   splitMode = false;
-
   const item = data[currentIndex];
-  const allocated = (item.Splits || []).reduce((sum, s) => {
-    return sum + Math.round(parseFloat(s.Amount || 0) * 100);
-  }, 0) / 100;
-  const remaining = parseFloat((item.Amount - allocated).toFixed(2));
+  if(!item) return;
 
   modalTitle.innerText = "Split Transaction";
-
   modalContent.innerHTML = `
-    <div style="position:relative; min-height:100%; padding:12px;">
-      <div id="remainingBar" style="
-        background:white;
-        padding:12px;
-        border-radius:14px;
-        border:1px solid var(--border);
-        display:flex;
-        justify-content:space-between;
-        font-weight:600;
-        margin-bottom:10px;
-      ">
-        <div>Total: $${item.Amount.toFixed(2)}</div>
-        <div>Allocated: $${allocated.toFixed(2)}</div>
-        <div style="color:${Math.abs(remaining) < 0.01 ? "green" : remaining < 0 ? "red" : "orange"};">Remaining: $${remaining.toFixed(2)}</div>
+    <div id="splitModalSheet" class="splitModalLayout">
+      ${renderSplitTotals(item)}
+      <div class="splitBody">
+        <div class="receiptCard">
+          <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <button class="touchButton" onclick="openManualSplitModal()" style="background:#1e3a8a;color:#fff;flex:1;">Add Split</button>
+            ${item.receipt_url ? `<button class="touchButton" onclick="viewReceipt()" style="background:#1565c0;color:#fff;flex:1;">View Receipt</button>` : ""}
+          </div>
+          ${item.receipt_url ? `<button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:8px;">🤖 Analyze Receipt</button>` : ""}
+          <div id="splitReceiptPreview" class="receiptViewport"></div>
+        </div>
+        <div id="splitItemsScroller" class="lineItemsScroller">${renderSplitItems(item)}</div>
       </div>
-
-      <button onclick="openManualSplitModal()" style="
-        background:#1e3a8a;
-        color:white;
-        padding:10px;
-        border-radius:10px;
-        width:100%;
-        margin-bottom:10px;
-      ">
-        Add Split Without Receipt
-      </button>
-
-      ${item.receipt_url ? `
-      <button onclick="enableSplitMode()" style="
-        background:#ff9800;
-        color:white;
-        padding:10px;
-        border-radius:10px;
-        width:100%;
-        margin-bottom:10px;
-      ">
-        Enable Split Mode
-      </button>
-
-      <button onclick="viewReceipt()" style="
-        background:#1565c0;
-        color:white;
-        padding:10px;
-        border-radius:10px;
-        width:100%;
-        margin-bottom:10px;
-      ">
-        📄 View Receipt
-      </button>
-
-      <button id="analyzeBtn" onclick="analyzeReceipt(data[currentIndex])" style="
-        background:#000;
-        color:white;
-        padding:10px;
-        border-radius:10px;
-        width:100%;
-        margin-bottom:10px;
-      ">
-        🤖 Analyze Receipt
-      </button>
-      <div style="margin-top:10px; text-align:center; color:#777;">Tap on receipt areas after enabling split mode</div>
-      ` : `<div style="margin-top:8px; text-align:center; color:#777;">No receipt attached. You can still split manually.</div>`}
+      <div class="splitFooterSticky">
+        <div id="splitCompletionText" class="small">Assign all line items to complete this transaction.</div>
+        <button id="splitDoneBtn" class="touchButton" style="background:#2e7d32;color:#fff;" onclick="completeSplitWorkflow()">Done</button>
+      </div>
     </div>
   `;
 
+  hydrateReceiptPreview(item);
+  updateSplitProgressState();
   openModal();
 }
 
 function openManualSplitModal(){
+  SplitState.manualAmount = 0;
+  SplitState.manualCategory = null;
   const item = data[currentIndex];
   if(!item) return;
 
-  const allocated = (item.Splits || []).reduce((sum, s) => {
-    return sum + Math.round(parseFloat(s.Amount || 0) * 100);
-  }, 0) / 100;
-  const remaining = parseFloat((item.Amount - allocated).toFixed(2));
-
   modalTitle.innerText = "Manual Split";
   modalContent.innerHTML = `
-    <div style="padding:12px; display:flex; flex-direction:column; gap:10px;">
-      <div id="remainingBar" style="
-        background:white;
-        padding:12px;
-        border-radius:14px;
-        border:1px solid var(--border);
-        display:flex;
-        justify-content:space-between;
-        font-weight:600;
-      ">
-        <div>Total: $${item.Amount.toFixed(2)}</div>
-        <div>Allocated: $${allocated.toFixed(2)}</div>
-        <div style="color:${Math.abs(remaining) < 0.01 ? "green" : remaining < 0 ? "red" : "orange"};">Remaining: $${remaining.toFixed(2)}</div>
+    <div class="splitModalLayout" style="padding:6px;">
+      ${renderSplitTotals(item)}
+      <div class="lineItemsScroller" style="display:grid;gap:10px;">
+        <label class="small" for="manualSplitAmount">Split Amount</label>
+        <input id="manualSplitAmount" type="number" min="0.01" step="0.01" placeholder="0.00" oninput="captureManualAmount()">
+        <button class="touchButton" onclick="openManualSplitCategorySelector()" style="background:#1e3a8a;color:white;">Choose Category</button>
+        <div id="manualSplitCategory" class="small">No category selected.</div>
       </div>
-
-      <label class="small" for="manualSplitAmount">Split Amount</label>
-      <input id="manualSplitAmount" type="number" min="0.01" step="0.01" placeholder="0.00">
-
-      <button onclick="openManualSplitCategorySelector()" style="background:#1e3a8a; color:white;">Choose Category</button>
-      <div id="manualSplitCategory" class="small">No category selected.</div>
-
-      <div style="display:flex; gap:8px;">
-        <button onclick="openSplitModal()" style="background:#6b7280; color:white; flex:1;">← Back</button>
-        <button onclick="submitManualSplit()" style="background:#2e7d32; color:white; flex:1;">Add Split</button>
+      <div class="splitFooterSticky">
+        <button class="touchButton" onclick="openSplitModal()" style="background:#6b7280;color:#fff;">← Back</button>
+        <button class="touchButton" onclick="submitManualSplit()" style="background:#2e7d32;color:#fff;">Add Split</button>
       </div>
     </div>
   `;
+}
 
-  delete window.manualSplitCategory;
+function captureManualAmount(){
+  SplitState.manualAmount = parseFloat(document.getElementById("manualSplitAmount")?.value || 0);
 }
 
 function openManualSplitCategorySelector(){
-  const amount = parseFloat(document.getElementById("manualSplitAmount")?.value || 0);
-  if(!amount || amount <= 0){
+  captureManualAmount();
+  if(!SplitState.manualAmount || SplitState.manualAmount <= 0){
     alert("Enter a valid split amount first.");
     return;
   }
 
-  pickCategory(amount).then(category => {
+  pickCategory(SplitState.manualAmount).then(category => {
     if(!category) return;
-    window.manualSplitCategory = category;
+    SplitState.manualCategory = category;
     const label = document.getElementById("manualSplitCategory");
     if(label) label.innerText = `Selected: ${category}`;
   });
 }
 
 async function submitManualSplit(){
-  const amount = parseFloat(document.getElementById("manualSplitAmount")?.value || 0);
-  const category = window.manualSplitCategory;
+  captureManualAmount();
 
-  if(!category){
+  if(!SplitState.manualCategory){
     alert("Please choose a category.");
     return;
   }
 
-  if(!amount || amount <= 0){
+  if(!SplitState.manualAmount || SplitState.manualAmount <= 0){
     alert("Enter a valid split amount.");
     return;
   }
 
-  const success = await applySplit(category, amount);
+  const success = await applySplit(SplitState.manualCategory, SplitState.manualAmount);
   if(success){
-    openManualSplitModal();
+    openSplitModal();
     showCard();
   }
+}
+
+function removeSplitAtIndex(index){
+  const item = data[currentIndex];
+  if(!item || !item.Splits || !item.Splits[index]) return;
+  item.Splits.splice(index, 1);
+  if(!item.Splits.length) item.Category = "";
+  persistSplitItem(item);
+}
+
+function hydrateReceiptPreview(item){
+  const receiptHost = document.getElementById("splitReceiptPreview");
+  if(!receiptHost) return;
+  if(!item.receipt_url){
+    receiptHost.innerHTML = `<div class="small" style="padding:12px; color:#d1d5db;">No receipt attached.</div>`;
+    return;
+  }
+
+  supabaseClient.storage.from("receipts").createSignedUrl(item.receipt_url, 60).then(({ data: signedData }) => {
+    if(!signedData?.signedUrl) return;
+    const url = signedData.signedUrl;
+    const isPDF = url.toLowerCase().includes(".pdf");
+    receiptHost.innerHTML = isPDF
+      ? `<iframe src="${url}" title="Receipt PDF"></iframe>`
+      : `<img src="${url}" alt="Receipt image" onclick="openReceiptFullscreen('${url}')">`;
+  });
+}
+
+function openReceiptFullscreen(url){
+  modalTitle.innerText = "Receipt Viewer";
+  modalContent.innerHTML = `<div class="receiptViewport" style="max-height:100%;height:100%;"><img src="${url}" alt="Receipt expanded"></div>`;
+  openModal();
+}
+
+function updateSplitProgressState(){
+  const item = data[currentIndex];
+  if(!item) return;
+  const { remaining } = calculateSplitStats(item);
+  const done = Math.abs(remaining) < 0.01;
+  const txt = document.getElementById("splitCompletionText");
+  const btn = document.getElementById("splitDoneBtn");
+  const remainingNode = document.querySelector(".splitMetric.remaining");
+
+  if(txt) txt.innerText = done ? "✅ Split completed. Ready to continue." : `Remaining to assign: $${remaining.toFixed(2)}`;
+  if(btn) {
+    btn.disabled = !done;
+    btn.style.opacity = done ? "1" : ".65";
+  }
+  if(remainingNode){
+    remainingNode.classList.toggle("done", done);
+    remainingNode.classList.toggle("nearDone", !done && remaining <= item.Amount * 0.2);
+  }
+}
+
+function completeSplitWorkflow(){
+  const item = data[currentIndex];
+  if(!item) return;
+  const { remaining } = calculateSplitStats(item);
+  if(Math.abs(remaining) >= 0.01){
+    alert("Allocate remaining balance before finishing.");
+    return;
+  }
+  const footer = document.querySelector(".splitFooterSticky");
+  if(footer) footer.style.animation = "splitPulse .45s ease";
+  setTimeout(() => {
+    closeModal();
+    showCard();
+  }, 220);
 }
 
 function initTapToSplit(){
@@ -2593,86 +2710,54 @@ function updateSplitSummaryUI(){
   el.innerHTML = buildSplitSummaryHTML(item);
 }
 
-async function applySplit(category, amount){
-
-  const item = data[currentIndex];
-
-  if (!item.Splits) {
-  item.Splits = [];
-
-  // fallback: use suggested category if present
-  if (item.Category && item.Price) {
-    item.Splits.push({
-      Category: item.Category,
-      Amount: item.Price
-    });
-  }
-}
-
-  let total = item.Splits.reduce((sum, s) => {
-    return sum + Math.round(parseFloat(s.Amount) * 100);
-  }, 0) / 100;
-
-  const remaining = parseFloat((item.Amount - total).toFixed(2));
-
-  // 🚫 prevent over allocation
-  if(amount > remaining + 0.01){
-    alert("Amount exceeds remaining balance.");
-    return false;
-  }
-
-  // ✅ snap to exact remaining (fix rounding)
-  if(Math.abs(amount - remaining) < 0.01){
-    amount = remaining;
-  }
-
-  if(amount <= 0){
-    alert("Enter a valid amount.");
-    return false;
-  }
-
-  item.Splits.push({
-    Category: category,
-    Amount: amount
-  });
-
-  item.Category = "SPLIT";
-
-  // 🔥 CRITICAL UI UPDATES
+async function persistSplitItem(item){
   updateRemainingUI();
   updateSplitSummaryUI();
   updateTotals();
   updateProgress();
 
-  // 💾 SAVE
+  if(document.getElementById("splitItemsScroller")){
+    document.getElementById("splitItemsScroller").innerHTML = renderSplitItems(item);
+  }
+  if(document.getElementById("remainingBar")){
+    document.getElementById("remainingBar").outerHTML = renderSplitTotals(item);
+  }
+  updateSplitProgressState();
+
   if(item.id){
-    const { error } = await supabaseClient
-      .from("transactions")
-      .update({
-        category: "SPLIT",
-        splits: item.Splits
-      })
-      .eq("id", item.id);
+    const { error } = await Api.updateTransaction(item.id, { category: item.Splits?.length ? "SPLIT" : "", splits: item.Splits || [] });
 
     if(error){
       console.error("Split save error:", error);
       alert("Error saving split.");
     }
   }
+}
 
-  // 🔥 FINAL REMAINING CHECK
-  let newTotal = item.Splits.reduce((sum, s) => {
-    return sum + Math.round(parseFloat(s.Amount) * 100);
-  }, 0) / 100;
+async function applySplit(category, amount){
+  const item = data[currentIndex];
+  if (!item.Splits) item.Splits = [];
 
-  const newRemaining = parseFloat((item.Amount - newTotal).toFixed(2));
+  let total = item.Splits.reduce((sum, s) => sum + Math.round(parseFloat(s.Amount) * 100), 0) / 100;
+  const remaining = parseFloat((item.Amount - total).toFixed(2));
 
-  if(Math.abs(newRemaining) < 0.01){
-    updateRemainingUI();
-    alert("Split complete");
-    closeModal();
-    showCard();
+  if(amount > remaining + 0.01){
+    alert("Amount exceeds remaining balance.");
+    return false;
   }
+
+  if(Math.abs(amount - remaining) < 0.01) amount = remaining;
+  if(amount <= 0){
+    alert("Enter a valid amount.");
+    return false;
+  }
+
+  item.Splits.push({ Category: category, Amount: amount });
+  item.Category = "SPLIT";
+  SplitState.highlightedIndex = item.Splits.length - 1;
+
+  await persistSplitItem(item);
+  setTimeout(() => { SplitState.highlightedIndex = null; }, 420);
 
   return true;
 }
@@ -2898,15 +2983,39 @@ window.scrollTo({ top: 0, behavior: "smooth" });
 
 /* Modal Controls */
 
+let modalSwipeStartY = null;
+
 function openModal(zIndex = 9999){
   modalOverlay.style.display = "flex";
   modalOverlay.style.zIndex = zIndex;
+  modalOverlay.classList.add("isOpen");
+  document.body.style.overflow = "hidden";
+  initModalSwipeClose();
 }
 
 function closeModal(){
+  modalOverlay.classList.remove("isOpen");
   modalOverlay.style.display = "none";
   modalOverlay.style.zIndex = 9999; // reset to default
   modalContent.innerHTML = "";
+  document.body.style.overflow = "";
+}
+
+function initModalSwipeClose(){
+  const sheet = document.querySelector('.modalBox');
+  if(!sheet || sheet.dataset.swipeBound) return;
+  sheet.dataset.swipeBound = 'true';
+  sheet.addEventListener('touchstart', (e) => {
+    modalSwipeStartY = e.touches[0].clientY;
+  }, { passive: true });
+  sheet.addEventListener('touchend', (e) => {
+    if(modalSwipeStartY === null) return;
+    const deltaY = e.changedTouches[0].clientY - modalSwipeStartY;
+    if(deltaY > 85 && e.changedTouches[0].clientX < window.innerWidth){
+      closeModal();
+    }
+    modalSwipeStartY = null;
+  }, { passive: true });
 }
 
 modalOverlay.addEventListener("click",function(e){
