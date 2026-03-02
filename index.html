@@ -870,36 +870,42 @@ alert("Please complete all fields.");
 return;
 }
 
-const response = await fetch("https://xbayklklcdohewvnbglq.supabase.co/functions/v1/sync-transactions", {
-  method: "POST",
-  headers: await getAuthHeaders(),
-  body: JSON.stringify({
-  title: vendor,
-  merchant_name: vendor,
-  date: formattedDate,
-  amount: amount,
-  category: ""
-})
-});
+const { data: { session } } = await supabaseClient.auth.getSession();
+if (!session) {
+  alert("You must be logged in.");
+  return;
+}
 
-const result = await response.json();
+const { data: insertedRows, error } = await supabaseClient
+  .from("transactions")
+  .insert({
+    user_id: session.user.id,
+    date: formattedDate,
+    name: vendor,
+    merchant_name: vendor,
+    amount,
+    category: "",
+    splits: []
+  })
+  .select("id, date, name, merchant_name, amount, category, splits, receipt_url")
+  .single();
 
-if (!response.ok) {
-  console.error(result);
+if (error) {
+  console.error("Create transaction error:", error);
   alert("Error saving transaction");
   return;
 }
 
 // Add instantly to UI (optimistic update)
 data.unshift({
-  id: Date.now(), // temp id
-  Title: vendor,
-  Vendor: vendor,
-  Date: formattedDate,
-  Amount: amount,
-  Category: "",
-  Splits: [],
-  receipt_url: null
+  id: insertedRows.id,
+  Title: insertedRows.name || insertedRows.merchant_name || "",
+  Vendor: insertedRows.merchant_name || insertedRows.name || "",
+  Date: insertedRows.date,
+  Amount: insertedRows.amount,
+  Category: insertedRows.category || "",
+  Splits: insertedRows.splits || [],
+  receipt_url: insertedRows.receipt_url || null
 });
 
 closeModal();
