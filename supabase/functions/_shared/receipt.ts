@@ -1,4 +1,10 @@
 import { HttpError } from "./http.ts";
+import {
+  extractSkuCandidate,
+  isNonPurchasableLine,
+  normalizeLineItemName,
+  scoreLineItemQuality,
+} from "./line-items.ts";
 
 const STORAGE_MARKER = "/storage/v1/object/";
 
@@ -6,9 +12,13 @@ const RECEIPTS_BUCKET = "receipts";
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
 
 export type ParsedReceiptItem = {
+  rawName: string;
   name: string;
   amount: number;
   code: string | null;
+  sku: string | null;
+  qualityScore: number;
+  qualityFlags: string[];
 };
 
 export type ReceiptAsset = {
@@ -153,12 +163,24 @@ export function parseReceiptItems(rawItems: unknown): ParsedReceiptItem[] {
   if (!Array.isArray(rawItems)) return [];
 
   return rawItems
-    .map((entry): ParsedReceiptItem => ({
-      name: String((entry as any)?.name ?? "").trim(),
-      amount: parseCurrencyToNumber((entry as any)?.amount),
-      code: normalizeCode((entry as any)?.code),
-    }))
-    .filter((item) => isLikelyReceiptLineItem(item.name, item.amount));
+    .map((entry): ParsedReceiptItem => {
+      const rawName = String((entry as any)?.name ?? "").trim();
+      const code = normalizeCode((entry as any)?.code);
+      const normalizedName = normalizeLineItemName(rawName);
+      const sku = extractSkuCandidate(rawName, code);
+      const quality = scoreLineItemQuality(rawName, normalizedName, sku);
+
+      return {
+        rawName,
+        name: normalizedName || rawName,
+        amount: parseCurrencyToNumber((entry as any)?.amount),
+        code,
+        sku,
+        qualityScore: quality.score,
+        qualityFlags: quality.flags,
+      };
+    })
+    .filter((item) => !isNonPurchasableLine(item.name, item.amount));
 }
 
 export function parseCurrencyToNumber(raw: unknown): number {
@@ -179,26 +201,6 @@ export function parseTax(raw: unknown): number {
   const parsed = parseCurrencyToNumber(raw);
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
   return parsed;
-}
-
-export function isLikelyReceiptLineItem(name: string, amount: number): boolean {
-  if (!name || !Number.isFinite(amount) || amount <= 0) return false;
-
-  const blacklist = [
-    "subtotal",
-    "sub total",
-    "total",
-    "tax",
-    "discount",
-    "coupon",
-    "change",
-    "cash",
-    "visa",
-    "mastercard",
-  ];
-
-  const lowered = name.toLowerCase();
-  return !blacklist.some((token) => lowered.includes(token));
 }
 
 function parseFirstJsonObject(text: string): Record<string, unknown> | null {

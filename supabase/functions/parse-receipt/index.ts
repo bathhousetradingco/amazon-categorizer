@@ -17,11 +17,13 @@ import {
   prepareReceiptAsset,
   safeParseJsonResponse,
 } from "../_shared/receipt.ts";
+import { enrichLineItems } from "../_shared/enrich-line-items.ts";
 
 const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
+const SERPAPI_API_KEY = Deno.env.get("SERPAPI_API_KEY") ?? undefined;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -43,10 +45,18 @@ Deno.serve(async (req) => {
       throw new HttpError(422, "OCR did not return parseable JSON");
     }
 
+    const items = parseReceiptItems(parsed.items);
+    const enrichedItems = await enrichLineItems({
+      adminClient,
+      items,
+      openAiApiKey: OPENAI_API_KEY,
+      serpApiKey: SERPAPI_API_KEY,
+    });
+
     return jsonResponse({
       success: true,
       data: {
-        items: parseReceiptItems(parsed.items),
+        items: enrichedItems,
         tax: parseTax(parsed.tax),
       },
       meta: {
