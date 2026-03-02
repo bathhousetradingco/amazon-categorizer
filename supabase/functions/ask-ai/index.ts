@@ -26,6 +26,7 @@ function cors(origin: string | null) {
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin");
   const corsHeaders = cors(origin);
+  console.log("🚀 AUTO DEPLOY TEST - " + new Date().toISOString());
 
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
