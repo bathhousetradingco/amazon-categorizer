@@ -716,18 +716,57 @@ const supabaseClient = window.supabase.createClient(
 
 /* 🔐 ADD THIS RIGHT HERE */
 async function getAuthHeaders() {
-  const { data: { session } } = await supabaseClient.auth.getSession();
+  let { data: { session } } = await supabaseClient.auth.getSession();
 
-  if (!session) {
-    alert("You must be logged in.");
-    throw new Error("No session");
+  if (!session?.access_token) {
+    const { data: refreshed, error: refreshError } = await supabaseClient.auth.refreshSession();
+    if (refreshError || !refreshed?.session?.access_token) {
+      alert("You must be logged in.");
+      throw new Error("No valid session");
+    }
+    session = refreshed.session;
   }
 
   return {
     "Content-Type": "application/json",
-    "Authorization": `Bearer ${session.access_token}`,
+    "authorization": `Bearer ${session.access_token}`,
     "apikey": SUPABASE_ANON_KEY
   };
+}
+
+async function invokeEdgeFunction(functionName, payload) {
+  const headers = await getAuthHeaders();
+
+  let response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload)
+  });
+
+  if (response.status === 401) {
+    const { data: refreshed, error: refreshError } = await supabaseClient.auth.refreshSession();
+
+    if (!refreshError && refreshed?.session?.access_token) {
+      response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          authorization: `Bearer ${refreshed.session.access_token}`
+        },
+        body: JSON.stringify(payload)
+      });
+    }
+  }
+
+  const text = await response.text();
+  let result;
+  try {
+    result = text ? JSON.parse(text) : {};
+  } catch {
+    result = { error: text || `Edge function ${functionName} failed.` };
+  }
+
+  return { response, result };
 }
   async function login() {
 
@@ -2316,16 +2355,7 @@ async function analyzeReceipt(item){
 
     console.log("📤 Sending to edge:", payload);
 
-    const response = await fetch(
-      `${SUPABASE_URL}/functions/v1/analyze-receipt`,
-      {
-        method: "POST",
-        headers: await getAuthHeaders(),
-        body: JSON.stringify(payload)
-      }
-    );
-
-    const result = await response.json();
+    const { response, result } = await invokeEdgeFunction("analyze-receipt", payload);
 
     if(!response.ok){
       const errMsg = result?.error || `Analyze failed (${response.status})`;
