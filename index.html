@@ -301,10 +301,37 @@ margin-top:8px;
   gap:4px;
 }
 
+.categoryPickerCompact {
+  display: grid;
+  gap: 8px;
+}
+
+.categoryPickerRow {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.categoryPickerActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.inlineHint {
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
 
 @media (min-width: 700px) {
   .filterGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .categoryPickerRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 }
 
@@ -1469,45 +1496,50 @@ function goBack(){
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
 div.innerHTML="";
-categories.forEach(cat=>{
-const btn=document.createElement("button");
-btn.className="category-btn "+cat.class;
-btn.innerHTML = `
-<span>${cat.name}</span>
-<span style="
-margin-left:8px;
-background:white;
-color:black;
-border-radius:50%;
-width:18px;
-height:18px;
-display:inline-flex;
-align-items:center;
-justify-content:center;
-font-size:12px;
-font-weight:bold;
-cursor:pointer;
-" onclick="event.stopPropagation(); showCategoryInfo('${cat.name.replace(/'/g, "\\'")}')">
-i
-</span>
-`;
-btn.onclick=()=>categorize(cat.name);
-div.appendChild(btn);
-});
-const splitBtn=document.createElement("button");
-splitBtn.className="category-btn";
-splitBtn.style.background="#ff9800";
-splitBtn.innerText="Split Transaction";
-splitBtn.onclick=openSplitModal;
-div.appendChild(splitBtn);
 
-const filterBtn=document.createElement("button");
-filterBtn.id="filterToggle";
-filterBtn.className="category-btn filterBtn";
-filterBtn.innerText="Show Only Uncategorized";
-filterBtn.onclick=toggleFilter;
-div.appendChild(filterBtn);
+div.innerHTML = `
+  <div class="categoryPickerCompact">
+    <div class="categoryPickerActions">
+      <button class="category-btn" style="background:#1e3a8a;" onclick="openCategoryModal()">Choose Category</button>
+      <button class="category-btn" style="background:#ff9800;" onclick="openSplitModal()">Split Transaction</button>
+    </div>
+    <div class="inlineHint">All categories are still available in the chooser, now in a compact list.</div>
+    <button id="filterToggle" class="category-btn filterBtn" onclick="toggleFilter()">Show Only Uncategorized</button>
+  </div>
+`;
 }
+
+function generateCategoryButtons(){
+  return `
+    <div style="padding:10px; display:flex; flex-direction:column; gap:8px;">
+      ${categories.map(c => `
+        <div class="categoryPickerRow">
+          <button class="category-btn ${c.class}"
+            style="width:100%; text-align:left; padding:12px; border-radius:12px;"
+            onclick="selectCategory('${c.name.replace(/'/g,"\\'")}')">
+            ${c.name}
+          </button>
+          <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
+            width:36px;
+            height:36px;
+            border-radius:50%;
+            border:none;
+            background:#eee;
+            font-weight:bold;
+          ">i</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function openCategoryModal(){
+  aiContext = null;
+  modalTitle.innerText = "Choose Category";
+  modalContent.innerHTML = generateCategoryButtons();
+  openModal(100000);
+}
+
 
 function showCategoryInfo(name){
 
@@ -1601,12 +1633,42 @@ async function openSplitModal(){
   splitMode = false;
 
   const item = data[currentIndex];
+  const allocated = (item.Splits || []).reduce((sum, s) => {
+    return sum + Math.round(parseFloat(s.Amount || 0) * 100);
+  }, 0) / 100;
+  const remaining = parseFloat((item.Amount - allocated).toFixed(2));
 
   modalTitle.innerText = "Split Transaction";
 
   modalContent.innerHTML = `
     <div style="position:relative; min-height:100%; padding:12px;">
+      <div id="remainingBar" style="
+        background:white;
+        padding:12px;
+        border-radius:14px;
+        border:1px solid var(--border);
+        display:flex;
+        justify-content:space-between;
+        font-weight:600;
+        margin-bottom:10px;
+      ">
+        <div>Total: $${item.Amount.toFixed(2)}</div>
+        <div>Allocated: $${allocated.toFixed(2)}</div>
+        <div style="color:${Math.abs(remaining) < 0.01 ? "green" : remaining < 0 ? "red" : "orange"};">Remaining: $${remaining.toFixed(2)}</div>
+      </div>
 
+      <button onclick="openManualSplitModal()" style="
+        background:#1e3a8a;
+        color:white;
+        padding:10px;
+        border-radius:10px;
+        width:100%;
+        margin-bottom:10px;
+      ">
+        Add Split Without Receipt
+      </button>
+
+      ${item.receipt_url ? `
       <button onclick="enableSplitMode()" style="
         background:#ff9800;
         color:white;
@@ -1618,7 +1680,6 @@ async function openSplitModal(){
         Enable Split Mode
       </button>
 
-      ${item.receipt_url ? `
       <button onclick="viewReceipt()" style="
         background:#1565c0;
         color:white;
@@ -1640,21 +1701,92 @@ async function openSplitModal(){
       ">
         🤖 Analyze Receipt
       </button>
-      ` : ``}
-
-      <div style="
-        margin-top:20px;
-        text-align:center;
-        color:#777;
-      ">
-        Tap on receipt areas after enabling split mode
-      </div>
-
+      <div style="margin-top:10px; text-align:center; color:#777;">Tap on receipt areas after enabling split mode</div>
+      ` : `<div style="margin-top:8px; text-align:center; color:#777;">No receipt attached. You can still split manually.</div>`}
     </div>
   `;
 
   openModal();
 }
+
+function openManualSplitModal(){
+  const item = data[currentIndex];
+  if(!item) return;
+
+  const allocated = (item.Splits || []).reduce((sum, s) => {
+    return sum + Math.round(parseFloat(s.Amount || 0) * 100);
+  }, 0) / 100;
+  const remaining = parseFloat((item.Amount - allocated).toFixed(2));
+
+  modalTitle.innerText = "Manual Split";
+  modalContent.innerHTML = `
+    <div style="padding:12px; display:flex; flex-direction:column; gap:10px;">
+      <div id="remainingBar" style="
+        background:white;
+        padding:12px;
+        border-radius:14px;
+        border:1px solid var(--border);
+        display:flex;
+        justify-content:space-between;
+        font-weight:600;
+      ">
+        <div>Total: $${item.Amount.toFixed(2)}</div>
+        <div>Allocated: $${allocated.toFixed(2)}</div>
+        <div style="color:${Math.abs(remaining) < 0.01 ? "green" : remaining < 0 ? "red" : "orange"};">Remaining: $${remaining.toFixed(2)}</div>
+      </div>
+
+      <label class="small" for="manualSplitAmount">Split Amount</label>
+      <input id="manualSplitAmount" type="number" min="0.01" step="0.01" placeholder="0.00">
+
+      <button onclick="openManualSplitCategorySelector()" style="background:#1e3a8a; color:white;">Choose Category</button>
+      <div id="manualSplitCategory" class="small">No category selected.</div>
+
+      <div style="display:flex; gap:8px;">
+        <button onclick="openSplitModal()" style="background:#6b7280; color:white; flex:1;">← Back</button>
+        <button onclick="submitManualSplit()" style="background:#2e7d32; color:white; flex:1;">Add Split</button>
+      </div>
+    </div>
+  `;
+
+  delete window.manualSplitCategory;
+}
+
+function openManualSplitCategorySelector(){
+  const amount = parseFloat(document.getElementById("manualSplitAmount")?.value || 0);
+  if(!amount || amount <= 0){
+    alert("Enter a valid split amount first.");
+    return;
+  }
+
+  pickCategory(amount).then(category => {
+    if(!category) return;
+    window.manualSplitCategory = category;
+    const label = document.getElementById("manualSplitCategory");
+    if(label) label.innerText = `Selected: ${category}`;
+  });
+}
+
+async function submitManualSplit(){
+  const amount = parseFloat(document.getElementById("manualSplitAmount")?.value || 0);
+  const category = window.manualSplitCategory;
+
+  if(!category){
+    alert("Please choose a category.");
+    return;
+  }
+
+  if(!amount || amount <= 0){
+    alert("Enter a valid split amount.");
+    return;
+  }
+
+  const success = await applySplit(category, amount);
+  if(success){
+    openManualSplitModal();
+    showCard();
+  }
+}
+
 function initTapToSplit(){
 
   const container = document.getElementById("tapSplitContainer");
@@ -2272,26 +2404,7 @@ function openReceiptCategorySelector(index){
   aiContext = { type: "receipt", index };
 
   modalTitle.innerText = "Choose Category";
-
-  modalContent.innerHTML = `
-    <div style="padding:10px; display:flex; flex-direction:column; gap:8px;">
-
-      ${categories.map(c => `
-        <button class="category-btn ${c.class}" 
-          style="
-            width:100%;
-            text-align:left;
-            padding:14px;
-            border-radius:12px;
-            font-size:15px;
-          "
-          onclick="selectCategory('${c.name.replace(/'/g,"\\'")}')">
-          ${c.name}
-        </button>
-      `).join("")}
-
-    </div>
-  `;
+  modalContent.innerHTML = generateCategoryButtons();
 
   openModal(100000);
 }
