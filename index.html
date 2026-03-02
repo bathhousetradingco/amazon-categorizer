@@ -2315,17 +2315,24 @@ async function analyzeReceipt(item){
 
     console.log("📤 Sending to edge:", payload);
 
-    const { data: result, error: invokeError } = await supabaseClient.functions.invoke(
-  "analyze-receipt",
-  { body: payload }
-);
+    const response = await fetch(
+      `${SUPABASE_URL}/functions/v1/analyze-receipt`,
+      {
+        method: "POST",
+        headers: await getAuthHeaders(),
+        body: JSON.stringify(payload)
+      }
+    );
 
-    if(invokeError){
-      const authError = /invalid jwt|jwt/i.test(invokeError.message || "");
+    const result = await response.json();
+
+    if(!response.ok){
+      const errMsg = result?.error || `Analyze failed (${response.status})`;
+      const authError = /invalid jwt|jwt|authorization|unauthorized/i.test(errMsg);
       if(authError){
         throw new Error("Analyze failed due to an expired session. Please sign out and sign back in.");
       }
-      throw new Error(invokeError.message || "Analyze failed");
+      throw new Error(errMsg);
     }
 
     console.log("✅ Parsed result:", result);
