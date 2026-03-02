@@ -2304,8 +2304,8 @@ async function analyzeReceipt(item){
     // ✅ SESSION (correct client)
     const { data: { session } } = await supabaseClient.auth.getSession();
 
-    if(!session){
-      throw new Error("No session found");
+    if(!session?.access_token){
+      throw new Error("No valid session found. Please sign in again.");
     }
 
     const payload = {
@@ -2315,33 +2315,17 @@ async function analyzeReceipt(item){
 
     console.log("📤 Sending to edge:", payload);
 
-    const res = await fetch(
-      "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/analyze-receipt",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify(payload)
-      }
+    const { data: result, error: invokeError } = await supabaseClient.functions.invoke(
+      "analyze-receipt",
+      { body: payload }
     );
 
-    // 🔥 CRITICAL FIX — read as text first
-    const rawText = await res.text();
-    console.log("📥 RAW EDGE RESPONSE:", rawText);
-
-    let result;
-
-    try {
-      result = JSON.parse(rawText);
-    } catch (parseErr) {
-      console.error("❌ JSON PARSE FAILED:", rawText);
-      throw new Error("Edge function returned invalid JSON");
-    }
-
-    if(!res.ok){
-      throw new Error(result.error || "Analyze failed");
+    if(invokeError){
+      const authError = /invalid jwt|jwt/i.test(invokeError.message || "");
+      if(authError){
+        throw new Error("Analyze failed due to an expired session. Please sign out and sign back in.");
+      }
+      throw new Error(invokeError.message || "Analyze failed");
     }
 
     console.log("✅ Parsed result:", result);
