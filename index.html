@@ -248,64 +248,78 @@ margin-top:8px;
 }
 
 /* SPLIT LAYOUT */
-.splitModalLayout { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:100%; gap:10px; }
+.splitModalLayout { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:100%; gap:12px; padding: 0 4px 8px; }
+.splitHeaderRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.splitHeaderTitle { margin: 0; font-size: 18px; }
+.splitHeaderExit { background:#c62828; color:#fff; min-height:40px; min-width:40px; padding:8px 12px; }
 .splitTotalsCard {
-  background: var(--panel-alt);
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: rgba(255,255,255,.96);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px;
+  border-radius: 14px;
+  padding: 12px;
   display:grid;
   grid-template-columns: repeat(3, minmax(0,1fr));
-  gap:8px;
-  transition: box-shadow .2s ease, border-color .2s ease;
+  gap:10px;
+  box-shadow: 0 -10px 24px rgba(23,32,51,.12);
+  transition: box-shadow .2s ease, border-color .2s ease, transform .18s ease;
 }
 .splitMetric { font-size:12px; color:var(--text-soft); }
-.splitMetric strong { display:block; margin-top:2px; font-size:17px; color:var(--text); }
+.splitMetric strong { display:block; margin-top:3px; font-size:18px; color:var(--text); }
 .splitMetric.remaining strong { transition: color .2s ease, transform .2s ease; }
 .splitMetric.remaining.nearDone strong { color:#c47f00; }
-.splitMetric.remaining.done strong { color:#2e7d32; transform: scale(1.03); }
+.splitMetric.remaining.done strong { color:#2e7d32; transform: scale(1.04); }
+.splitMetric.remaining.zeroFlash strong { animation: remainingCelebrate .32s ease; }
+@keyframes remainingCelebrate { 0%{ transform:scale(1);} 45%{transform:scale(1.08);} 100%{transform:scale(1.04);} }
 .splitBody {
   min-height: 0;
   display:grid;
   grid-template-columns:minmax(0,1fr);
-  gap:10px;
+  gap:12px;
+  overflow: hidden;
 }
 .receiptCard {
   border:1px solid var(--border);
-  border-radius:12px;
+  border-radius:14px;
   background:#fff;
-  padding:8px;
+  padding:10px;
   box-shadow: 0 4px 16px rgba(23,32,51,.08);
 }
+.receiptControls { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
 .receiptViewport {
   width:100%;
-  max-height: 32vh;
+  max-height: 240px;
   overflow:auto;
   border-radius:10px;
   background:#0f172a;
   touch-action: pan-y pinch-zoom;
 }
+.receiptViewport.expanded { max-height: 66vh; }
 .receiptViewport img, .receiptViewport iframe { width:100%; height:auto; display:block; border:none; object-fit:contain; }
 .lineItemsScroller {
   min-height: 0;
   overflow:auto;
   border:1px solid var(--border);
-  border-radius:12px;
-  padding:10px;
+  border-radius:14px;
+  padding:12px;
   background: var(--panel-alt);
+  display:grid;
+  gap:10px;
 }
 .splitItemRow {
   display:grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap:8px;
-  align-items:center;
-  padding:8px;
+  gap:10px;
+  padding:12px;
   border:1px solid var(--border);
-  border-radius:10px;
-  margin-bottom:8px;
+  border-radius:12px;
   background:#fff;
   transition: background-color .25s ease, border-color .25s ease;
 }
+.splitItemMeta { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.splitItemActions { display:flex; flex-wrap:wrap; gap:8px; }
+.splitItemActions .touchButton { flex:1 1 calc(50% - 4px); }
 .splitItemRow.justAdded { animation: splitPulse .45s ease; border-color:#2e7d32; background:#f1fbf2; }
 @keyframes splitPulse { 0%{transform:scale(.99)} 60%{transform:scale(1.01)} 100%{transform:scale(1)} }
 .splitFooterSticky {
@@ -313,26 +327,32 @@ margin-top:8px;
   bottom: 0;
   background: #fff;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding:10px;
+  border-radius: 14px;
+  padding:12px;
   display:flex;
-  gap:8px;
+  gap:10px;
   align-items:center;
   justify-content:space-between;
   box-shadow: 0 -6px 18px rgba(23,32,51,.1);
 }
 .touchButton { min-height:44px; }
+.touchButton.tapPulse { transform: scale(.98); filter: brightness(.98); }
 
-@media (min-width: 860px) {
-  .splitBody { grid-template-columns: minmax(300px, 40%) minmax(0,1fr); }
-  .receiptViewport { max-height: 52vh; }
-}
+.keypadOverlay { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 100100; display:none; align-items:flex-end; justify-content:center; }
+.keypadOverlay.open { display:flex; }
+.keypadSheet { width:min(100%, 520px); background:#fff; border-top-left-radius:16px; border-top-right-radius:16px; padding:12px; box-shadow: 0 -12px 30px rgba(0,0,0,.22); transform: translateY(18px); opacity:0; transition: transform .2s ease, opacity .2s ease; }
+.keypadOverlay.open .keypadSheet { transform: translateY(0); opacity:1; }
+.keypadDisplay { border:1px solid var(--border); border-radius:12px; padding:12px; font-size:26px; text-align:right; margin-bottom:10px; }
+.keypadGrid { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:8px; }
+.keypadKey { background:#f3f6fb; color:#172033; min-height:54px; font-size:18px; }
+.keypadKey.action { background:#1e3a8a; color:#fff; }
+.keypadKey.warn { background:#c62828; color:#fff; }
+.keypadHint { min-height:18px; margin:6px 0 0; font-size:12px; color:#b45309; }
 
 @media (max-width: 620px) {
   .modalOverlay { padding: 0; align-items: flex-end; }
-  .modalBox { width:100%; height:95vh; border-bottom-left-radius:0; border-bottom-right-radius:0; }
-  .splitTotalsCard { grid-template-columns: 1fr; gap:4px; }
-  .splitItemRow { grid-template-columns: minmax(0, 1fr); }
+  .modalBox { width:100%; height:96vh; border-bottom-left-radius:0; border-bottom-right-radius:0; }
+  .splitTotalsCard { grid-template-columns: 1fr; gap:6px; }
 }
 
 
@@ -524,8 +544,16 @@ margin-top:8px;
 <div class="modalDragHandle" aria-hidden="true"></div>
 <h3 id="modalTitle"></h3>
 <div id="modalContent"></div>
-<button class="modalClose" onclick="closeModal()">Close</button>
+<button id="modalCloseBtn" class="modalClose" onclick="closeModal()">Close</button>
 </div>
+</div>
+<div id="keypadOverlay" class="keypadOverlay" onclick="handleKeypadBackdrop(event)">
+  <div class="keypadSheet" role="dialog" aria-label="Amount keypad">
+    <div id="keypadTitle" class="small" style="margin-bottom:8px;font-weight:700;color:#172033;">Enter amount</div>
+    <div id="keypadDisplay" class="keypadDisplay">$0.00</div>
+    <div class="keypadGrid" id="keypadGrid"></div>
+    <div id="keypadHint" class="keypadHint"></div>
+  </div>
 </div>
 </main>
 
@@ -542,12 +570,29 @@ const currentCategory = document.getElementById("currentCategory");
 const totals = document.getElementById("totals");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
+const modalCloseBtn = document.getElementById("modalCloseBtn");
+const keypadOverlay = document.getElementById("keypadOverlay");
+const keypadGrid = document.getElementById("keypadGrid");
+const keypadDisplay = document.getElementById("keypadDisplay");
+const keypadHint = document.getElementById("keypadHint");
+const keypadTitle = document.getElementById("keypadTitle");
 
 // UI COMPONENTS
 const UIComponents = {
   updateHTML(el, html){ if(el) el.innerHTML = html; },
   setText(el, text){ if(el) el.innerText = text; }
 };
+
+function initTouchFeedback(){
+  document.addEventListener("pointerdown", (event) => {
+    const button = event.target.closest("button");
+    if(!button) return;
+    button.classList.add("tapPulse");
+    window.setTimeout(() => button.classList.remove("tapPulse"), 140);
+  });
+}
+
+initTouchFeedback();
 
 // STATE MANAGEMENT
 const AppState = {
@@ -1717,7 +1762,15 @@ async function categorize(name){
 const SplitState = {
   manualAmount: 0,
   manualCategory: null,
-  highlightedIndex: null
+  highlightedIndex: null,
+  receiptExpanded: false,
+  keypad: {
+    value: "",
+    max: Infinity,
+    onChange: null,
+    onConfirm: null,
+    onCancel: null
+  }
 };
 
 function calculateSplitStats(item){
@@ -1728,11 +1781,11 @@ function calculateSplitStats(item){
 
 function renderSplitTotals(item){
   const { allocated, remaining } = calculateSplitStats(item);
-  const remainingClass = Math.abs(remaining) < 0.01 ? "done" : remaining <= item.Amount * 0.2 ? "nearDone" : "";
+  const remainingClass = Math.abs(remaining) < 0.01 ? "done zeroFlash" : remaining <= item.Amount * 0.2 ? "nearDone" : "";
   return `
     <div id="remainingBar" class="splitTotalsCard">
       <div class="splitMetric">Total<strong>$${item.Amount.toFixed(2)}</strong></div>
-      <div class="splitMetric">Assigned<strong>$${allocated.toFixed(2)}</strong></div>
+      <div class="splitMetric">Allocated<strong>$${allocated.toFixed(2)}</strong></div>
       <div class="splitMetric remaining ${remainingClass}">Remaining<strong>$${remaining.toFixed(2)}</strong></div>
     </div>
   `;
@@ -1743,39 +1796,60 @@ function renderSplitItems(item){
     return `<div class="small">No line items assigned yet. Add your first split below.</div>`;
   }
 
-  return item.Splits.map((s, i) => `
-    <div class="splitItemRow ${SplitState.highlightedIndex === i ? "justAdded" : ""}">
-      <div><strong>${s.Category || "Uncategorized"}</strong></div>
-      <div class="small">$${parseFloat(s.Amount || 0).toFixed(2)}</div>
-      <button class="touchButton" style="background:#c62828;color:#fff;padding:8px 10px;" onclick="removeSplitAtIndex(${i})">Remove</button>
-    </div>
-  `).join("");
+  return item.Splits.map((s, i) => {
+    const canEdit = !item.receipt_url;
+    return `
+      <div class="splitItemRow ${SplitState.highlightedIndex === i ? "justAdded" : ""}">
+        <div class="splitItemMeta">
+          <strong>${s.Category || "Uncategorized"}</strong>
+          <div class="small">$${parseFloat(s.Amount || 0).toFixed(2)}</div>
+        </div>
+        <div class="splitItemActions">
+          ${canEdit ? `<button class="touchButton" style="background:#1e3a8a;color:#fff;" onclick="editSplitAmount(${i})">Edit Amount</button>` : ""}
+          <button class="touchButton" style="background:#c62828;color:#fff;" onclick="removeSplitAtIndex(${i})">Remove</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function setModalCloseButtonVisibility(show){
+  if(!modalCloseBtn) return;
+  modalCloseBtn.style.display = show ? "block" : "none";
 }
 
 async function openSplitModal(){
   splitMode = false;
+  SplitState.receiptExpanded = false;
   const item = data[currentIndex];
   if(!item) return;
 
   modalTitle.innerText = "Split Transaction";
+  setModalCloseButtonVisibility(false);
+
   modalContent.innerHTML = `
     <div id="splitModalSheet" class="splitModalLayout">
-      ${renderSplitTotals(item)}
+      <div class="splitHeaderRow">
+        <h3 class="splitHeaderTitle">Split Transaction</h3>
+        <button class="splitHeaderExit" onclick="closeModal()" aria-label="Close split transaction">✕</button>
+      </div>
       <div class="splitBody">
         <div class="receiptCard">
-          <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <div class="receiptControls">
             <button class="touchButton" onclick="openManualSplitModal()" style="background:#1e3a8a;color:#fff;flex:1;">Add Split</button>
             ${item.receipt_url ? `<button class="touchButton" onclick="viewReceipt()" style="background:#1565c0;color:#fff;flex:1;">View Receipt</button>` : ""}
+            ${item.receipt_url ? `<button type="button" class="touchButton" onclick="toggleReceiptViewport()" style="background:#37474f;color:#fff;flex:1;">Expand Receipt</button>` : ""}
           </div>
-          ${item.receipt_url ? `<button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:8px;">🤖 Analyze Receipt</button>` : ""}
+          ${item.receipt_url ? `<button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:10px;">🤖 Analyze Receipt</button>` : `<div class="small" style="margin-bottom:8px;">No receipt attached. Use keypad-first split entry for fast mobile input.</div>`}
           <div id="splitReceiptPreview" class="receiptViewport"></div>
         </div>
         <div id="splitItemsScroller" class="lineItemsScroller">${renderSplitItems(item)}</div>
       </div>
-      <div class="splitFooterSticky">
+      <div id="splitFooterSticky" class="splitFooterSticky">
         <div id="splitCompletionText" class="small">Assign all line items to complete this transaction.</div>
         <button id="splitDoneBtn" class="touchButton" style="background:#2e7d32;color:#fff;" onclick="completeSplitWorkflow()">Done</button>
       </div>
+      ${renderSplitTotals(item)}
     </div>
   `;
 
@@ -1791,12 +1865,17 @@ function openManualSplitModal(){
   if(!item) return;
 
   modalTitle.innerText = "Manual Split";
+  setModalCloseButtonVisibility(false);
   modalContent.innerHTML = `
     <div class="splitModalLayout" style="padding:6px;">
-      ${renderSplitTotals(item)}
+      <div class="splitHeaderRow">
+        <h3 class="splitHeaderTitle">Manual Split</h3>
+        <button class="splitHeaderExit" onclick="openSplitModal()" aria-label="Back to split">←</button>
+      </div>
       <div class="lineItemsScroller" style="display:grid;gap:10px;">
         <label class="small" for="manualSplitAmount">Split Amount</label>
-        <input id="manualSplitAmount" type="number" min="0.01" step="0.01" placeholder="0.00" oninput="captureManualAmount()">
+        <input id="manualSplitAmount" type="text" inputmode="decimal" readonly placeholder="0.00" onclick="openManualAmountKeypad()">
+        <button class="touchButton" onclick="openManualAmountKeypad()" style="background:#1565c0;color:white;">Enter Amount</button>
         <button class="touchButton" onclick="openManualSplitCategorySelector()" style="background:#1e3a8a;color:white;">Choose Category</button>
         <div id="manualSplitCategory" class="small">No category selected.</div>
       </div>
@@ -1804,8 +1883,30 @@ function openManualSplitModal(){
         <button class="touchButton" onclick="openSplitModal()" style="background:#6b7280;color:#fff;">← Back</button>
         <button class="touchButton" onclick="submitManualSplit()" style="background:#2e7d32;color:#fff;">Add Split</button>
       </div>
+      ${renderSplitTotals(item)}
     </div>
   `;
+}
+
+function openManualAmountKeypad(){
+  const item = data[currentIndex];
+  if(!item) return;
+  const { remaining } = calculateSplitStats(item);
+  openNumericKeypad({
+    title: "Enter split amount",
+    initial: SplitState.manualAmount || remaining,
+    max: Math.max(remaining, 0),
+    onChange: (value) => {
+      SplitState.manualAmount = value;
+      const field = document.getElementById("manualSplitAmount");
+      if(field) field.value = value ? value.toFixed(2) : "";
+    },
+    onConfirm: (value) => {
+      SplitState.manualAmount = value;
+      const field = document.getElementById("manualSplitAmount");
+      if(field) field.value = value.toFixed(2);
+    }
+  });
 }
 
 function captureManualAmount(){
@@ -1855,6 +1956,36 @@ function removeSplitAtIndex(index){
   persistSplitItem(item);
 }
 
+function editSplitAmount(index){
+  const item = data[currentIndex];
+  if(!item?.Splits?.[index]) return;
+  const original = parseFloat(item.Splits[index].Amount || 0);
+  const { remaining } = calculateSplitStats(item);
+  const editableMax = Math.max(original + remaining, 0);
+
+  openNumericKeypad({
+    title: `Edit ${item.Splits[index].Category || "line item"}`,
+    initial: original,
+    max: editableMax,
+    onChange: (value) => {
+      item.Splits[index].Amount = parseFloat((value || 0).toFixed(2));
+      updateRemainingUI();
+    },
+    onCancel: () => {
+      item.Splits[index].Amount = original;
+      updateRemainingUI();
+    },
+    onConfirm: () => persistSplitItem(item)
+  });
+}
+
+function toggleReceiptViewport(){
+  const node = document.getElementById("splitReceiptPreview");
+  if(!node) return;
+  SplitState.receiptExpanded = !SplitState.receiptExpanded;
+  node.classList.toggle("expanded", SplitState.receiptExpanded);
+}
+
 function hydrateReceiptPreview(item){
   const receiptHost = document.getElementById("splitReceiptPreview");
   if(!receiptHost) return;
@@ -1887,15 +2018,18 @@ function updateSplitProgressState(){
   const txt = document.getElementById("splitCompletionText");
   const btn = document.getElementById("splitDoneBtn");
   const remainingNode = document.querySelector(".splitMetric.remaining");
+  const footer = document.getElementById("splitFooterSticky");
 
-  if(txt) txt.innerText = done ? "✅ Split completed. Ready to continue." : `Remaining to assign: $${remaining.toFixed(2)}`;
+  if(txt) txt.innerText = done ? "✅ Split complete — ready to finish." : `Remaining to assign: $${remaining.toFixed(2)}`;
   if(btn) {
     btn.disabled = !done;
     btn.style.opacity = done ? "1" : ".65";
   }
+  if(footer) footer.style.borderColor = done ? "#2e7d32" : "var(--border)";
   if(remainingNode){
     remainingNode.classList.toggle("done", done);
     remainingNode.classList.toggle("nearDone", !done && remaining <= item.Amount * 0.2);
+    remainingNode.classList.toggle("zeroFlash", done);
   }
 }
 
@@ -2044,67 +2178,104 @@ function chooseCategoryForReceipt(index){
   openModal(1000000);
 }
 
+function initKeypad(){
+  if(!keypadGrid || keypadGrid.dataset.ready) return;
+  keypadGrid.dataset.ready = "true";
+  const keys = ["1","2","3","4","5","6","7","8","9",".","0","⌫"];
+  keypadGrid.innerHTML = `${keys.map((k) => `<button class="keypadKey" type="button" onclick="pressKeypadKey('${k}')">${k}</button>`).join("")}
+    <button class="keypadKey warn" type="button" onclick="cancelNumericKeypad()">Cancel</button>
+    <button class="keypadKey" type="button" onclick="clearNumericKeypad()">Clear</button>
+    <button class="keypadKey action" type="button" onclick="confirmNumericKeypad()">Done</button>`;
+}
+
+function openNumericKeypad({ title = "Enter amount", initial = 0, max = Infinity, onChange, onConfirm, onCancel } = {}){
+  initKeypad();
+  SplitState.keypad.value = initial > 0 ? Number(initial).toFixed(2) : "";
+  SplitState.keypad.max = max;
+  SplitState.keypad.onChange = onChange || null;
+  SplitState.keypad.onConfirm = onConfirm || null;
+  SplitState.keypad.onCancel = onCancel || null;
+  if(keypadTitle) keypadTitle.innerText = title;
+  if(keypadOverlay) keypadOverlay.classList.add("open");
+  updateKeypadDisplay();
+}
+
+function closeNumericKeypad(silent = false){
+  if(!silent && typeof SplitState.keypad.onCancel === "function") SplitState.keypad.onCancel();
+  if(keypadOverlay) keypadOverlay.classList.remove("open");
+  SplitState.keypad.onChange = null;
+  SplitState.keypad.onConfirm = null;
+  SplitState.keypad.onCancel = null;
+  if(keypadHint) keypadHint.innerText = "";
+}
+
+function handleKeypadBackdrop(event){
+  if(event.target === keypadOverlay) cancelNumericKeypad();
+}
+
+function pressKeypadKey(key){
+  let val = SplitState.keypad.value || "";
+  if(key === "⌫"){
+    val = val.slice(0, -1);
+  } else if(key === "."){
+    if(!val.includes(".")) val = val ? `${val}.` : "0.";
+  } else {
+    val = `${val}${key}`;
+  }
+  SplitState.keypad.value = val;
+  updateKeypadDisplay();
+}
+
+function clearNumericKeypad(){
+  SplitState.keypad.value = "";
+  updateKeypadDisplay();
+}
+
+function keypadNumericValue(){
+  const parsed = parseFloat(SplitState.keypad.value || 0);
+  return Number.isFinite(parsed) ? parseFloat(parsed.toFixed(2)) : 0;
+}
+
+function updateKeypadDisplay(){
+  const value = keypadNumericValue();
+  if(keypadDisplay) keypadDisplay.innerText = `$${value.toFixed(2)}`;
+  const over = value > SplitState.keypad.max + 0.009;
+  if(keypadHint) keypadHint.innerText = over ? `Amount exceeds remaining ($${SplitState.keypad.max.toFixed(2)} max).` : "";
+  if(typeof SplitState.keypad.onChange === "function"){
+    SplitState.keypad.onChange(Math.min(value, SplitState.keypad.max));
+  }
+}
+
+function confirmNumericKeypad(){
+  const value = keypadNumericValue();
+  if(value <= 0){
+    if(keypadHint) keypadHint.innerText = "Enter an amount greater than $0.00.";
+    return;
+  }
+  if(value > SplitState.keypad.max + 0.009){
+    if(keypadHint) keypadHint.innerText = `Amount exceeds remaining ($${SplitState.keypad.max.toFixed(2)} max).`;
+    return;
+  }
+  if(typeof SplitState.keypad.onConfirm === "function") SplitState.keypad.onConfirm(value);
+  closeNumericKeypad(true);
+}
+
+function cancelNumericKeypad(){
+  closeNumericKeypad(false);
+}
+
 function showAmountInput(x, y, remaining){
   return new Promise(resolve => {
-
-    // Remove any existing input popups first
-document.querySelectorAll(".amount-popup").forEach(el => el.remove());
-
-const inputBox = document.createElement("div");
-inputBox.className = "amount-popup";
-
-    inputBox.style.position = "fixed";
-    const offsetY = Math.min(
-  window.innerHeight - 120,
-  Math.max(80, y)
-);
-
-inputBox.style.top = offsetY + "px";
-inputBox.style.left = Math.min(
-  window.innerWidth - 80,
-  Math.max(80, x)
-) + "px";
-    inputBox.style.transform = "translate(-50%, -50%)";
-    inputBox.style.background = "white";
-    inputBox.style.padding = "12px";
-    inputBox.style.borderRadius = "12px";
-    inputBox.style.boxShadow = "0 4px 20px rgba(0,0,0,.25)";
-    inputBox.style.zIndex = "99999";
-
-    inputBox.innerHTML = `
-      <input type="number" step="0.01" value="${remaining.toFixed(2)}" style="
-        width:120px;
-        padding:8px;
-        font-size:16px;
-        border-radius:8px;
-        border:1px solid #ccc;
-      ">
-      <div style="display:flex; gap:6px; margin-top:8px;">
-        <button style="flex:1; background:#2e7d32; color:white;">OK</button>
-        <button style="flex:1; background:#c62828; color:white;">Cancel</button>
-      </div>
-    `;
-
-    document.body.appendChild(inputBox);
-
-    const input = inputBox.querySelector("input");
-    input.focus();
-
-    const buttons = inputBox.querySelectorAll("button");
-
-    buttons[0].onclick = () => {
-      const val = input.value;
-      document.body.removeChild(inputBox);
-      resolve(val);
-    };
-
-    buttons[1].onclick = () => {
-      document.body.removeChild(inputBox);
-      resolve(null);
-    };
-
+    openNumericKeypad({
+      title: "Split amount",
+      initial: remaining,
+      max: remaining,
+      onConfirm: (value) => resolve(value),
+      onCancel: () => resolve(null)
+    });
   });
 }
+
 let receiptSuggestions = [];
 let currentSuggestionIndex = 0;
 async function analyzeReceipt(item){
@@ -2389,96 +2560,47 @@ function renderReceiptSuggestions(item, suggestions){
   const remaining = parseFloat((total - allocated).toFixed(2));
 
   modalTitle.innerText = "Review Receipt";
+  setModalCloseButtonVisibility(false);
 
   modalContent.innerHTML = `
-    <div style="display:flex; gap:12px; height:75vh;">
-
-      <!-- LEFT -->
-      <div style="width:55%; overflow:auto; background:#000; border-radius:12px;">
-        ${item.receipt_url ? `<img id="receiptImage" style="width:100%; height:auto;">` : `
-          <div style="color:white; display:flex; align-items:center; justify-content:center; height:100%;">
-            No Receipt
+    <div class="splitModalLayout" style="padding-top:4px;">
+      <div class="splitHeaderRow">
+        <h3 class="splitHeaderTitle">Review Receipt</h3>
+        <button class="splitHeaderExit" onclick="openSplitModal()" aria-label="Close receipt review">✕</button>
+      </div>
+      <div class="splitBody">
+        <div class="receiptCard">
+          <div class="receiptViewport expanded" style="max-height:280px;">
+            ${item.receipt_url ? `<img id="receiptImage" style="width:100%; height:auto; object-fit:contain;">` : `<div style="color:white; display:flex; align-items:center; justify-content:center; height:100%;">No Receipt</div>`}
           </div>
-        `}
-      </div>
-
-      <!-- RIGHT -->
-      <div style="width:45%; overflow-y:auto; padding-right:6px;">
-
-        ${suggestions.map((s, i)=>{
-
-          const existing = (item.Splits || []).find(sp => sp.item_index === i);
-          const isAccepted = !!existing;
-
-          const category = existing
-            ? existing.Category
-            : s.suggested_category;
-
-          const amount = parseFloat(s.amount || 0);
-
-          return `
-            <div style="
-              background:white;
-              border-radius:12px;
-              padding:10px;
-              margin-bottom:8px;
-              border:${isAccepted ? "2px solid #2e7d32" : "1px solid #eee"};
-              opacity:${isAccepted ? "0.6" : "1"};
-            ">
-
-              <div style="font-weight:600;">
-                ${s.normalized_description || s.raw_description}
+        </div>
+        <div class="lineItemsScroller">
+          ${suggestions.map((s, i)=>{
+            const existing = (item.Splits || []).find(sp => sp.item_index === i);
+            const isAccepted = !!existing;
+            const category = existing ? existing.Category : s.suggested_category;
+            const amount = parseFloat(s.amount || 0);
+            return `
+              <div id="suggestion_${i}" class="splitItemRow" style="border:${isAccepted ? "2px solid #2e7d32" : "1px solid #dce3ef"}; opacity:${isAccepted ? "0.7" : "1"};">
+                <div><strong>${s.normalized_description || s.raw_description}</strong></div>
+                <div class="splitItemMeta">
+                  <span>$${amount.toFixed(2)}</span>
+                  <strong>${category || "Needs Review"}</strong>
+                </div>
+                <div class="splitItemActions">
+                  ${!isAccepted ? `<button class="touchButton" onclick="acceptSuggestion('${item.id}', ${i})" style="background:#2e7d32; color:white;">Accept</button>` : ``}
+                  <button class="touchButton" onclick="changeCategory('${item.id}', ${i})" style="background:#1565c0; color:white;">Change</button>
+                  <button class="touchButton" onclick="askAIForReceiptItem(${i})" style="background:#000; color:white;">Ask AI</button>
+                </div>
               </div>
-
-              <div>$${amount.toFixed(2)}</div>
-
-              <div><strong>${category || "Needs Review"}</strong></div>
-
-              <div style="display:flex; gap:6px; margin-top:8px;">
-
-                ${!isAccepted ? `
-                  <button onclick="acceptSuggestion('${item.id}', ${i})"
-                    style="flex:1; background:#2e7d32; color:white;">
-                    Accept
-                  </button>
-                ` : ``}
-
-                <button onclick="changeCategory('${item.id}', ${i})"
-                  style="flex:1; background:#1565c0; color:white;">
-                  Change
-                </button>
-
-                <button onclick="askAIForReceiptItem(${i})"
-                  style="flex:1; background:#000; color:white;">
-                  Ask AI
-                </button>
-
-              </div>
-
-            </div>
-          `;
-        }).join("")}
-
+            `;
+          }).join("")}
+        </div>
       </div>
-    </div>
-
-    <div id="remainingBar" style="
-      position:sticky;
-      bottom:0;
-      background:white;
-      padding:12px;
-      border-radius:14px;
-      box-shadow:0 -4px 20px rgba(0,0,0,.08);
-      display:flex;
-      justify-content:space-between;
-      font-weight:600;
-    ">
-      <div>Total: $${total.toFixed(2)}</div>
-      <div>Allocated: $${allocated.toFixed(2)}</div>
-      <div style="
-        color:${Math.abs(remaining) < 0.01 ? "green" : remaining < 0 ? "red" : "orange"};
-      ">
-        Remaining: $${remaining.toFixed(2)}
+      <div id="remainingBar" class="splitTotalsCard">
+        <div class="splitMetric">Total<strong>$${total.toFixed(2)}</strong></div>
+        <div class="splitMetric">Allocated<strong>$${allocated.toFixed(2)}</strong></div>
+        <div class="splitMetric remaining ${Math.abs(remaining) < 0.01 ? "done" : remaining < 0 ? "nearDone" : ""}">Remaining<strong>$${remaining.toFixed(2)}</strong></div>
       </div>
     </div>
   `;
@@ -2498,7 +2620,7 @@ function renderReceiptSuggestions(item, suggestions){
   }
 }
 
-  function highlightCurrentSuggestion(){
+function highlightCurrentSuggestion(){
 
   receiptSuggestions.forEach((_, i)=>{
     const el = document.getElementById(`suggestion_${i}`);
@@ -2653,30 +2775,11 @@ function updateRemainingUI(){
   const item = data[currentIndex];
   if(!item) return;
 
-  let total = 0;
-
-  item.Splits.forEach(s => {
-    total += Math.round(parseFloat(s.Amount || 0) * 100);
-  });
-
-  total = total / 100;
-
-  const remaining = parseFloat((item.Amount - total).toFixed(2));
-
   requestAnimationFrame(() => {
     const el = document.getElementById("remainingBar");
     if(!el) return;
-
-    el.innerHTML = `
-      Total: $${item.Amount.toFixed(2)}<br>
-      Allocated: $${total.toFixed(2)}<br>
-      <span style="color:${
-        Math.abs(remaining) < 0.01 ? "green" :
-        remaining < 0 ? "red" : "orange"
-      }">
-        Remaining: $${remaining.toFixed(2)}
-      </span>
-    `;
+    el.outerHTML = renderSplitTotals(item);
+    updateSplitProgressState();
   });
 }
 
@@ -3068,6 +3171,8 @@ function closeModal(){
   modalOverlay.style.zIndex = 9999; // reset to default
   modalContent.innerHTML = "";
   document.body.style.overflow = "";
+  setModalCloseButtonVisibility(true);
+  closeNumericKeypad(true);
   const sheet = document.querySelector('.modalBox');
   if(sheet) resetModalSheetStyles(sheet);
 }
