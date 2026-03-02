@@ -150,12 +150,11 @@ font-size:16px;
 position:fixed;
 top:0; left:0;
 width:100%; height:100%;
-background:rgba(0,0,0,var(--modal-backdrop-opacity, .6));
+background:rgba(0,0,0,.6);
 display:none;
 justify-content:center;
 align-items:center;
 z-index:100000; /* 👈 increased */
-transition: background .2s ease;
 overflow:auto;
 padding: 8px;
 }
@@ -280,60 +279,6 @@ margin-top:8px;
   grid-template-columns:minmax(0,1fr);
   gap:12px;
   overflow: hidden;
-}
-
-.splitBottomSheetShell {
-  position: relative;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-.splitReceiptUnderlay {
-  position: absolute;
-  inset: 0;
-  padding: 8px;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
-  z-index: 1;
-}
-.splitReceiptFrame {
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: #fff;
-  padding: 10px;
-  box-shadow: inset 0 0 0 1px rgba(220,227,239,.7);
-  min-height: 0;
-}
-.splitReceiptUnderlay .receiptViewport {
-  height: 100%;
-  max-height: 100%;
-  min-height: 220px;
-}
-.splitForegroundSheet {
-  position: absolute;
-  inset: 0;
-  background: #fff;
-  border-radius: 18px 18px 0 0;
-  border: 1px solid var(--border);
-  box-shadow: 0 -10px 32px rgba(23,32,51,.2);
-  display: grid;
-  grid-template-rows: auto minmax(0,1fr) auto auto;
-  gap: 10px;
-  padding: 0 10px 8px;
-  z-index: 2;
-  touch-action: pan-y;
-  will-change: transform;
-}
-.splitHeaderZone {
-  padding-top: 2px;
-}
-.splitHeaderRow {
-  touch-action: none;
-}
-.modalOverlay[data-sheet-mode="split"] .modalDragHandle {
-  margin-top: 8px;
-  margin-bottom: 6px;
 }
 .receiptCard {
   border:1px solid var(--border);
@@ -462,19 +407,8 @@ margin-top:8px;
 
 .categoryPickerRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 1fr;
   gap: 8px;
-}
-
-.infoIconBtn {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: none;
-  background: #eee;
-  font-weight: 700;
-  color: #1565c0;
 }
 
 .categoryPickerActions {
@@ -1718,7 +1652,14 @@ function generateCategoryButtons(){
             onclick="selectCategory('${c.name.replace(/'/g,"\\'")}')">
             ${c.name}
           </button>
-          <button class="infoIconBtn" onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')">i</button>
+          <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
+            width:36px;
+            height:36px;
+            border-radius:50%;
+            border:none;
+            background:#eee;
+            font-weight:bold;
+          ">i</button>
         </div>
       `).join("")}
     </div>
@@ -1728,7 +1669,6 @@ function generateCategoryButtons(){
 function openCategoryModal(){
   aiContext = null;
   modalTitle.innerText = "Choose Category";
-  setModalCloseButtonVisibility(false);
   modalContent.innerHTML = generateCategoryButtons();
   openModal(100000);
 }
@@ -1766,6 +1706,13 @@ function showCategoryInfo(name){
       
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <h3 style="margin:0;">${category.name}</h3>
+        <button onclick="closeCategoryInfo()" style="
+          background:#c62828;
+          color:white;
+          border:none;
+          padding:6px 10px;
+          border-radius:8px;
+        ">✕</button>
       </div>
 
       <div style="font-size:14px; line-height:1.5;">
@@ -1776,10 +1723,6 @@ function showCategoryInfo(name){
   `;
 
   document.body.appendChild(modal);
-
-  modal.addEventListener("click", (event) => {
-    if(event.target === modal) closeCategoryInfo();
-  });
 
   window.closeCategoryInfo = () => {
     document.body.removeChild(modal);
@@ -1885,39 +1828,34 @@ async function openSplitModal(){
   setModalCloseButtonVisibility(false);
 
   modalContent.innerHTML = `
-    <div id="splitBottomSheetShell" class="splitBottomSheetShell">
-      <div class="splitReceiptUnderlay">
-        <div class="small" style="padding:0 4px;">Receipt (scroll/zoom independently)</div>
-        <div class="splitReceiptFrame">
-          <div id="splitReceiptPreview" class="receiptViewport"></div>
-        </div>
+    <div id="splitModalSheet" class="splitModalLayout">
+      <div class="splitHeaderRow">
+        <h3 class="splitHeaderTitle">Split Transaction</h3>
+        <button class="splitHeaderExit" onclick="closeModal()" aria-label="Close split transaction">✕</button>
       </div>
-      <div id="splitModalSheet" class="splitForegroundSheet">
-        <div id="splitHeaderZone" class="splitHeaderZone">
-          <div class="splitHeaderRow">
-            <h3 class="splitHeaderTitle">Split Transaction</h3>
-            <button class="splitHeaderExit" onclick="closeModal()" aria-label="Close split transaction">✕</button>
-          </div>
-          <div class="receiptControls" style="margin-bottom:0;">
+      <div class="splitBody">
+        <div class="receiptCard">
+          <div class="receiptControls">
             <button class="touchButton" onclick="openManualSplitModal()" style="background:#1e3a8a;color:#fff;flex:1;">Add Split</button>
             ${item.receipt_url ? `<button class="touchButton" onclick="viewReceipt()" style="background:#1565c0;color:#fff;flex:1;">View Receipt</button>` : ""}
-            ${item.receipt_url ? `<button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;flex:1;">🤖 Analyze</button>` : ""}
+            ${item.receipt_url ? `<button type="button" class="touchButton" onclick="toggleReceiptViewport()" style="background:#37474f;color:#fff;flex:1;">Expand Receipt</button>` : ""}
           </div>
+          ${item.receipt_url ? `<button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:10px;">🤖 Analyze Receipt</button>` : `<div class="small" style="margin-bottom:8px;">No receipt attached. Use keypad-first split entry for fast mobile input.</div>`}
+          <div id="splitReceiptPreview" class="receiptViewport"></div>
         </div>
         <div id="splitItemsScroller" class="lineItemsScroller">${renderSplitItems(item)}</div>
-        <div id="splitFooterSticky" class="splitFooterSticky">
-          <div id="splitCompletionText" class="small">Assign all line items to complete this transaction.</div>
-          <button id="splitDoneBtn" class="touchButton" style="background:#2e7d32;color:#fff;" onclick="completeSplitWorkflow()">Done</button>
-        </div>
-        ${renderSplitTotals(item)}
       </div>
+      <div id="splitFooterSticky" class="splitFooterSticky">
+        <div id="splitCompletionText" class="small">Assign all line items to complete this transaction.</div>
+        <button id="splitDoneBtn" class="touchButton" style="background:#2e7d32;color:#fff;" onclick="completeSplitWorkflow()">Done</button>
+      </div>
+      ${renderSplitTotals(item)}
     </div>
   `;
 
   hydrateReceiptPreview(item);
   updateSplitProgressState();
   openModal();
-  setupSplitBottomSheet();
 }
 
 function openManualSplitModal(){
@@ -1928,7 +1866,6 @@ function openManualSplitModal(){
 
   modalTitle.innerText = "Manual Split";
   setModalCloseButtonVisibility(false);
-  modalOverlay.dataset.sheetMode = "default";
   modalContent.innerHTML = `
     <div class="splitModalLayout" style="padding:6px;">
       <div class="splitHeaderRow">
@@ -1957,7 +1894,7 @@ function openManualAmountKeypad(){
   const { remaining } = calculateSplitStats(item);
   openNumericKeypad({
     title: "Enter split amount",
-    initial: SplitState.manualAmount || 0,
+    initial: SplitState.manualAmount || remaining,
     max: Math.max(remaining, 0),
     onChange: (value) => {
       SplitState.manualAmount = value;
@@ -2236,7 +2173,6 @@ function chooseCategoryForReceipt(index){
   aiContext = { type: "receipt", index };
 
   modalTitle.innerText = "Choose Category";
-  setModalCloseButtonVisibility(false);
   modalContent.innerHTML = generateCategoryButtons();
 
   openModal(1000000);
@@ -2284,10 +2220,6 @@ function pressKeypadKey(key){
   } else if(key === "."){
     if(!val.includes(".")) val = val ? `${val}.` : "0.";
   } else {
-    if(val.includes(".")){
-      const decimalPart = val.split(".")[1] || "";
-      if(decimalPart.length >= 2) return;
-    }
     val = `${val}${key}`;
   }
   SplitState.keypad.value = val;
@@ -2968,9 +2900,16 @@ overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
     overlay.style.overflowY = "auto";
   overlay.style.zIndex = "400000"; // 👈 ALWAYS on top
 
-  let html = `
+    let html = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <h3 style="margin:0;">Select Category</h3>
+        <button onclick="closeCategoryPicker()" style="
+          background:#c62828;
+          color:white;
+          border:none;
+          padding:6px 10px;
+          border-radius:8px;
+        ">← Back</button>
       </div>
 
       <div style="margin-bottom:10px; font-size:14px;">
@@ -2988,7 +2927,15 @@ overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
     ${c.name}
   </button>
 
-  <button class="infoIconBtn" onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')">i</button>
+  <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
+    flex-shrink:0;
+    width:36px;
+    height:36px;
+    border-radius:50%;
+    border:none;
+    background:#eee;
+    font-weight:bold;
+  ">i</button>
 
 </div>
       `;
@@ -2996,10 +2943,6 @@ overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
 
     overlay.innerHTML = html;
     document.body.appendChild(overlay);
-
-    overlay.addEventListener("click", (event) => {
-      if(event.target === overlay) closeCategoryPicker();
-    });
 
     window.selectCategory = (name)=>{
       document.body.removeChild(overlay);
@@ -3163,23 +3106,13 @@ const modalSwipeState = {
   dragY: 0,
   tracking: false,
   lockedToScroll: false,
-  activeScroller: null,
-  directionLocked: null,
-  gestureActive: false,
-  split: {
-    currentSnap: "expanded",
-    currentTranslate: 0,
-    revealY: 0,
-    closingFromReveal: false
-  }
+  activeScroller: null
 };
 
-const MODAL_SWIPE_DISTANCE_PX = 136;
-const MODAL_SWIPE_VELOCITY_PX_PER_MS = 0.9;
-const MODAL_SWIPE_MIN_DRAG_PX = 16;
-const MODAL_SWIPE_RESISTANCE = 0.36;
-const MODAL_SWIPE_DIRECTION_LOCK_PX = 14;
-const SPLIT_REVEAL_CLOSE_EXTRA_PX = 160;
+const MODAL_SWIPE_DISTANCE_PX = 96;
+const MODAL_SWIPE_VELOCITY_PX_PER_MS = 0.65;
+const MODAL_SWIPE_MIN_DRAG_PX = 10;
+const MODAL_SWIPE_RESISTANCE = 0.42;
 
 function getScrollableParent(target, limitEl){
   let node = target;
@@ -3199,24 +3132,19 @@ function resetModalSheetStyles(sheet){
   sheet.style.opacity = '';
 }
 
-function setBackdropBySheetProgress(progress){
-  const alpha = (0.38 + ((1 - progress) * 0.24)).toFixed(2);
-  modalOverlay.style.setProperty('--modal-backdrop-opacity', alpha);
-}
-
-function animateModalSnapBack(sheet, targetY = 0){
-  sheet.style.transition = 'transform 320ms cubic-bezier(.2,.8,.2,1), opacity 220ms ease';
-  sheet.style.transform = `translateY(${targetY}px) scale(1)`;
+function animateModalSnapBack(sheet){
+  sheet.style.transition = 'transform 280ms cubic-bezier(.22,.61,.36,1), opacity 220ms ease';
+  sheet.style.transform = 'translateY(0) scale(1)';
   sheet.style.opacity = '1';
   window.setTimeout(() => {
     if(modalOverlay.classList.contains('isOpen')) resetModalSheetStyles(sheet);
-  }, 340);
+  }, 300);
 }
 
 function animateModalCloseFromSwipe(sheet){
   const fromY = Math.max(modalSwipeState.dragY, 0);
   const endY = Math.max(window.innerHeight, sheet.getBoundingClientRect().height + 120);
-  sheet.style.transition = 'transform 260ms cubic-bezier(.2,.8,.2,1), opacity 200ms ease';
+  sheet.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1), opacity 200ms ease';
   sheet.style.transform = `translateY(${fromY}px) scale(1)`;
   sheet.style.opacity = String(Math.max(0.55, 1 - (fromY / 500)));
   requestAnimationFrame(() => {
@@ -3226,46 +3154,7 @@ function animateModalCloseFromSwipe(sheet){
   window.setTimeout(() => {
     resetModalSheetStyles(sheet);
     closeModal();
-  }, 260);
-}
-
-function setupSplitBottomSheet(){
-  const shell = document.getElementById('splitBottomSheetShell');
-  const sheet = document.getElementById('splitModalSheet');
-  if(!shell || !sheet) return;
-  modalOverlay.dataset.sheetMode = 'split';
-
-  const maxReveal = Math.max(Math.round(window.innerHeight * 0.42), 240);
-  const boundedReveal = Math.min(maxReveal, Math.max(shell.clientHeight - 220, 180));
-  modalSwipeState.split.revealY = boundedReveal;
-  modalSwipeState.split.currentSnap = 'expanded';
-  modalSwipeState.split.currentTranslate = 0;
-  sheet.style.transform = 'translateY(0px)';
-  setBackdropBySheetProgress(0);
-}
-
-function applySplitSheetTranslate(y, useTransition = false){
-  const sheet = document.getElementById('splitModalSheet');
-  if(!sheet) return;
-  if(useTransition){
-    sheet.style.transition = 'transform 340ms cubic-bezier(.2,.8,.2,1)';
-  } else {
-    sheet.style.transition = 'none';
-  }
-  sheet.style.transform = `translateY(${Math.max(0, y)}px)`;
-  setBackdropBySheetProgress(Math.min(1, y / Math.max(modalSwipeState.split.revealY || 1, 1)));
-}
-
-function snapSplitSheet(targetSnap){
-  const revealY = modalSwipeState.split.revealY;
-  const targetY = targetSnap === 'reveal' ? revealY : 0;
-  modalSwipeState.split.currentSnap = targetSnap;
-  modalSwipeState.split.currentTranslate = targetY;
-  applySplitSheetTranslate(targetY, true);
-}
-
-function canStartSplitGesture(target){
-  return !!(target.closest('.modalDragHandle') || target.closest('#splitHeaderZone'));
+  }, 220);
 }
 
 function openModal(zIndex = 9999){
@@ -3273,7 +3162,6 @@ function openModal(zIndex = 9999){
   modalOverlay.style.zIndex = zIndex;
   modalOverlay.classList.add("isOpen");
   document.body.style.overflow = "hidden";
-  setBackdropBySheetProgress(0);
   initModalSwipeClose();
 }
 
@@ -3281,8 +3169,6 @@ function closeModal(){
   modalOverlay.classList.remove("isOpen");
   modalOverlay.style.display = "none";
   modalOverlay.style.zIndex = 9999; // reset to default
-  modalOverlay.style.removeProperty('--modal-backdrop-opacity');
-  modalOverlay.dataset.sheetMode = 'default';
   modalContent.innerHTML = "";
   document.body.style.overflow = "";
   setModalCloseButtonVisibility(true);
@@ -3299,9 +3185,6 @@ function initModalSwipeClose(){
   sheet.addEventListener('touchstart', (e) => {
     if(e.touches.length !== 1) return;
     const t = e.touches[0];
-    const isSplitMode = modalOverlay.dataset.sheetMode === 'split';
-    if(isSplitMode && !canStartSplitGesture(e.target)) return;
-
     modalSwipeState.startY = t.clientY;
     modalSwipeState.startX = t.clientX;
     modalSwipeState.startTime = performance.now();
@@ -3309,8 +3192,6 @@ function initModalSwipeClose(){
     modalSwipeState.lastTime = modalSwipeState.startTime;
     modalSwipeState.dragY = 0;
     modalSwipeState.tracking = true;
-    modalSwipeState.directionLocked = null;
-    modalSwipeState.gestureActive = false;
     modalSwipeState.activeScroller = getScrollableParent(e.target, sheet);
     modalSwipeState.lockedToScroll = (modalSwipeState.activeScroller?.scrollTop || 0) > 0;
   }, { passive: true });
@@ -3320,42 +3201,20 @@ function initModalSwipeClose(){
 
     const t = e.touches[0];
     const dy = t.clientY - modalSwipeState.startY;
-    const dx = t.clientX - modalSwipeState.startX;
-    const absDx = Math.abs(dx);
-    const absDy = Math.abs(dy);
-    const isSplitMode = modalOverlay.dataset.sheetMode === 'split';
+    const dx = Math.abs(t.clientX - modalSwipeState.startX);
 
     modalSwipeState.lastY = t.clientY;
     modalSwipeState.lastTime = performance.now();
 
-    if(!modalSwipeState.directionLocked){
-      if(absDx < MODAL_SWIPE_DIRECTION_LOCK_PX && absDy < MODAL_SWIPE_DIRECTION_LOCK_PX) return;
-      modalSwipeState.directionLocked = absDy > absDx ? 'vertical' : 'horizontal';
-    }
-    if(modalSwipeState.directionLocked !== 'vertical') return;
+    if(dx > Math.abs(dy)) return;
+    if(dy <= 0) return;
 
     const scrollerTop = (modalSwipeState.activeScroller?.scrollTop || 0) <= 0;
     if(modalSwipeState.lockedToScroll || !scrollerTop) return;
-    if(absDy < MODAL_SWIPE_MIN_DRAG_PX) return;
+
+    if(dy < MODAL_SWIPE_MIN_DRAG_PX) return;
 
     e.preventDefault();
-    modalSwipeState.gestureActive = true;
-
-    if(isSplitMode){
-      const baseY = modalSwipeState.split.currentTranslate;
-      const revealY = modalSwipeState.split.revealY;
-      const adjustedDelta = dy >= 0 ? dy * MODAL_SWIPE_RESISTANCE : dy * 0.55;
-      let nextY = baseY + adjustedDelta;
-      if(nextY < 0) nextY *= 0.28;
-      if(nextY > revealY){
-        nextY = revealY + ((nextY - revealY) * 0.24);
-      }
-      modalSwipeState.dragY = Math.max(0, nextY);
-      applySplitSheetTranslate(modalSwipeState.dragY, false);
-      return;
-    }
-
-    if(dy <= 0) return;
     modalSwipeState.dragY = dy * MODAL_SWIPE_RESISTANCE;
     sheet.style.transition = 'none';
     sheet.style.transform = `translateY(${modalSwipeState.dragY}px) scale(1)`;
@@ -3368,58 +3227,29 @@ function initModalSwipeClose(){
     const totalDy = modalSwipeState.lastY - modalSwipeState.startY;
     const totalDt = Math.max(modalSwipeState.lastTime - modalSwipeState.startTime, 1);
     const velocityY = totalDy / totalDt;
-    const isSplitMode = modalOverlay.dataset.sheetMode === 'split';
 
-    if(isSplitMode){
-      const revealY = modalSwipeState.split.revealY;
-      const fromReveal = modalSwipeState.split.currentSnap === 'reveal';
-      const strongClose = fromReveal && modalSwipeState.dragY > revealY + SPLIT_REVEAL_CLOSE_EXTRA_PX && velocityY > 1.15;
+    const shouldClose =
+      modalSwipeState.dragY >= MODAL_SWIPE_DISTANCE_PX ||
+      (totalDy >= MODAL_SWIPE_MIN_DRAG_PX && velocityY >= MODAL_SWIPE_VELOCITY_PX_PER_MS);
 
-      if(strongClose){
-        animateModalCloseFromSwipe(document.querySelector('.modalBox'));
-      } else if(fromReveal){
-        if(velocityY < -0.45 || modalSwipeState.dragY < revealY * 0.45){
-          snapSplitSheet('expanded');
-        } else {
-          snapSplitSheet('reveal');
-        }
-      } else if(modalSwipeState.dragY >= revealY * 0.55 || velocityY > 0.7){
-        snapSplitSheet('reveal');
-      } else {
-        snapSplitSheet('expanded');
-      }
-    } else {
-      const shouldClose =
-        modalSwipeState.dragY >= MODAL_SWIPE_DISTANCE_PX ||
-        (totalDy >= MODAL_SWIPE_DISTANCE_PX * 0.6 && velocityY >= MODAL_SWIPE_VELOCITY_PX_PER_MS);
-
-      if(shouldClose){
-        animateModalCloseFromSwipe(sheet);
-      } else if(modalSwipeState.dragY > 0){
-        animateModalSnapBack(sheet);
-      }
-    }
-
-    modalSwipeState.tracking = false;
-    modalSwipeState.lockedToScroll = false;
-    modalSwipeState.activeScroller = null;
-    modalSwipeState.dragY = 0;
-    modalSwipeState.directionLocked = null;
-    modalSwipeState.gestureActive = false;
-  }, { passive: true });
-
-  sheet.addEventListener('touchcancel', () => {
-    if(modalOverlay.dataset.sheetMode === 'split'){
-      snapSplitSheet(modalSwipeState.split.currentSnap || 'expanded');
+    if(shouldClose){
+      animateModalCloseFromSwipe(sheet);
     } else if(modalSwipeState.dragY > 0){
       animateModalSnapBack(sheet);
     }
+
     modalSwipeState.tracking = false;
     modalSwipeState.lockedToScroll = false;
     modalSwipeState.activeScroller = null;
     modalSwipeState.dragY = 0;
-    modalSwipeState.directionLocked = null;
-    modalSwipeState.gestureActive = false;
+  }, { passive: true });
+
+  sheet.addEventListener('touchcancel', () => {
+    if(modalSwipeState.dragY > 0) animateModalSnapBack(sheet);
+    modalSwipeState.tracking = false;
+    modalSwipeState.lockedToScroll = false;
+    modalSwipeState.activeScroller = null;
+    modalSwipeState.dragY = 0;
   }, { passive: true });
 }
 
