@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 ========================= */
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const PLAID_CLIENT_ID = Deno.env.get("PLAID_CLIENT_ID")!;
 const PLAID_SECRET = Deno.env.get("PLAID_SECRET")!;
 const PLAID_ENV = Deno.env.get("PLAID_ENV") || "sandbox";
@@ -37,9 +38,22 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+    }
+
+    const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+    }
+
     const body = await req.json().catch(() => ({}));
     const itemId = body.item_id || null;
-    const manualUserId = body.user_id || null;
+    const manualUserId = user.id;
 
     if (!itemId && !manualUserId) {
       return new Response(

@@ -715,7 +715,7 @@ const supabaseClient = window.supabase.createClient(
 );
 
 /* 🔐 ADD THIS RIGHT HERE */
-async function getAuthHeaders() {
+async function getValidAccessToken() {
   let { data: { session } } = await supabaseClient.auth.getSession();
 
   if (!session?.access_token) {
@@ -727,9 +727,24 @@ async function getAuthHeaders() {
     session = refreshed.session;
   }
 
+  const { error: userError } = await supabaseClient.auth.getUser(session.access_token);
+  if (userError) {
+    const { data: refreshed, error: refreshError } = await supabaseClient.auth.refreshSession();
+    if (refreshError || !refreshed?.session?.access_token) {
+      alert("Your session expired. Please log in again.");
+      throw new Error("Session expired");
+    }
+    session = refreshed.session;
+  }
+
+  return session.access_token;
+}
+
+async function getAuthHeaders() {
+  const token = await getValidAccessToken();
   return {
     "Content-Type": "application/json",
-    "authorization": `Bearer ${session.access_token}`,
+    "Authorization": `Bearer ${token}`,
     "apikey": SUPABASE_ANON_KEY
   };
 }
