@@ -11,14 +11,64 @@
 <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
 <style>
-body { font-family:-apple-system,BlinkMacSystemFont,sans-serif; margin:0; padding:20px; background:#f4f4f4;}
-h2 { text-align:center; }
-.panel { background:white; padding:16px; border-radius:14px; box-shadow:0 6px 25px rgba(0,0,0,.08); margin-bottom:15px;}
-button { cursor:pointer; border:none; border-radius:10px; padding:12px; font-weight:600;}
+:root {
+  --bg: #f3f6fb;
+  --panel: #ffffff;
+  --panel-alt: #f9fbff;
+  --text: #172033;
+  --text-soft: #55627a;
+  --border: #dce3ef;
+  --shadow: 0 10px 30px rgba(23, 32, 51, 0.08);
+  --radius: 16px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin: 0;
+  background: linear-gradient(180deg, #eef3ff 0%, var(--bg) 220px);
+  color: var(--text);
+}
+
+.appShell {
+  width: min(100%, 980px);
+  margin: 0 auto;
+  padding: 14px;
+}
+
+h2 {
+  text-align: center;
+  margin: 8px 0 16px;
+  letter-spacing: 0.2px;
+}
+
+.panel {
+  background: var(--panel);
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  margin-bottom: 12px;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 12px;
+  padding: 12px;
+  font-weight: 600;
+  transition: transform .12s ease, filter .12s ease;
+}
+
+button:hover { filter: brightness(1.04); }
+button:active { transform: translateY(1px); }
+
 input, select {
 padding:12px;
-border-radius:10px;
-border:1px solid #ddd;
+border-radius:12px;
+border:1px solid var(--border);
+background:#fff;
 width:100%;
 font-size:16px;
 }
@@ -30,12 +80,19 @@ font-size:16px;
 .special{background:#8e24aa;}
 .progress-bar-container { background:#eee; border-radius:999px; overflow:hidden; height:16px; margin-bottom:8px;}
 .progress-bar { height:100%; background:#2e7d32; width:0%;}
-.small { font-size:13px; color:#555;}
+.small { font-size:13px; color:var(--text-soft);}
 .totalRow { display:flex; justify-content:space-between; font-size:13px; padding:6px 0; cursor:pointer; border-bottom:1px solid #eee;}
 .totalRow:hover { background:#f5f5f5; }
-.splitBox { background:#fafafa; padding:10px; border-radius:10px;}
+.splitBox { background:var(--panel-alt); padding:10px; border-radius:10px; border:1px solid var(--border);}
 .viewBtn { background:#1565c0; color:white; margin-top:6px;}
 .removeBtn { background:#c62828; color:white; margin-top:6px;}
+.appGrid { display: grid; gap: 12px; }
+.fileInput { margin-bottom: 12px; background: #fff; }
+.appCard { padding: 12px; }
+.topControls { margin-bottom: 10px; }
+.totalsPanel { margin-bottom: 14px; }
+.exportBtn { width: 100%; background: #111827; color: #fff; }
+.authTitle, .panel h4 { margin-top: 0; }
 
 .modalOverlay {
 position:fixed;
@@ -147,13 +204,25 @@ margin-top:8px;
   padding-left:6px;
 }
 
+@media (min-width: 900px) {
+  .appGrid {
+    grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
+    align-items: start;
+  }
+
+  .stickyColumn {
+    position: sticky;
+    top: 14px;
+  }
+}
+
 </style>
 </head>
 
 <body>
-
+<main class="appShell">
 <h2>Bathhouse Categorizer</h2>
-<input type="file" id="csvFile" accept=".csv">
+<input type="file" id="csvFile" class="fileInput" accept=".csv">
 
 <div id="mappingPanel" class="panel" style="display:none;"></div>
 <div id="authPanel" class="panel">
@@ -169,7 +238,8 @@ margin-top:8px;
   
 <div id="app" style="display:none;">
 
-<div class="panel">
+<div class="appGrid">
+<div class="panel appCard">
 
 <button id="searchBtn" class="category-btn" style="background:#ff9800; margin-bottom:8px;" onclick="openSearchModal()">🔎 Search</button>
 
@@ -205,7 +275,7 @@ margin-top:8px;
 <div id="progressText" class="small"></div>
 
 
-<div class="panel">
+<div class="panel appCard">
 <h3 id="cardTitle"></h3>
 <div id="cardMeta" class="small"></div>
 <div id="currentCategory" class="small" style="margin-top:6px;"></div>
@@ -233,13 +303,14 @@ margin-top:8px;
 <div id="categoryButtons"></div>
 </div>
 
-<div class="panel">
+<div class="panel totalsPanel stickyColumn">
 <h4>Totals</h4>
 <div id="totals"></div>
+<button onclick="exportExcel()" class="exportBtn">Export to Excel</button>
+
 </div>
 
-<button onclick="exportExcel()">Export to Excel</button>
-
+</div>
 </div>
 
 <div id="modalOverlay" class="modalOverlay">
@@ -249,6 +320,7 @@ margin-top:8px;
 <button class="modalClose" onclick="closeModal()">Close</button>
 </div>
 </div>
+</main>
 
 <script>
 
