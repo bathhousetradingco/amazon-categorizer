@@ -1,201 +1,138 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+// supabase/functions/analyze-receipt/index.ts
+
+import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/* ==============================
-   ENV
-============================== */
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const OPENAI_KEY = Deno.env.get("OPENAI_KEY")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 
-/* ==============================
-   CORS
-============================== */
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY
+);
 
-/* ==============================
-   MAIN
-============================== */
-Deno.serve(async (req) => {
-  console.log("ANALYZE RECEIPT VERSION TEST-002");
-
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
+serve(async (req) => {
   try {
-    /* ==============================
-       AUTH
-    ============================== */
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return jsonError("Missing Authorization header", 401);
+    if (req.method !== "POST") {
+      return json({ error: "Method not allowed" }, 405);
     }
 
-    const supabase = createClient(SUPABASE_URL, SERVICE_ROLE, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return jsonError("Invalid or expired session", 401);
-    }
-
-    /* ==============================
-       BODY
-    ============================== */
-    let body: any = {};
-    try {
-      body = await req.json();
-    } catch {
-      return jsonError("Invalid JSON body", 400);
-    }
-
-    const filePath = body?.filePath;
-    const categories = Array.isArray(body?.categories)
-      ? body.categories
-      : [];
+    const { filePath, categories } = await req.json();
 
     if (!filePath) {
-      return jsonError("Missing filePath", 400);
+      return json({ error: "Missing filePath" }, 400);
     }
 
-    /* ==============================
-       DOWNLOAD RECEIPT
-    ============================== */
-    const { data: fileData, error: downloadError } =
-      await supabase.storage.from("receipts").download(filePath);
+    // 🔹 Create signed URL for receipt
+    const { data: signedData, error: signedError } =
+      await supabase.storage
+        .from("receipts")
+        .createSignedUrl(filePath, 60);
 
-    if (downloadError || !fileData) {
-      return jsonError("Unable to download receipt", 400);
+    if (signedError || !signedData?.signedUrl) {
+      console.error("Signed URL error:", signedError);
+      return json({ error: "Failed to access receipt" }, 400);
     }
 
-    const text = await fileData.text();
-    if (!text || text.length < 10) {
-      return jsonError("Receipt text empty or unreadable", 400);
-    }
+    const receiptUrl = signedData.signedUrl;
 
-    /* ==============================
-       CALL OPENAI
-    ============================== */
-    const aiRes = await fetch("https://api.openai.com/v1/responses", {
+    // 🔹 Build AI prompt
+    const systemPrompt = `
+You are a bookkeeping assistant.
+
+Extract clean line items from the receipt image.
+
+Rules:
+- Ignore totals
+- Ignore subtotal
+- Ignore payment method
+- Ignore store info
+- Extract ONLY purchasable items
+- Include tax separately if present
+- Return JSON only
+
+Return format:
+{
+  "line_items": [
+    {
+      "raw_description": "original line text",
+      "normalized_description": "cleaned item name",
+      "amount": 12.34,
+      "suggested_category": "Best category from list"
+    }
+  ],
+  "tax_amount": 1.23
+}
+
+Allowed categories:
+${(categories || []).join(", ")}
+`;
+
+    // 🔹 Call OpenAI Vision
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENAI_KEY}`,
         "Content-Type": "application/json",
+        "Authorization": `Bearer ${OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: [
-          {
-            role: "system",
-            content:
-              "Extract line items from receipt text. Return JSON with items array.",
-          },
+        model: "gpt-4o",
+        temperature: 0,
+        messages: [
+          { role: "system", content: systemPrompt },
           {
             role: "user",
-            content: text,
-          },
-        ],
-      }),
+            content: [
+              { type: "text", text: "Analyze this receipt." },
+              {
+                type: "image_url",
+                image_url: { url: receiptUrl }
+              }
+            ]
+          }
+        ]
+      })
     });
 
-    if (!aiRes.ok) {
-      return jsonError("AI request failed", 500);
+    const openaiData = await openaiRes.json();
+
+    if (!openaiRes.ok) {
+      console.error("OpenAI error:", openaiData);
+      return json({ error: "OpenAI request failed" }, 500);
     }
 
-    const aiData = await aiRes.json();
+    const content = openaiData.choices?.[0]?.message?.content;
 
-    let rawOutput = "";
-    try {
-      rawOutput = aiData.output?.[0]?.content?.[0]?.text ?? "";
-    } catch {
-      return jsonError("Unexpected AI response format", 500);
+    if (!content) {
+      return json({ error: "No AI response" }, 500);
     }
 
+    // 🔹 Safely parse JSON from AI response
     let parsed;
+
     try {
-      parsed = JSON.parse(rawOutput);
-    } catch {
-      return jsonError("AI returned invalid JSON", 500);
+      parsed = JSON.parse(content);
+    } catch (err) {
+      console.error("JSON parse error:", content);
+      return json({ error: "AI returned invalid JSON" }, 500);
     }
 
-    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    return json(parsed);
 
-    /* ==============================
-       NORMALIZE ITEMS
-    ============================== */
-    const normalizedItems = items.map((item: any) => ({
-      name: String(item?.name ?? "").trim(),
-      quantity: Number(item?.quantity ?? 1),
-      price: Number(item?.price ?? 0),
-      normalized_description: normalizeDescription(item?.name ?? ""),
-      suggested_category: null,
-    }));
-
-    /* ==============================
-       OPTIONAL CATEGORY SUGGESTION
-    ============================== */
-    if (categories.length > 0) {
-      for (const item of normalizedItems) {
-        item.suggested_category = suggestCategory(
-          item.normalized_description,
-          categories
-        );
-      }
-    }
-
-    /* ==============================
-       SUCCESS RESPONSE
-    ============================== */
-    return new Response(
-      JSON.stringify({
-        success: true,
-        items: normalizedItems,
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
-      }
-    );
-  } catch (err: any) {
-    console.error("Unhandled error:", err);
-    return jsonError("Unexpected server error", 500);
+  } catch (err) {
+    console.error("Unexpected error:", err);
+    return json({ error: "Internal server error" }, 500);
   }
 });
 
-/* ==============================
-   HELPERS
-============================== */
-
-function normalizeDescription(text: string) {
-  return String(text)
-    .toLowerCase()
-    .replace(/[^\w\s]/g, "")
-    .trim();
-}
-
-function suggestCategory(itemName: string, categories: string[]) {
-  for (const cat of categories) {
-    if (itemName.includes(cat.toLowerCase())) {
-      return cat;
-    }
-  }
-  return null;
-}
-
-function jsonError(message: string, status: number) {
-  return new Response(JSON.stringify({ error: message }), {
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
     status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "*"
+    }
   });
 }
