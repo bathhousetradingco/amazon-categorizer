@@ -204,6 +204,58 @@ margin-top:8px;
   padding-left:6px;
 }
 
+
+.workflowHeader h3 { margin: 0 0 10px; }
+.workflowSteps {
+  display:grid;
+  gap:8px;
+  grid-template-columns: repeat(auto-fit, minmax(170px,1fr));
+}
+.workflowStep {
+  background: linear-gradient(135deg, #f7f9ff, #edf3ff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  font-size: 14px;
+  color: var(--text-soft);
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.workflowStep span {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #1565c0;
+  color: white;
+  display:inline-flex;
+  justify-content:center;
+  align-items:center;
+  font-weight:700;
+  font-size:12px;
+}
+.controlsCard h3 { margin-top: 0; }
+.filterGrid {
+  display:grid;
+  gap:8px;
+  grid-template-columns: 1fr;
+  margin-top: 8px;
+}
+.filterGrid label {
+  font-size: 13px;
+  color: var(--text-soft);
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+
+@media (min-width: 700px) {
+  .filterGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (min-width: 900px) {
   .appGrid {
     grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
@@ -238,76 +290,80 @@ margin-top:8px;
   
 <div id="app" style="display:none;">
 
+<div class="workflowHeader panel">
+  <h3>Workflow</h3>
+  <div class="workflowSteps">
+    <div class="workflowStep"><span>1</span> Filter transaction set</div>
+    <div class="workflowStep"><span>2</span> Review receipt + AI split suggestions</div>
+    <div class="workflowStep"><span>3</span> Confirm category and continue</div>
+  </div>
+</div>
+
 <div class="appGrid">
+<div class="panel appCard controlsCard">
+  <h3>Transaction Navigator</h3>
+
+  <button id="searchBtn" class="category-btn" style="background:#ff9800; margin-bottom:8px;" onclick="openSearchModal()">🔎 Search</button>
+  <button id="clearSearchBtn" class="category-btn" style="background:#c62828; margin-bottom:8px; display:none;" onclick="clearSearchFilter()">Clear Search Filter</button>
+
+  <button id="quickActionsToggleBtn" class="menuToggleBtn" onclick="toggleQuickActionsMenu()">
+  ☰ Quick Actions
+  </button>
+
+  <div id="quickActionsMenu" class="quickActionsMenu">
+    <button id="createTransactionBtn" class="category-btn" style="background:#1565c0; margin-bottom:8px;" onclick="openCreateTransactionModal()">
+    ➕ Create Transaction
+    </button>
+    <button class="category-btn" style="background:#2e7d32; margin-bottom:8px;" onclick="connectBank()">🏦 Connect Bank</button>
+    <button class="category-btn" style="background:#000; margin-bottom:0;" onclick="forcePlaidSync()">🔄 Sync Bank Now</button>
+  </div>
+
+  <div class="filterGrid">
+    <label>
+      Year
+      <select id="yearFilter" onchange="applyYearFilter()">
+        <option value="">All Years</option>
+      </select>
+    </label>
+    <label>
+      Transaction Date
+      <input type="date" id="dateFilter" onchange="applyDateFilter()">
+    </label>
+  </div>
+  <button id="clearDateBtn" class="category-btn" style="background:#6b7280; margin-top:8px; display:none;" onclick="clearDateFilter()">Clear Date Filter</button>
+
+  <div class="progress-bar-container">
+    <div id="progressBar" class="progress-bar"></div>
+  </div>
+  <div id="positionIndicator" class="small" style="margin-top:4px;"></div>
+  <div id="progressText" class="small"></div>
+</div>
+
 <div class="panel appCard">
+  <h3 id="cardTitle"></h3>
+  <div id="cardMeta" class="small"></div>
+  <div id="currentCategory" class="small" style="margin-top:6px;"></div>
+  <div id="splitSummary"></div>
 
-<button id="searchBtn" class="category-btn" style="background:#ff9800; margin-bottom:8px;" onclick="openSearchModal()">🔎 Search</button>
-
-<button id="clearSearchBtn" class="category-btn" style="background:#c62828; margin-bottom:8px; display:none;" onclick="clearSearchFilter()">Clear Search Filter</button>
-
-<button id="quickActionsToggleBtn" class="menuToggleBtn" onclick="toggleQuickActionsMenu()">
-☰ Quick Actions
-</button>
-
-<div id="quickActionsMenu" class="quickActionsMenu">
-  <button id="createTransactionBtn"
-  class="category-btn"
-  style="background:#1565c0; margin-bottom:8px;"
-  onclick="openCreateTransactionModal()">
-  ➕ Create Transaction
+  <button onclick="resetSplits()" style="background:#c62828; color:white; padding:10px 14px; border-radius:10px; margin-top:10px; width:100%;">
+    Reset Splits
   </button>
 
-  <button class="category-btn" style="background:#2e7d32; margin-bottom:8px;" onclick="connectBank()">
-  🏦 Connect Bank
-  </button>
-  <button class="category-btn" style="background:#000; margin-bottom:0;" onclick="forcePlaidSync()">
-  🔄 Sync Bank Now
-  </button>
-</div>
-<select id="yearFilter" onchange="applyYearFilter()" style="margin-bottom:8px;">
-  <option value="">All Years</option>
-</select>
+  <hr>
 
-<div class="progress-bar-container">
-  <div id="progressBar" class="progress-bar"></div>
-</div>
-<div id="positionIndicator" class="small" style="margin-top:4px;"></div>
-<div id="progressText" class="small"></div>
+  <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+    <button class="navBtn" onclick="goBack()">⬅ Back</button>
+    <button class="navBtn" onclick="goNext()">Next ➡</button>
+  </div>
 
-
-<div class="panel appCard">
-<h3 id="cardTitle"></h3>
-<div id="cardMeta" class="small"></div>
-<div id="currentCategory" class="small" style="margin-top:6px;"></div>
-<div id="splitSummary"></div>
-
-<button onclick="resetSplits()" style="
-  background:#c62828;
-  color:white;
-  padding:10px 14px;
-  border-radius:10px;
-  margin-top:10px;
-  width:100%;
-">
-  Reset Splits
-</button>
-
-<hr>
-
-<div style="display:flex; justify-content:space-between; margin-bottom:12px;">
-<button class="navBtn" onclick="goBack()">⬅ Back</button>
-<button class="navBtn" onclick="goNext()">Next ➡</button>
-</div>
-
-<h4>Choose Category</h4>
-<div id="categoryButtons"></div>
+  <h4>Choose Category</h4>
+  <div id="categoryButtons"></div>
 </div>
 
 <div class="panel totalsPanel stickyColumn">
-<h4>Totals</h4>
-<div id="totals"></div>
-<button onclick="exportExcel()" class="exportBtn">Export to Excel</button>
-
+  <h4>Totals & Planning</h4>
+  <div id="totals"></div>
+  <button onclick="exportExcel()" class="exportBtn">Export to Excel</button>
 </div>
 
 </div>
@@ -351,6 +407,7 @@ let showOnlyUncategorized=false;
 let activeSearchFilter=null;
 let splitMode = false;
 let activeYearFilter = null;
+let activeDateFilter = null;
 let aiContext = null; 
 // null = normal transaction
 // { type: "receipt", index: X } = receipt item mode
@@ -850,6 +907,28 @@ updateProgress();
 showCard();
 }
 
+
+function applyDateFilter(){
+  const val = document.getElementById("dateFilter").value;
+  activeDateFilter = val || null;
+  currentIndex = 0;
+  document.getElementById("clearDateBtn").style.display = activeDateFilter ? "block" : "none";
+  updateTotals();
+  updateProgress();
+  showCard();
+}
+
+function clearDateFilter(){
+  activeDateFilter = null;
+  const dateInput = document.getElementById("dateFilter");
+  if(dateInput) dateInput.value = "";
+  document.getElementById("clearDateBtn").style.display = "none";
+  currentIndex = 0;
+  updateTotals();
+  updateProgress();
+  showCard();
+}
+
 function updateSearchResults(){
 const query=document.getElementById("searchInput").value.trim().toLowerCase();
 const resultsDiv=document.getElementById("searchResults");
@@ -1265,6 +1344,15 @@ if(activeYearFilter){
 
     const year = d.Date ? d.Date.toString().slice(0,4) : null;
     return year === activeYearFilter;
+  });
+}
+
+if(activeDateFilter){
+  filtered = filtered.filter(i=>{
+    const d = data[i];
+    if(!d.Date) return false;
+    const normalized = d.Date.toString().slice(0,10);
+    return normalized === activeDateFilter;
   });
 }
 
