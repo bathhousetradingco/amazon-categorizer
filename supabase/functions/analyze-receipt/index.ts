@@ -17,11 +17,13 @@ import {
   prepareReceiptAsset,
   safeParseJsonResponse,
 } from "../_shared/receipt.ts";
+import { enrichLineItems } from "../_shared/enrich-line-items.ts";
 
 const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
+const SERPAPI_API_KEY = Deno.env.get("SERPAPI_API_KEY") ?? undefined;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -56,15 +58,30 @@ Deno.serve(async (req) => {
       });
     }
 
+    const enrichedLineItems = await enrichLineItems({
+      adminClient,
+      items: lineItems,
+      openAiApiKey: OPENAI_API_KEY,
+      serpApiKey: SERPAPI_API_KEY,
+    });
+
     return jsonResponse({
       success: true,
       data: {
-        line_items: lineItems.map((item) => ({
-          raw_description: item.name,
+        line_items: enrichedLineItems.map((item) => ({
+          raw_description: item.rawName,
           normalized_description: item.name,
+          enriched_description: item.enrichedName,
           amount: item.amount,
-          suggested_category: suggestCategory(item.name, categories),
+          suggested_category: suggestCategory(item.enrichedName, categories),
           product_code: item.code,
+          sku: item.sku,
+          enrichment_source: item.enrichmentSource,
+          brand: item.brand,
+          product_category: item.category,
+          quality_score: item.qualityScore,
+          needs_review: item.needsReview,
+          quality_flags: item.qualityFlags,
         })),
         tax_amount: parseTax(parsed.tax),
         file_path: filePath,
