@@ -407,8 +407,19 @@ margin-top:8px;
 
 .categoryPickerRow {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 8px;
+}
+
+.infoIconBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: #eee;
+  font-weight: 700;
+  color: #1565c0;
 }
 
 .categoryPickerActions {
@@ -1652,14 +1663,7 @@ function generateCategoryButtons(){
             onclick="selectCategory('${c.name.replace(/'/g,"\\'")}')">
             ${c.name}
           </button>
-          <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
-            width:36px;
-            height:36px;
-            border-radius:50%;
-            border:none;
-            background:#eee;
-            font-weight:bold;
-          ">i</button>
+          <button class="infoIconBtn" onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')">i</button>
         </div>
       `).join("")}
     </div>
@@ -1669,6 +1673,7 @@ function generateCategoryButtons(){
 function openCategoryModal(){
   aiContext = null;
   modalTitle.innerText = "Choose Category";
+  setModalCloseButtonVisibility(false);
   modalContent.innerHTML = generateCategoryButtons();
   openModal(100000);
 }
@@ -1706,13 +1711,6 @@ function showCategoryInfo(name){
       
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <h3 style="margin:0;">${category.name}</h3>
-        <button onclick="closeCategoryInfo()" style="
-          background:#c62828;
-          color:white;
-          border:none;
-          padding:6px 10px;
-          border-radius:8px;
-        ">✕</button>
       </div>
 
       <div style="font-size:14px; line-height:1.5;">
@@ -1723,6 +1721,10 @@ function showCategoryInfo(name){
   `;
 
   document.body.appendChild(modal);
+
+  modal.addEventListener("click", (event) => {
+    if(event.target === modal) closeCategoryInfo();
+  });
 
   window.closeCategoryInfo = () => {
     document.body.removeChild(modal);
@@ -1894,7 +1896,7 @@ function openManualAmountKeypad(){
   const { remaining } = calculateSplitStats(item);
   openNumericKeypad({
     title: "Enter split amount",
-    initial: SplitState.manualAmount || remaining,
+    initial: SplitState.manualAmount || 0,
     max: Math.max(remaining, 0),
     onChange: (value) => {
       SplitState.manualAmount = value;
@@ -2173,6 +2175,7 @@ function chooseCategoryForReceipt(index){
   aiContext = { type: "receipt", index };
 
   modalTitle.innerText = "Choose Category";
+  setModalCloseButtonVisibility(false);
   modalContent.innerHTML = generateCategoryButtons();
 
   openModal(1000000);
@@ -2220,6 +2223,10 @@ function pressKeypadKey(key){
   } else if(key === "."){
     if(!val.includes(".")) val = val ? `${val}.` : "0.";
   } else {
+    if(val.includes(".")){
+      const decimalPart = val.split(".")[1] || "";
+      if(decimalPart.length >= 2) return;
+    }
     val = `${val}${key}`;
   }
   SplitState.keypad.value = val;
@@ -2900,16 +2907,9 @@ overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
     overlay.style.overflowY = "auto";
   overlay.style.zIndex = "400000"; // 👈 ALWAYS on top
 
-    let html = `
+  let html = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <h3 style="margin:0;">Select Category</h3>
-        <button onclick="closeCategoryPicker()" style="
-          background:#c62828;
-          color:white;
-          border:none;
-          padding:6px 10px;
-          border-radius:8px;
-        ">← Back</button>
       </div>
 
       <div style="margin-bottom:10px; font-size:14px;">
@@ -2927,15 +2927,7 @@ overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
     ${c.name}
   </button>
 
-  <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
-    flex-shrink:0;
-    width:36px;
-    height:36px;
-    border-radius:50%;
-    border:none;
-    background:#eee;
-    font-weight:bold;
-  ">i</button>
+  <button class="infoIconBtn" onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')">i</button>
 
 </div>
       `;
@@ -2943,6 +2935,10 @@ overlay.style.paddingBottom = "env(safe-area-inset-bottom, 20px)";
 
     overlay.innerHTML = html;
     document.body.appendChild(overlay);
+
+    overlay.addEventListener("click", (event) => {
+      if(event.target === overlay) closeCategoryPicker();
+    });
 
     window.selectCategory = (name)=>{
       document.body.removeChild(overlay);
