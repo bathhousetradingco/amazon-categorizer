@@ -87,6 +87,58 @@ font-size:16px;
 .viewBtn { background:#1565c0; color:white; margin-top:6px;}
 .removeBtn { background:#c62828; color:white; margin-top:6px;}
 .appGrid { display: grid; gap: 12px; }
+.mainColumn {
+  display: grid;
+  gap: 0;
+}
+.integratedCard {
+  border-radius: 0;
+  margin-bottom: 0;
+  box-shadow: none;
+}
+.integratedCard:first-child {
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+}
+.integratedCard:last-child {
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+  border-top: none;
+}
+.receiptUploadLabel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed #1565c0;
+  color: #1565c0;
+  font-weight: 600;
+  background: #eff6ff;
+  cursor: pointer;
+  margin-top: 8px;
+}
+.receiptUploadInput { display: none; }
+.lineItemsPanel {
+  margin-top: 10px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+.lineItemsPanel h4 { margin: 0 0 8px; }
+.currentCategoryBadge {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #1e3a8a;
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+}
 .fileInput { margin-bottom: 12px; background: #fff; }
 .appCard { padding: 12px; }
 .topControls { margin-bottom: 10px; }
@@ -289,18 +341,9 @@ margin-top:8px;
 </div>
   
 <div id="app" style="display:none;">
-
-<div class="workflowHeader panel">
-  <h3>Workflow</h3>
-  <div class="workflowSteps">
-    <div class="workflowStep"><span>1</span> Filter transaction set</div>
-    <div class="workflowStep"><span>2</span> Review receipt + AI split suggestions</div>
-    <div class="workflowStep"><span>3</span> Confirm category and continue</div>
-  </div>
-</div>
-
 <div class="appGrid">
-<div class="panel appCard controlsCard">
+<div class="mainColumn">
+<div class="panel appCard controlsCard integratedCard">
   <h3>Transaction Navigator</h3>
 
   <button id="searchBtn" class="category-btn" style="background:#ff9800; margin-bottom:8px;" onclick="openSearchModal()">🔎 Search</button>
@@ -339,11 +382,11 @@ margin-top:8px;
   <div id="progressText" class="small"></div>
 </div>
 
-<div class="panel appCard">
+<div class="panel appCard integratedCard">
   <h3 id="cardTitle"></h3>
   <div id="cardMeta" class="small"></div>
-  <div id="currentCategory" class="small" style="margin-top:6px;"></div>
-  <div id="splitSummary"></div>
+  <div id="currentCategory" class="small"></div>
+  <div id="splitSummary" class="lineItemsPanel"></div>
 
   <button onclick="resetSplits()" style="background:#c62828; color:white; padding:10px 14px; border-radius:10px; margin-top:10px; width:100%;">
     Reset Splits
@@ -358,6 +401,7 @@ margin-top:8px;
 
   <h4>Choose Category</h4>
   <div id="categoryButtons"></div>
+</div>
 </div>
 
 <div class="panel totalsPanel stickyColumn">
@@ -2395,25 +2439,45 @@ function updateRemainingUI(){
   });
 }
 
+function buildSplitSummaryHTML(item){
+
+  if(!item.Splits || !item.Splits.length){
+    return `
+      <h4>Line Items</h4>
+      <div class="small">No split line items yet.</div>
+    `;
+  }
+
+  const bucketTotals = {};
+
+  item.Splits.forEach(s => {
+    const category = s.Category || "Uncategorized";
+    const cents = Math.round(parseFloat(s.Amount || 0) * 100);
+    bucketTotals[category] = (bucketTotals[category] || 0) + cents;
+  });
+
+  let html = `<h4>Line Items</h4>`;
+
+  Object.keys(bucketTotals).forEach(category => {
+    html += `
+      <div class="totalRow" style="cursor:default; border-bottom:1px solid var(--border);">
+        <div>${category}</div>
+        <div>$${(bucketTotals[category] / 100).toFixed(2)}</div>
+      </div>
+    `;
+  });
+
+  return html;
+}
+
 function updateSplitSummaryUI(){
 
   const item = data[currentIndex];
   const el = document.getElementById("splitSummary");
 
-  if(!el) return;
+  if(!el || !item) return;
 
-  if(!item.Splits || !item.Splits.length){
-    el.innerHTML = "";
-    return;
-  }
-
-  let html = "<strong>Split Allocation:</strong><br>";
-
-  item.Splits.forEach(s=>{
-    html += `${s.Category}: $${parseFloat(s.Amount).toFixed(2)}<br>`;
-  });
-
-  el.innerHTML = html;
+  el.innerHTML = buildSplitSummaryHTML(item);
 }
 
 async function applySplit(category, amount){
@@ -2789,8 +2853,8 @@ function showCard(){
      <button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>` 
     : ""
   ) +
-  `<br>
-  <input type="file" accept="image/*,.pdf" onchange="attachReceipt(event)"><br>
+  `<label class="receiptUploadLabel" for="receiptUploadInput">📎 Upload / Replace Receipt</label>
+  <input id="receiptUploadInput" class="receiptUploadInput" type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
 
   <button onclick="askAI()" style="
     background:#000;
@@ -2806,19 +2870,13 @@ function showCard(){
   <button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>
   `;
 
-  if(item.Splits && item.Splits.length){
-    let splitHTML = "<strong>Split Allocation:</strong><br>";
-    item.Splits.forEach(s=>{
-      splitHTML += `${s.Category}: $${parseFloat(s.Amount).toFixed(2)}<br>`;
-    });
-    splitSummary.innerHTML = splitHTML;
-  } else {
-    splitSummary.innerHTML = "";
-  }
+  splitSummary.innerHTML = buildSplitSummaryHTML(item);
 
-  currentCategory.innerText = item.Splits && item.Splits.length
-    ? "Split into multiple categories"
-    : "Current: " + (item.Category || "—");
+  const categoryLabel = item.Splits && item.Splits.length
+    ? "Split transaction"
+    : (item.Category || "Uncategorized");
+
+  currentCategory.innerHTML = `<span class="currentCategoryBadge">Current Category: ${categoryLabel}</span>`;
 }
 
 /* Totals */
@@ -2827,7 +2885,7 @@ function updateTotals(){
 
   let totalsObj = {};
 
-  // Build totals object dynamically from categories
+  // Build totals object dynamically from categories (stored in cents)
   categories.forEach(c => totalsObj[c.name] = 0);
 
   const visible = getVisibleIndexes();
@@ -2838,18 +2896,18 @@ function updateTotals(){
 
     const addAmount = (cat, amount) => {
       if(!cat || cat.trim() === ""){
-  return; // skip uncategorized entirely
-}
+        return; // skip uncategorized entirely
+      }
 
       if(categoryAliases[cat]){
         cat = categoryAliases[cat];
       }
 
+      const cents = Math.round(parseFloat(amount || 0) * 100);
+
       if(totalsObj[cat] != null){
-        totalsObj[cat] += parseFloat(amount);
-      } else {
-  return; // don't track unknown categories
-}
+        totalsObj[cat] += cents;
+      }
     };
 
     // Handle splits
@@ -2874,7 +2932,7 @@ function updateTotals(){
     totals.innerHTML += `
       <div class="totalRow" onclick="showCategoryBreakdown('${k}')">
         <div>${k}</div>
-        <div>$${totalsObj[k].toFixed(2)}</div>
+        <div>$${(totalsObj[k] / 100).toFixed(2)}</div>
       </div>
     `;
   });
