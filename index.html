@@ -407,7 +407,8 @@ margin-top:8px;
 
 .categoryPickerRow {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 8px;
 }
 
@@ -415,6 +416,19 @@ margin-top:8px;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.categoryInfoInline {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 999px;
+  border: none;
+  background: #e5e7eb;
+  color: #111827;
+  font-weight: 700;
+  padding: 0;
 }
 
 .inlineHint {
@@ -426,11 +440,6 @@ margin-top:8px;
 @media (min-width: 700px) {
   .filterGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .categoryPickerRow {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
   }
 }
 
@@ -544,7 +553,7 @@ margin-top:8px;
 <div class="modalDragHandle" aria-hidden="true"></div>
 <h3 id="modalTitle"></h3>
 <div id="modalContent"></div>
-<button id="modalCloseBtn" class="modalClose" onclick="closeModal()">Close</button>
+<button id="modalCloseBtn" class="modalClose" onclick="closeModal()" style="display:none;">Close</button>
 </div>
 </div>
 <div id="keypadOverlay" class="keypadOverlay" onclick="handleKeypadBackdrop(event)">
@@ -570,7 +579,20 @@ const currentCategory = document.getElementById("currentCategory");
 const totals = document.getElementById("totals");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
-const modalCloseBtn = document.getElementById("modalCloseBtn");
+function triggerHaptic(style = "light"){
+  if(!navigator?.vibrate) return;
+  const pattern = style === "success" ? [14, 18, 24] : style === "heavy" ? [24] : [10];
+  navigator.vibrate(pattern);
+}
+
+function enableHaptics(){
+  document.addEventListener("click", (event) => {
+    const interactive = event.target.closest("button, select, .category-btn, .touchButton, .modalItem");
+    if(!interactive || interactive.disabled) return;
+    const tone = interactive.classList.contains("splitHeaderExit") || /remove|close|cancel|clear/i.test((interactive.innerText || "").trim()) ? "heavy" : "light";
+    triggerHaptic(tone);
+  }, { passive: true });
+}
 const keypadOverlay = document.getElementById("keypadOverlay");
 const keypadGrid = document.getElementById("keypadGrid");
 const keypadDisplay = document.getElementById("keypadDisplay");
@@ -741,7 +763,10 @@ async function checkSession() {
   }
 }
 
-window.addEventListener("DOMContentLoaded", checkSession);
+window.addEventListener("DOMContentLoaded", () => {
+  enableHaptics();
+  checkSession();
+});
 
 const categories=[
 {
@@ -1652,14 +1677,7 @@ function generateCategoryButtons(){
             onclick="selectCategory('${c.name.replace(/'/g,"\\'")}')">
             ${c.name}
           </button>
-          <button onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')" style="
-            width:36px;
-            height:36px;
-            border-radius:50%;
-            border:none;
-            background:#eee;
-            font-weight:bold;
-          ">i</button>
+          <button class="touchButton categoryInfoInline" onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')">i</button>
         </div>
       `).join("")}
     </div>
@@ -1813,11 +1831,6 @@ function renderSplitItems(item){
   }).join("");
 }
 
-function setModalCloseButtonVisibility(show){
-  if(!modalCloseBtn) return;
-  modalCloseBtn.style.display = show ? "block" : "none";
-}
-
 async function openSplitModal(){
   splitMode = false;
   SplitState.receiptExpanded = false;
@@ -1825,7 +1838,6 @@ async function openSplitModal(){
   if(!item) return;
 
   modalTitle.innerText = "Split Transaction";
-  setModalCloseButtonVisibility(false);
 
   modalContent.innerHTML = `
     <div id="splitModalSheet" class="splitModalLayout">
@@ -1865,7 +1877,6 @@ function openManualSplitModal(){
   if(!item) return;
 
   modalTitle.innerText = "Manual Split";
-  setModalCloseButtonVisibility(false);
   modalContent.innerHTML = `
     <div class="splitModalLayout" style="padding:6px;">
       <div class="splitHeaderRow">
@@ -2044,6 +2055,7 @@ function completeSplitWorkflow(){
   const footer = document.querySelector(".splitFooterSticky");
   if(footer) footer.style.animation = "splitPulse .45s ease";
   setTimeout(() => {
+    triggerHaptic("success");
     closeModal();
     showCard();
   }, 220);
@@ -2232,8 +2244,15 @@ function clearNumericKeypad(){
 }
 
 function keypadNumericValue(){
-  const parsed = parseFloat(SplitState.keypad.value || 0);
-  return Number.isFinite(parsed) ? parseFloat(parsed.toFixed(2)) : 0;
+  const raw = (SplitState.keypad.value || "").trim();
+  if(!raw) return 0;
+  let normalized;
+  if(raw.includes(".")){
+    normalized = Number.parseFloat(raw);
+  } else {
+    normalized = Number.parseInt(raw, 10) / 100;
+  }
+  return Number.isFinite(normalized) ? parseFloat(normalized.toFixed(2)) : 0;
 }
 
 function updateKeypadDisplay(){
@@ -2560,7 +2579,6 @@ function renderReceiptSuggestions(item, suggestions){
   const remaining = parseFloat((total - allocated).toFixed(2));
 
   modalTitle.innerText = "Review Receipt";
-  setModalCloseButtonVisibility(false);
 
   modalContent.innerHTML = `
     <div class="splitModalLayout" style="padding-top:4px;">
@@ -3171,7 +3189,6 @@ function closeModal(){
   modalOverlay.style.zIndex = 9999; // reset to default
   modalContent.innerHTML = "";
   document.body.style.overflow = "";
-  setModalCloseButtonVisibility(true);
   closeNumericKeypad(true);
   const sheet = document.querySelector('.modalBox');
   if(sheet) resetModalSheetStyles(sheet);
