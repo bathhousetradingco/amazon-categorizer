@@ -1,159 +1,187 @@
-import { serve } from "https://deno.land/std@0.192.0/http/server.ts";
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-serve(async (req) => {
+/* ================= ENV ================= */
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY")!;
 
-  const origin = req.headers.get("origin") || "";
+/* ================= CORS ================= */
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-  const headers = {
-    "Access-Control-Allow-Origin": origin || "*",
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Content-Type": "application/json"
-  };
-
-  // ✅ Handle CORS preflight
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers });
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    if (req.method !== "POST") {
-      return new Response(
-        JSON.stringify({ error: "Method not allowed" }),
-        { status: 405, headers }
-      );
+    const body = await safeJson(req);
+    const filePath = body?.filePath;
+    const categories: string[] = Array.isArray(body?.categories) ? body.categories : [];
+
+    if (!filePath) throw new Error("Missing filePath");
+
+    const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+    /* ================= DOWNLOAD RECEIPT ================= */
+    const { data: fileBlob, error: dlErr } = await supabase
+      .storage
+      .from("receipts")
+      .download(filePath);
+
+    if (dlErr || !fileBlob) throw new Error("Download failed");
+
+    const base64 = await blobToBase64(fileBlob);
+
+    /* ================= OCR (STRICT JSON) ================= */
+    const ocrText = await openaiVisionOCR(base64);
+
+    const parsed = extractJsonObject(ocrText);
+    if (!parsed || !Array.isArray(parsed.items)) {
+      throw new Error("OCR did not return valid JSON with items[]");
     }
 
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+    /* ================= POST-FILTER (kill non-products) ================= */
+    const cleanedItems = parsed.items
+      .map((x: any) => ({
+        name: typeof x?.name === "string" ? x.name.trim() : "",
+        amount: Number(x?.amount),
+        code: typeof x?.code === "string" ? x.code.trim() : null,
+      }))
+      .filter((x: any) => isValidProductLine(x.name, x.amount));
 
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !OPENAI_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "Missing environment variables" }),
-        { status: 500, headers }
-      );
-    }
+    const taxAmount = Number(parsed.tax || 0) || 0;
 
-    const body = await req.json();
-    const { filePath, categories } = body;
+    /* ================= ENRICH + NORMALIZE ================= */
+    const enriched = await Promise.all(
+      cleanedItems.map(async (item: any) => {
+        const raw = item.name;
+        const amount = Number(item.amount) || 0;
 
-    if (!filePath) {
-      return new Response(
-        JSON.stringify({ error: "Missing filePath" }),
-        { status: 400, headers }
-      );
-    }
+        // Prefer explicit code field; otherwise extract from text
+        const codeFromText = extractProductCode(raw);
+        const codeRaw = item.code || codeFromText?.raw || null;
+        const codeNormalized = normalizeCode(codeRaw);
 
-    const supabase = createClient(
-      SUPABASE_URL,
-      SUPABASE_SERVICE_ROLE_KEY
+        // 1) MEMORY lookup by normalized code
+        let normalizedName = "";
+
+        if (codeNormalized) {
+          const { data: mem } = await supabase
+            .from("product_match_memory")
+            .select("product_name")
+            .eq("product_code", codeNormalized)
+            .maybeSingle();
+
+          if (mem?.product_name) normalizedName = String(mem.product_name);
+        }
+
+        // 2) AI clean name (STRICT, one line only)
+        if (!normalizedName) {
+          normalizedName = await cleanNameOneLine(raw);
+        }
+
+        // 3) Category suggestion (optional)
+        let suggestedCategory = "Needs Review";
+        if (categories.length) {
+          suggestedCategory = await suggestCategory(normalizedName, categories);
+        }
+
+        return {
+          raw_description: raw,
+          normalized_description: normalizedName || raw,
+          amount,
+          suggested_category: suggestedCategory || "Needs Review",
+          product_code: codeNormalized || null,
+        };
+      }),
     );
 
-    // ⚠️ Make sure your bucket name is correct
-    const { data: signedData, error: signedError } =
-      await supabase.storage
-        .from("receipts")  // <-- change if your bucket name differs
-        .createSignedUrl(filePath, 60);
-
-    if (signedError || !signedData?.signedUrl) {
-      return new Response(
-        JSON.stringify({ error: "Failed to access receipt file" }),
-        { status: 400, headers }
-      );
-    }
-
-    const systemPrompt = `
-You are a bookkeeping assistant.
-
-Extract purchasable line items only.
-Ignore totals and payment info.
-
-Return STRICT JSON:
-{
-  "line_items": [
-    {
-      "raw_description": "",
-      "normalized_description": "",
-      "amount": 0,
-      "suggested_category": ""
-    }
-  ],
-  "tax_amount": 0
-}
-
-Allowed categories:
-${(categories || []).join(", ")}
-`;
-
-    const openaiResponse = await fetch(
-      "https://api.openai.com/v1/chat/completions",
+    return new Response(
+      JSON.stringify({
+        line_items: enriched,
+        tax_amount: taxAmount,
+      }),
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          temperature: 0,
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "Analyze this receipt." },
-                {
-                  type: "image_url",
-                  image_url: { url: signedData.signedUrl }
-                }
-              ]
-            }
-          ]
-        })
-      }
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
-
-    const openaiData = await openaiResponse.json();
-
-    if (!openaiResponse.ok) {
-      return new Response(
-        JSON.stringify({ error: openaiData }),
-        { status: 500, headers }
-      );
-    }
-
-    const content = openaiData?.choices?.[0]?.message?.content;
-
-    if (!content) {
-      return new Response(
-        JSON.stringify({ error: "No AI response returned" }),
-        { status: 500, headers }
-      );
-    }
-
-    let parsed;
-
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      return new Response(
-        JSON.stringify({ error: "AI returned invalid JSON", raw: content }),
-        { status: 500, headers }
-      );
-    }
-
-    return new Response(
-      JSON.stringify(parsed),
-      { status: 200, headers }
-    );
-
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: String(err) }),
-      { status: 500, headers }
-    );
+  } catch (err: any) {
+    console.error("analyze-receipt error:", err);
+    return new Response(JSON.stringify({ error: err?.message || "Unknown error" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
+
+/* ================= HELPERS ================= */
+
+async function safeJson(req: Request) {
+  const txt = await req.text();
+  if (!txt || !txt.trim()) return {};
+  try {
+    return JSON.parse(txt);
+  } catch {
+    throw new Error("Invalid JSON body");
+  }
+}
+
+async function blobToBase64(blob: Blob) {
+  const buffer = await blob.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+async function openaiVisionOCR(base64: string): Promise<string> {
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4.1",
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `
+Extract ONLY purchasable line items from this receipt.
+
+Hard rules:
+- Each item MUST have a positive price (amount > 0).
+- EXCLUDE: subtotal, total, tax lines, discounts, coupons, instant savings, change, balance, tender, card info.
+- EXCLUDE "pricing math" lines like "36 AT 1 FOR 8.98" or "2 AT 1 FOR 30.98" (those are NOT products).
+- If a product code/UPC/SKU appears on the same line as an item, include it as "code".
+
+Return JSON ONLY in this exact format:
+{
+  "items": [
+    { "name": "…", "amount": 0.00, "code": "optional" }
+  ],
+  "tax": 0.00
+}
+              `.trim(),
+            },
+            { type: "input_image", image_url: `data:image/png;base64,${base64}` },
+          ],
+        },
+      ],
+    }),
+  });
+
+  const data = await res.json();
+  const text = data?.output?.[0]?.content?.[0]?.text;
+  if (!text) throw new Error("No OCR output from OpenAI");
+  return String(text);
+}
