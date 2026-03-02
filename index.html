@@ -171,6 +171,16 @@ padding: 8px;
   transform: translateY(12px) scale(.99);
   opacity: 0;
   transition: transform .24s ease, opacity .2s ease;
+  will-change: transform, opacity;
+}
+
+.modalDragHandle {
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  background: #d1d5db;
+  margin: 10px auto 4px;
+  flex: 0 0 auto;
 }
 
 .modalOverlay.isOpen .modalBox {
@@ -511,6 +521,7 @@ margin-top:8px;
 
 <div id="modalOverlay" class="modalOverlay">
 <div class="modalBox">
+<div class="modalDragHandle" aria-hidden="true"></div>
 <h3 id="modalTitle"></h3>
 <div id="modalContent"></div>
 <button class="modalClose" onclick="closeModal()">Close</button>
@@ -2983,7 +2994,65 @@ window.scrollTo({ top: 0, behavior: "smooth" });
 
 /* Modal Controls */
 
-let modalSwipeStartY = null;
+const modalSwipeState = {
+  startY: 0,
+  startX: 0,
+  startTime: 0,
+  lastY: 0,
+  lastTime: 0,
+  dragY: 0,
+  tracking: false,
+  lockedToScroll: false,
+  activeScroller: null
+};
+
+const MODAL_SWIPE_DISTANCE_PX = 96;
+const MODAL_SWIPE_VELOCITY_PX_PER_MS = 0.65;
+const MODAL_SWIPE_MIN_DRAG_PX = 10;
+const MODAL_SWIPE_RESISTANCE = 0.42;
+
+function getScrollableParent(target, limitEl){
+  let node = target;
+  while(node && node !== limitEl){
+    if(node.scrollHeight > node.clientHeight){
+      const style = window.getComputedStyle(node);
+      if(style.overflowY === 'auto' || style.overflowY === 'scroll') return node;
+    }
+    node = node.parentElement;
+  }
+  return modalContent;
+}
+
+function resetModalSheetStyles(sheet){
+  sheet.style.transition = '';
+  sheet.style.transform = '';
+  sheet.style.opacity = '';
+}
+
+function animateModalSnapBack(sheet){
+  sheet.style.transition = 'transform 280ms cubic-bezier(.22,.61,.36,1), opacity 220ms ease';
+  sheet.style.transform = 'translateY(0) scale(1)';
+  sheet.style.opacity = '1';
+  window.setTimeout(() => {
+    if(modalOverlay.classList.contains('isOpen')) resetModalSheetStyles(sheet);
+  }, 300);
+}
+
+function animateModalCloseFromSwipe(sheet){
+  const fromY = Math.max(modalSwipeState.dragY, 0);
+  const endY = Math.max(window.innerHeight, sheet.getBoundingClientRect().height + 120);
+  sheet.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1), opacity 200ms ease';
+  sheet.style.transform = `translateY(${fromY}px) scale(1)`;
+  sheet.style.opacity = String(Math.max(0.55, 1 - (fromY / 500)));
+  requestAnimationFrame(() => {
+    sheet.style.transform = `translateY(${endY}px) scale(1)`;
+    sheet.style.opacity = '0';
+  });
+  window.setTimeout(() => {
+    resetModalSheetStyles(sheet);
+    closeModal();
+  }, 220);
+}
 
 function openModal(zIndex = 9999){
   modalOverlay.style.display = "flex";
@@ -2999,22 +3068,83 @@ function closeModal(){
   modalOverlay.style.zIndex = 9999; // reset to default
   modalContent.innerHTML = "";
   document.body.style.overflow = "";
+  const sheet = document.querySelector('.modalBox');
+  if(sheet) resetModalSheetStyles(sheet);
 }
 
 function initModalSwipeClose(){
   const sheet = document.querySelector('.modalBox');
   if(!sheet || sheet.dataset.swipeBound) return;
   sheet.dataset.swipeBound = 'true';
+
   sheet.addEventListener('touchstart', (e) => {
-    modalSwipeStartY = e.touches[0].clientY;
+    if(e.touches.length !== 1) return;
+    const t = e.touches[0];
+    modalSwipeState.startY = t.clientY;
+    modalSwipeState.startX = t.clientX;
+    modalSwipeState.startTime = performance.now();
+    modalSwipeState.lastY = t.clientY;
+    modalSwipeState.lastTime = modalSwipeState.startTime;
+    modalSwipeState.dragY = 0;
+    modalSwipeState.tracking = true;
+    modalSwipeState.activeScroller = getScrollableParent(e.target, sheet);
+    modalSwipeState.lockedToScroll = (modalSwipeState.activeScroller?.scrollTop || 0) > 0;
   }, { passive: true });
-  sheet.addEventListener('touchend', (e) => {
-    if(modalSwipeStartY === null) return;
-    const deltaY = e.changedTouches[0].clientY - modalSwipeStartY;
-    if(deltaY > 85 && e.changedTouches[0].clientX < window.innerWidth){
-      closeModal();
+
+  sheet.addEventListener('touchmove', (e) => {
+    if(!modalSwipeState.tracking || e.touches.length !== 1) return;
+
+    const t = e.touches[0];
+    const dy = t.clientY - modalSwipeState.startY;
+    const dx = Math.abs(t.clientX - modalSwipeState.startX);
+
+    modalSwipeState.lastY = t.clientY;
+    modalSwipeState.lastTime = performance.now();
+
+    if(dx > Math.abs(dy)) return;
+    if(dy <= 0) return;
+
+    const scrollerTop = (modalSwipeState.activeScroller?.scrollTop || 0) <= 0;
+    if(modalSwipeState.lockedToScroll || !scrollerTop) return;
+
+    if(dy < MODAL_SWIPE_MIN_DRAG_PX) return;
+
+    e.preventDefault();
+    modalSwipeState.dragY = dy * MODAL_SWIPE_RESISTANCE;
+    sheet.style.transition = 'none';
+    sheet.style.transform = `translateY(${modalSwipeState.dragY}px) scale(1)`;
+    sheet.style.opacity = String(Math.max(0.78, 1 - (modalSwipeState.dragY / 700)));
+  }, { passive: false });
+
+  sheet.addEventListener('touchend', () => {
+    if(!modalSwipeState.tracking) return;
+
+    const totalDy = modalSwipeState.lastY - modalSwipeState.startY;
+    const totalDt = Math.max(modalSwipeState.lastTime - modalSwipeState.startTime, 1);
+    const velocityY = totalDy / totalDt;
+
+    const shouldClose =
+      modalSwipeState.dragY >= MODAL_SWIPE_DISTANCE_PX ||
+      (totalDy >= MODAL_SWIPE_MIN_DRAG_PX && velocityY >= MODAL_SWIPE_VELOCITY_PX_PER_MS);
+
+    if(shouldClose){
+      animateModalCloseFromSwipe(sheet);
+    } else if(modalSwipeState.dragY > 0){
+      animateModalSnapBack(sheet);
     }
-    modalSwipeStartY = null;
+
+    modalSwipeState.tracking = false;
+    modalSwipeState.lockedToScroll = false;
+    modalSwipeState.activeScroller = null;
+    modalSwipeState.dragY = 0;
+  }, { passive: true });
+
+  sheet.addEventListener('touchcancel', () => {
+    if(modalSwipeState.dragY > 0) animateModalSnapBack(sheet);
+    modalSwipeState.tracking = false;
+    modalSwipeState.lockedToScroll = false;
+    modalSwipeState.activeScroller = null;
+    modalSwipeState.dragY = 0;
   }, { passive: true });
 }
 
