@@ -1,73 +1,41 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/* ================= ENV ================= */
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY")!;
 
-/* ================= CORS ================= */
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    /* ================= AUTH (FIXES 401) ================= */
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) throw new Error("Missing Authorization header");
+    const user = await requireUser(req);
 
-    const userClient = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const {
-      data: { user },
-    } = await userClient.auth.getUser();
-
-    if (!user) throw new Error("Invalid or expired JWT");
-
-    /* ================= BODY ================= */
     const body = await safeJson(req);
     let filePath = body?.filePath;
     const categories: string[] = Array.isArray(body?.categories) ? body.categories : [];
+    if (!filePath) throw new HttpError(400, "Missing filePath");
 
-    if (!filePath) throw new Error("Missing filePath");
-
-    /* ================= STORAGE PATH FIX ================= */
-    if (filePath.startsWith("receipts/")) {
-      filePath = filePath.replace("receipts/", "");
-    }
+    if (filePath.startsWith("receipts/")) filePath = filePath.replace("receipts/", "");
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
-
-    /* ================= DOWNLOAD RECEIPT ================= */
-    const { data: fileBlob, error: dlErr } = await supabase
-      .storage
-      .from("receipts")
-      .download(filePath);
-
+    const { data: fileBlob, error: dlErr } = await supabase.storage.from("receipts").download(filePath);
     if (dlErr || !fileBlob) {
       console.error("Storage error:", dlErr);
-      throw new Error("Failed to download receipt");
+      throw new HttpError(400, "Failed to download receipt");
     }
 
     const base64 = await blobToBase64(fileBlob);
-
-    /* ================= OCR ================= */
     const ocrText = await openaiVisionOCR(base64);
     const parsed = extractJsonObject(ocrText);
-
-    if (!parsed || !Array.isArray(parsed.items)) {
-      throw new Error("OCR did not return valid JSON");
-    }
+    if (!parsed || !Array.isArray(parsed.items)) throw new HttpError(422, "OCR did not return valid JSON");
 
     const cleanedItems = parsed.items
       .map((x: any) => ({
@@ -79,34 +47,26 @@ Deno.serve(async (req) => {
 
     const taxAmount = Number(parsed.tax || 0) || 0;
 
-    /* ================= ENRICH ================= */
     const enriched = await Promise.all(
       cleanedItems.map(async (item: any) => {
         const raw = item.name;
         const amount = Number(item.amount) || 0;
-
         const codeNormalized = normalizeCode(item.code);
 
         let normalizedName = "";
-
         if (codeNormalized) {
           const { data: mem } = await supabase
             .from("product_match_memory")
             .select("product_name")
             .eq("product_code", codeNormalized)
             .maybeSingle();
-
           if (mem?.product_name) normalizedName = mem.product_name;
         }
 
-        if (!normalizedName) {
-          normalizedName = await cleanNameOneLine(raw);
-        }
+        if (!normalizedName) normalizedName = await cleanNameOneLine(raw);
 
         let suggestedCategory = "Needs Review";
-        if (categories.length) {
-          suggestedCategory = await suggestCategory(normalizedName, categories);
-        }
+        if (categories.length) suggestedCategory = await suggestCategory(normalizedName, categories);
 
         return {
           raw_description: raw,
@@ -115,31 +75,41 @@ Deno.serve(async (req) => {
           suggested_category: suggestedCategory,
           product_code: codeNormalized,
         };
-      })
+      }),
     );
 
-    return new Response(
-      JSON.stringify({
-        line_items: enriched,
-        tax_amount: taxAmount,
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return new Response(JSON.stringify({ line_items: enriched, tax_amount: taxAmount, user_id: user.id }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (err: any) {
     console.error("analyze-receipt error:", err);
-    return new Response(
-      JSON.stringify({ error: err?.message || "Unknown error" }),
-      {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    const status = err instanceof HttpError ? err.status : 500;
+    return new Response(JSON.stringify({ error: err?.message || "Unknown error" }), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
 
-/* ================= HELPERS ================= */
+class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function requireUser(req: Request) {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) throw new HttpError(401, "Missing Authorization header");
+
+  const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: authHeader } },
+  });
+  const { data: { user }, error } = await authClient.auth.getUser();
+  if (error || !user) throw new HttpError(401, "Invalid or expired JWT");
+  return user;
+}
 
 async function safeJson(req: Request) {
   const txt = await req.text();
@@ -177,24 +147,13 @@ async function blobToBase64(blob: Blob) {
 async function openaiVisionOCR(base64: string): Promise<string> {
   const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "gpt-4.1",
-      input: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: `Extract purchasable line items. Return JSON with items[] and tax.`,
-            },
-            { type: "input_image", image_url: `data:image/png;base64,${base64}` },
-          ],
-        },
-      ],
+      input: [{ role: "user", content: [
+        { type: "input_text", text: "Extract purchasable line items. Return JSON with items[] and tax." },
+        { type: "input_image", image_url: `data:image/png;base64,${base64}` },
+      ] }],
     }),
   });
 
@@ -205,16 +164,12 @@ async function openaiVisionOCR(base64: string): Promise<string> {
 async function cleanNameOneLine(name: string) {
   const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "gpt-4.1-mini",
       input: `Clean this product name. Return only the product name, one line: ${name}`,
     }),
   });
-
   const data = await res.json();
   return data?.output?.[0]?.content?.[0]?.text?.trim() || name;
 }
@@ -222,23 +177,12 @@ async function cleanNameOneLine(name: string) {
 async function suggestCategory(name: string, categories: string[]) {
   const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "gpt-4.1-mini",
-      input: `
-Choose the best category from this list:
-${categories.join(", ")}
-
-Item: ${name}
-
-Return ONLY the category name.
-      `,
+      input: `Choose the best category from this list:\n${categories.join(", ")}\n\nItem: ${name}\n\nReturn ONLY the category name.`,
     }),
   });
-
   const data = await res.json();
   return data?.output?.[0]?.content?.[0]?.text?.trim() || "Needs Review";
 }
