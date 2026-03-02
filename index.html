@@ -85,6 +85,25 @@ color:white;
 margin-top:8px;
 }
 
+.menuToggleBtn {
+  width:100%;
+  background:#37474f;
+  color:white;
+  margin-bottom:8px;
+}
+
+.quickActionsMenu {
+  display:none;
+  background:#eef2f5;
+  border-radius:10px;
+  padding:8px;
+  margin-bottom:8px;
+}
+
+.quickActionsMenu.open {
+  display:block;
+}
+
 /* RECEIPT VIEW */
 .receiptPreview iframe {
   width:100%;
@@ -156,19 +175,25 @@ margin-top:8px;
 
 <button id="clearSearchBtn" class="category-btn" style="background:#c62828; margin-bottom:8px; display:none;" onclick="clearSearchFilter()">Clear Search Filter</button>
 
-<button id="createTransactionBtn"
-class="category-btn"
-style="background:#1565c0; margin-bottom:8px;"
-onclick="openCreateTransactionModal()">
-➕ Create Transaction
+<button id="quickActionsToggleBtn" class="menuToggleBtn" onclick="toggleQuickActionsMenu()">
+☰ Quick Actions
 </button>
 
-<button class="category-btn" style="background:#2e7d32; margin-bottom:8px;" onclick="connectBank()">
-🏦 Connect Bank
-</button>
-<button class="category-btn" style="background:#000; margin-bottom:8px;" onclick="forcePlaidSync()">
-🔄 Sync Bank Now
-</button>
+<div id="quickActionsMenu" class="quickActionsMenu">
+  <button id="createTransactionBtn"
+  class="category-btn"
+  style="background:#1565c0; margin-bottom:8px;"
+  onclick="openCreateTransactionModal()">
+  ➕ Create Transaction
+  </button>
+
+  <button class="category-btn" style="background:#2e7d32; margin-bottom:8px;" onclick="connectBank()">
+  🏦 Connect Bank
+  </button>
+  <button class="category-btn" style="background:#000; margin-bottom:0;" onclick="forcePlaidSync()">
+  🔄 Sync Bank Now
+  </button>
+</div>
 <select id="yearFilter" onchange="applyYearFilter()" style="margin-bottom:8px;">
   <option value="">All Years</option>
 </select>
@@ -238,6 +263,11 @@ const currentCategory = document.getElementById("currentCategory");
 const totals = document.getElementById("totals");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
+
+function toggleQuickActionsMenu() {
+  const menu = document.getElementById("quickActionsMenu");
+  menu.classList.toggle("open");
+}
 
 /* ALL YOUR ORIGINAL JS REMAINS UNCHANGED BELOW */
 
