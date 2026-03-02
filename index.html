@@ -2315,22 +2315,10 @@ async function analyzeReceipt(item){
 
     console.log("📤 Sending to edge:", payload);
 
-    const { data: { session } } = await supabaseClient.auth.getSession();
-
-if (!session?.access_token) {
-  throw new Error("Session expired. Please sign in again.");
-}
-
-const { data: result, error: invokeError } =
-  await supabaseClient.functions.invoke(
-    "analyze-receipt",
-    {
-      body: payload,
-      headers: {
-        Authorization: `Bearer ${session.access_token}`
-      }
-    }
-  );
+    const { data: result, error: invokeError } = await supabaseClient.functions.invoke(
+  "analyze-receipt",
+  { body: payload }
+);
 
     if(invokeError){
       const authError = /invalid jwt|jwt/i.test(invokeError.message || "");
