@@ -9,11 +9,13 @@ import {
   toHttpError,
 } from "../_shared/http.ts";
 import {
-  blobToBase64,
+  buildOcrInput,
   extractJsonFromModelResponse,
   normalizeIncomingFilePath,
   parseReceiptItems,
   parseTax,
+  prepareReceiptAsset,
+  safeParseJsonResponse,
 } from "../_shared/receipt.ts";
 
 const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
@@ -21,56 +23,55 @@ const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
 
-type AnalyzeRequest = {
-  filePath?: string;
-  categories?: string[];
-};
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
     const user = await requireAuthenticatedUser(req);
-    const body = (await parseJsonBody(req)) as AnalyzeRequest;
+    const body = await parseJsonBody(req);
+
     const filePath = normalizeIncomingFilePath(body.filePath);
     const categories = sanitizeCategories(body.categories);
 
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const receiptBlob = await downloadReceiptBlob(adminClient, filePath);
-    const modelPayload = await requestReceiptExtraction(await blobToBase64(receiptBlob));
 
-    const parsed = extractJsonFromModelResponse(modelPayload);
+    await assertReceiptBelongsToUser(adminClient, user.id, filePath);
+
+    const blob = await downloadReceiptBlob(adminClient, filePath);
+    const receiptAsset = await prepareReceiptAsset(filePath, blob);
+
+    const extractionPayload = await requestReceiptExtraction(receiptAsset);
+    const parsed = extractJsonFromModelResponse(extractionPayload);
+
     if (!parsed) {
       throw new HttpError(422, "OCR did not return parseable JSON", {
-        model_response_keys: Object.keys(modelPayload ?? {}),
+        model_response_keys: Object.keys(extractionPayload ?? {}),
       });
     }
 
     const lineItems = parseReceiptItems(parsed.items);
-    if (lineItems.length === 0) {
+    if (!lineItems.length) {
       throw new HttpError(422, "No valid line items detected", {
         item_count_from_model: Array.isArray(parsed.items) ? parsed.items.length : 0,
       });
     }
 
-    const mappedItems = lineItems.map((item) => ({
-      raw_description: item.name,
-      normalized_description: item.name,
-      amount: item.amount,
-      suggested_category: suggestCategory(item.name, categories),
-      product_code: item.code,
-    }));
-
     return jsonResponse({
       success: true,
       data: {
-        line_items: mappedItems,
+        line_items: lineItems.map((item) => ({
+          raw_description: item.name,
+          normalized_description: item.name,
+          amount: item.amount,
+          suggested_category: suggestCategory(item.name, categories),
+          product_code: item.code,
+        })),
         tax_amount: parseTax(parsed.tax),
         file_path: filePath,
       },
       meta: {
         user_id: user.id,
-        line_item_count: mappedItems.length,
+        line_item_count: lineItems.length,
       },
     });
   } catch (error: unknown) {
@@ -111,6 +112,28 @@ async function requireAuthenticatedUser(req: Request) {
   return userData.user;
 }
 
+async function assertReceiptBelongsToUser(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+  filePath: string,
+): Promise<void> {
+  const { data, error } = await adminClient
+    .from("transactions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("receipt_url", filePath)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new HttpError(500, "Unable to validate receipt ownership", { db_error: error.message });
+  }
+
+  if (!data) {
+    throw new HttpError(403, "Receipt does not belong to authenticated user", { file_path: filePath });
+  }
+}
+
 function sanitizeCategories(categories: unknown): string[] {
   if (!Array.isArray(categories)) return [];
 
@@ -141,7 +164,7 @@ async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>,
   return data;
 }
 
-async function requestReceiptExtraction(base64Image: string) {
+async function requestReceiptExtraction(asset: Awaited<ReturnType<typeof prepareReceiptAsset>>) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -153,28 +176,21 @@ async function requestReceiptExtraction(base64Image: string) {
       input: [
         {
           role: "user",
-          content: [
-            {
-              type: "input_text",
-              text:
-                "Extract purchasable line items from this receipt image. Return JSON only with shape {\"items\":[{\"name\":string,\"amount\":number|string,\"code\":string|null}],\"tax\":number|string}. Do not include subtotal/total/payment lines as items.",
-            },
-            {
-              type: "input_image",
-              image_url: `data:image/png;base64,${base64Image}`,
-            },
-          ],
+          content: buildOcrInput(asset),
         },
       ],
+      max_output_tokens: 1200,
     }),
   });
 
-  const payload = await response.json();
+  const payload = await safeParseJsonResponse(response);
 
   if (!response.ok) {
     throw new HttpError(502, "OpenAI OCR request failed", {
       status: response.status,
-      openai_error: payload?.error?.message ?? null,
+      openai_error: payload?.error?.message ?? payload?.raw ?? null,
+      file_mime_type: asset.mimeType,
+      file_extension: asset.extension,
     });
   }
 

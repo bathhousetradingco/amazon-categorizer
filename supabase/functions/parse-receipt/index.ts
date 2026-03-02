@@ -9,11 +9,13 @@ import {
   toHttpError,
 } from "../_shared/http.ts";
 import {
-  blobToBase64,
+  buildOcrInput,
   extractJsonFromModelResponse,
   normalizeIncomingFilePath,
   parseReceiptItems,
   parseTax,
+  prepareReceiptAsset,
+  safeParseJsonResponse,
 } from "../_shared/receipt.ts";
 
 const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
@@ -22,18 +24,19 @@ const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    await requireAuthenticatedUser(req);
+    const user = await requireAuthenticatedUser(req);
     const body = await parseJsonBody(req);
     const filePath = normalizeIncomingFilePath(body.filePath);
 
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const receiptBlob = await downloadReceiptBlob(adminClient, filePath);
-    const extraction = await requestExtraction(await blobToBase64(receiptBlob));
+    await assertReceiptBelongsToUser(adminClient, user.id, filePath);
+
+    const blob = await downloadReceiptBlob(adminClient, filePath);
+    const asset = await prepareReceiptAsset(filePath, blob);
+    const extraction = await requestExtraction(asset);
     const parsed = extractJsonFromModelResponse(extraction);
 
     if (!parsed) {
@@ -45,6 +48,10 @@ Deno.serve(async (req) => {
       data: {
         items: parseReceiptItems(parsed.items),
         tax: parseTax(parsed.tax),
+      },
+      meta: {
+        user_id: user.id,
+        file_path: filePath,
       },
     });
   } catch (error: unknown) {
@@ -75,6 +82,25 @@ async function requireAuthenticatedUser(req: Request) {
   if (error || !data.user) {
     throw new HttpError(401, "Invalid or expired JWT", error ? { auth_error: error.message } : undefined);
   }
+
+  return data.user;
+}
+
+async function assertReceiptBelongsToUser(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+  filePath: string,
+): Promise<void> {
+  const { data, error } = await adminClient
+    .from("transactions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("receipt_url", filePath)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new HttpError(500, "Unable to validate receipt ownership", { db_error: error.message });
+  if (!data) throw new HttpError(403, "Receipt does not belong to authenticated user", { file_path: filePath });
 }
 
 async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>, filePath: string): Promise<Blob> {
@@ -90,7 +116,7 @@ async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>,
   return data;
 }
 
-async function requestExtraction(base64Image: string) {
+async function requestExtraction(asset: Awaited<ReturnType<typeof prepareReceiptAsset>>) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -99,30 +125,17 @@ async function requestExtraction(base64Image: string) {
     },
     body: JSON.stringify({
       model: "gpt-4.1",
-      input: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text:
-                "Extract purchasable line items and tax from this receipt. Return JSON only with keys items[] and tax.",
-            },
-            {
-              type: "input_image",
-              image_url: `data:image/png;base64,${base64Image}`,
-            },
-          ],
-        },
-      ],
+      input: [{ role: "user", content: buildOcrInput(asset) }],
+      max_output_tokens: 1200,
     }),
   });
 
-  const payload = await response.json();
+  const payload = await safeParseJsonResponse(response);
   if (!response.ok) {
     throw new HttpError(502, "OpenAI OCR request failed", {
       status: response.status,
-      openai_error: payload?.error?.message ?? null,
+      openai_error: payload?.error?.message ?? payload?.raw ?? null,
+      file_mime_type: asset.mimeType,
     });
   }
 

@@ -2,10 +2,21 @@ import { HttpError } from "./http.ts";
 
 const STORAGE_MARKER = "/storage/v1/object/";
 
+const RECEIPTS_BUCKET = "receipts";
+const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
+
 export type ParsedReceiptItem = {
   name: string;
   amount: number;
   code: string | null;
+};
+
+export type ReceiptAsset = {
+  filePath: string;
+  blob: Blob;
+  mimeType: string;
+  extension: string;
+  base64: string;
 };
 
 export function normalizeIncomingFilePath(inputPath: unknown): string {
@@ -31,8 +42,8 @@ export function normalizeIncomingFilePath(inputPath: unknown): string {
 
     const [, bucket, ...objectParts] = segments;
 
-    if (bucket !== "receipts") {
-      throw new HttpError(400, "filePath must reference the receipts bucket");
+    if (bucket !== RECEIPTS_BUCKET) {
+      throw new HttpError(400, `filePath must reference the ${RECEIPTS_BUCKET} bucket`);
     }
 
     normalized = objectParts.join("/");
@@ -47,11 +58,80 @@ export function normalizeIncomingFilePath(inputPath: unknown): string {
   return normalized;
 }
 
+export async function prepareReceiptAsset(filePath: string, blob: Blob): Promise<ReceiptAsset> {
+  if (!blob || blob.size === 0) {
+    throw new HttpError(422, "Receipt file is empty");
+  }
+
+  if (blob.size > MAX_RECEIPT_BYTES) {
+    throw new HttpError(413, "Receipt file is too large for OCR", {
+      max_bytes: MAX_RECEIPT_BYTES,
+      actual_bytes: blob.size,
+    });
+  }
+
+  const extension = inferExtension(filePath, blob.type);
+  const mimeType = inferMimeType(extension, blob.type);
+
+  if (!isSupportedMimeType(mimeType)) {
+    throw new HttpError(415, "Unsupported receipt file type", {
+      mime_type: mimeType,
+      supported: ["image/jpeg", "image/png", "image/webp", "application/pdf"],
+    });
+  }
+
+  return {
+    filePath,
+    blob,
+    mimeType,
+    extension,
+    base64: await blobToBase64(blob),
+  };
+}
+
 export async function blobToBase64(blob: Blob): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+export function buildOcrInput(asset: ReceiptAsset): Array<Record<string, unknown>> {
+  const prompt = {
+    type: "input_text",
+    text:
+      "Extract purchasable line items from this receipt. Return JSON only with shape {\"items\":[{\"name\":string,\"amount\":number|string,\"code\":string|null}],\"tax\":number|string}. Do not include subtotal/total/payment lines as items.",
+  };
+
+  if (asset.mimeType === "application/pdf") {
+    return [
+      prompt,
+      {
+        type: "input_file",
+        filename: `receipt.${asset.extension}`,
+        file_data: `data:${asset.mimeType};base64,${asset.base64}`,
+      },
+    ];
+  }
+
+  return [
+    prompt,
+    {
+      type: "input_image",
+      image_url: `data:${asset.mimeType};base64,${asset.base64}`,
+    },
+  ];
+}
+
+export async function safeParseJsonResponse(response: Response): Promise<any> {
+  const text = await response.text();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
 }
 
 export function extractJsonFromModelResponse(payload: any): Record<string, unknown> | null {
@@ -128,7 +208,7 @@ function parseFirstJsonObject(text: string): Record<string, unknown> | null {
 
   try {
     const parsed = JSON.parse(text.slice(first, last + 1));
-    return typeof parsed === "object" && parsed !== null ? parsed as Record<string, unknown> : null;
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
   }
@@ -139,4 +219,37 @@ function normalizeCode(raw: unknown): string | null {
   const code = String(raw).trim();
   if (!code) return null;
   return code.replace(/^0+/, "") || null;
+}
+
+function inferExtension(filePath: string, blobType: string): string {
+  const fromPath = filePath.split("?")[0].split("#")[0].split(".").pop()?.toLowerCase();
+  if (fromPath) return fromPath;
+
+  if (blobType.includes("png")) return "png";
+  if (blobType.includes("jpeg") || blobType.includes("jpg")) return "jpg";
+  if (blobType.includes("webp")) return "webp";
+  if (blobType.includes("pdf")) return "pdf";
+  return "bin";
+}
+
+function inferMimeType(extension: string, blobType: string): string {
+  if (blobType) return blobType;
+
+  switch (extension) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
+    case "pdf":
+      return "application/pdf";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function isSupportedMimeType(mimeType: string): boolean {
+  return ["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(mimeType);
 }
