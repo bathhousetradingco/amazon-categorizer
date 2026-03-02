@@ -2373,19 +2373,20 @@ async function analyzeReceipt(item){
     const { response, result } = await invokeEdgeFunction("analyze-receipt", payload);
 
     if(!response.ok){
-      const errMsg = result?.error || `Analyze failed (${response.status})`;
-      const authError = /invalid jwt|jwt|authorization|unauthorized/i.test(errMsg);
+      const errMsg = result?.error?.message || result?.error || result?.message || `Analyze failed (${response.status})`;
+      const authError = /invalid jwt|jwt|authorization|unauthorized/i.test(String(errMsg));
       if(authError){
         throw new Error("Analyze failed due to an expired session. Please sign out and sign back in.");
       }
-      throw new Error(errMsg);
+      throw new Error(String(errMsg));
     }
 
     console.log("✅ Parsed result:", result);
 
     // ✅ Normalize expected structure
-    const lineItems = result.line_items || result.items || [];
-    const taxAmount = result.tax_amount ?? result.tax ?? 0;
+    const resultPayload = result?.data || result;
+    const lineItems = resultPayload.line_items || resultPayload.items || [];
+    const taxAmount = resultPayload.tax_amount ?? resultPayload.tax ?? 0;
 
     // 🚫 Prevent empty results
     if(lineItems.length === 0){
