@@ -21,10 +21,18 @@ Deno.serve(async (req) => {
 
   try {
     const body = await safeJson(req);
-    const filePath = body?.filePath;
+    let filePath = body?.filePath;
     const categories: string[] = Array.isArray(body?.categories) ? body.categories : [];
 
     if (!filePath) throw new Error("Missing filePath");
+
+    /* ================= FIX STORAGE PATH ================= */
+    // If frontend sends "receipts/xyz.png"
+    if (filePath.startsWith("receipts/")) {
+      filePath = filePath.replace("receipts/", "");
+    }
+
+    console.log("Downloading from bucket path:", filePath);
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -34,7 +42,10 @@ Deno.serve(async (req) => {
       .from("receipts")
       .download(filePath);
 
-    if (dlErr || !fileBlob) throw new Error("Download failed");
+    if (dlErr || !fileBlob) {
+      console.error("Storage download error:", dlErr);
+      throw new Error("Failed to download receipt from storage");
+    }
 
     const base64 = await blobToBase64(fileBlob);
 
@@ -63,12 +74,10 @@ Deno.serve(async (req) => {
         const raw = item.name;
         const amount = Number(item.amount) || 0;
 
-        // Prefer explicit code field; otherwise extract from text
         const codeFromText = extractProductCode(raw);
         const codeRaw = item.code || codeFromText?.raw || null;
         const codeNormalized = normalizeCode(codeRaw);
 
-        // 1) MEMORY lookup by normalized code
         let normalizedName = "";
 
         if (codeNormalized) {
@@ -81,12 +90,10 @@ Deno.serve(async (req) => {
           if (mem?.product_name) normalizedName = String(mem.product_name);
         }
 
-        // 2) AI clean name (STRICT, one line only)
         if (!normalizedName) {
           normalizedName = await cleanNameOneLine(raw);
         }
 
-        // 3) Category suggestion (optional)
         let suggestedCategory = "Needs Review";
         if (categories.length) {
           suggestedCategory = await suggestCategory(normalizedName, categories);
@@ -113,10 +120,16 @@ Deno.serve(async (req) => {
     );
   } catch (err: any) {
     console.error("analyze-receipt error:", err);
-    return new Response(JSON.stringify({ error: err?.message || "Unknown error" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        error: err?.message || "Unknown error",
+        stack: err?.stack || null,
+      }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 });
 
@@ -136,7 +149,9 @@ async function blobToBase64(blob: Blob) {
   const buffer = await blob.arrayBuffer();
   let binary = "";
   const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
   return btoa(binary);
 }
 
@@ -161,19 +176,22 @@ Extract ONLY purchasable line items from this receipt.
 Hard rules:
 - Each item MUST have a positive price (amount > 0).
 - EXCLUDE: subtotal, total, tax lines, discounts, coupons, instant savings, change, balance, tender, card info.
-- EXCLUDE "pricing math" lines like "36 AT 1 FOR 8.98" or "2 AT 1 FOR 30.98" (those are NOT products).
-- If a product code/UPC/SKU appears on the same line as an item, include it as "code".
+- EXCLUDE "pricing math" lines like "36 AT 1 FOR 8.98".
+- If a product code/UPC/SKU appears on the same line, include as "code".
 
-Return JSON ONLY in this exact format:
+Return JSON ONLY:
 {
   "items": [
-    { "name": "…", "amount": 0.00, "code": "optional" }
+    { "name": "...", "amount": 0.00, "code": "optional" }
   ],
   "tax": 0.00
 }
               `.trim(),
             },
-            { type: "input_image", image_url: `data:image/png;base64,${base64}` },
+            {
+              type: "input_image",
+              image_url: `data:image/png;base64,${base64}`,
+            },
           ],
         },
       ],
