@@ -63,7 +63,7 @@ export async function enrichLineItems(params: {
   items: ParsedReceiptItem[];
   openAiApiKey: string;
   serpApiKey?: string;
-  store?: "sams_club" | "walmart" | "generic";
+  store?: string;
 }): Promise<EnrichedReceiptItem[]> {
   const { adminClient, items, openAiApiKey, serpApiKey } = params;
   const store = normalizeStoreForLookup(params.store);
@@ -145,32 +145,32 @@ export async function enrichLineItems(params: {
 
     const unresolvedIndices = result
       .map((item, index) => ({ item, index }))
-      .filter(({ item, index }) => shouldLookupViaSerp(item, skuByIndex.get(index) ?? null, store))
+      .filter(({ item, index }) => shouldRunSerpLookup(item, skuByIndex.get(index) ?? null))
       .map(({ index }) => index);
 
     const missingSkus = Array.from(new Set(unresolvedIndices
       .map((index) => normalizeIdentifier(skuByIndex.get(index) ?? result[index].normalized_item_number ?? result[index].sku))
       .filter((sku): sku is string => Boolean(sku))
-      .filter((sku) => !cached.has(sku))));
+      )));
 
     if (missingSkus.length) {
       if (!serpApiKey) {
-        console.log("SERPAPI_KEY missing");
-      } else {
-        const lookedUp = await lookupSkusViaSerpApi(
-          missingSkus.slice(0, SERP_MAX_SKUS_PER_BATCH),
-          serpApiKey,
-          skuHints,
-          store,
-          budget,
-        );
+        throw new Error("SERPAPI_KEY missing");
+      }
 
-        for (const row of lookedUp) {
-          await upsertCacheRow(adminClient, row);
-          for (const index of skuMap.get(row.sku) ?? []) {
-            const source = row.source === "samsclub_site" ? "samsclub_site" : "serpapi";
-            applyLookup(result[index], row.clean_name, source, row.brand, row.category, `lookup:${source}`);
-          }
+      const lookedUp = await lookupSkusViaSerpApi(
+        missingSkus.slice(0, SERP_MAX_SKUS_PER_BATCH),
+        serpApiKey,
+        skuHints,
+        store,
+        budget,
+      );
+
+      for (const row of lookedUp) {
+        await upsertCacheRow(adminClient, row);
+        for (const index of skuMap.get(row.sku) ?? []) {
+          const source = row.source === "samsclub_site" ? "samsclub_site" : "serpapi";
+          applyLookup(result[index], row.clean_name, source, row.brand, row.category, `lookup:${source}`);
         }
       }
     }
@@ -263,16 +263,13 @@ function applyLookup(
   console.log({ step: "NAME_APPLY", strategy: source, before, after: nextName, source_set: source, applied: true, reason });
 }
 
-function shouldLookupViaSerp(
-  item: EnrichedReceiptItem,
-  productNumber: string | null,
-  store: "sams_club" | "walmart" | "generic",
-): boolean {
-  if (!productNumber) return false;
-  if (store === "sams_club") return true;
-  const hasNumericIdentifier = /\d{5,}/.test(productNumber);
-  if (item.enrichmentSource !== "none" && item.enrichmentSource !== "normalized") return false;
-  return hasNumericIdentifier || item.qualityScore < 0.75 || isLowConfidenceName(item.enrichedName);
+function shouldRunSerpLookup(_item: EnrichedReceiptItem, productNumber: string | null): boolean {
+  if (!productNumber) {
+    console.log("SERPAPI_SKIPPED", { reason: "missing_sku_or_product_code" });
+    return false;
+  }
+
+  return true;
 }
 
 function isLowConfidenceName(name: string): boolean {
@@ -363,6 +360,15 @@ async function lookupSkusViaSerpApi(
 
     budget.lookupsUsed += 1;
     const hint = skuHints.get(sku);
+    const lineItem = {
+      sku,
+      product_code: sku,
+    };
+    console.log("SERPAPI_ATTEMPT", {
+      sku: lineItem.sku,
+      product_code: lineItem.product_code,
+      store,
+    });
     const match = await enrichWithSerpAPI(
       sku,
       hint?.rawName ?? hint?.normalizedName ?? "",
@@ -372,7 +378,8 @@ async function lookupSkusViaSerpApi(
       budget,
     );
 
-    if (!match || (store !== "sams_club" && match.confidence === "low")) {
+    if (!match) {
+      console.log("SERPAPI_SKIPPED", { reason: "no_product_match" });
       console.log({ step: "NAME_APPLY", before: hint?.rawName ?? sku, after: hint?.rawName ?? sku, applied: false, reason: "no_product_match" });
       continue;
     }
@@ -398,10 +405,10 @@ async function searchGoogleResults(query: string, serpApiKey: string, strategy: 
   url.searchParams.set("api_key", serpApiKey);
   url.searchParams.set("num", "5");
 
-  console.log({ step: "SERPAPI_QUERY", strategy, query, url: url.toString() });
+  console.log("SERPAPI_QUERY", { query, url: url.toString() });
 
-  const { payload, status } = await fetchWithRetry(url, { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS, name: "serpapi", budget });
-  const organic = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+  const { payload: data, status: responseStatus } = await fetchWithRetry(url, { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS, name: "serpapi", budget });
+  const organic = Array.isArray(data?.organic_results) ? data.organic_results : [];
 
   const mapped = organic
     .map((entry: any) => ({
@@ -411,13 +418,9 @@ async function searchGoogleResults(query: string, serpApiKey: string, strategy: 
     }))
     .filter((entry: SerpMatch) => entry.title.length >= 4);
 
-  console.log({
-    step: "SERPAPI_RESPONSE",
-    strategy,
-    status,
-    hasResults: mapped.length > 0,
-    firstTitle: mapped[0]?.title ?? null,
-    firstLink: mapped[0]?.link ?? null,
+  console.log("SERPAPI_RESPONSE", {
+    status: responseStatus,
+    hasResults: !!data?.organic_results?.length,
   });
 
   return mapped;
@@ -432,7 +435,10 @@ async function enrichWithSerpAPI(
   budget: EnrichmentBudget,
 ): Promise<SerpEnrichmentResult | null> {
   const normalizedNumber = normalizeIdentifier(productNumber);
-  if (!normalizedNumber) return null;
+  if (!normalizedNumber) {
+    console.log("SERPAPI_SKIPPED", { reason: "invalid_product_number" });
+    return null;
+  }
 
   if (cache.has(normalizedNumber)) return cache.get(normalizedNumber) ?? null;
 
@@ -562,7 +568,7 @@ function extractProductNumber(item: ParsedReceiptItem): ProductNumberExtraction 
 
 function normalizeStoreForLookup(store: string | undefined): "sams_club" | "walmart" | "generic" {
   const compact = String(store ?? "").toLowerCase().replace(/[^a-z]/g, "");
-  if (["samsclub", "sams", "sam", "samsclb"].includes(compact)) return "sams_club";
+  if (compact.includes("samsclub") || compact.includes("samclub") || compact.includes("sams")) return "sams_club";
   if (compact.includes("walmart")) return "walmart";
   return "generic";
 }
