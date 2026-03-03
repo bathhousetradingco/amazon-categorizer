@@ -29,9 +29,14 @@ type LookupHint = {
 
 type SerpMatch = {
   title: string;
-  brand: string | null;
-  category: string | null;
-  price: number | null;
+  snippet: string | null;
+  link: string | null;
+};
+
+type SerpEnrichmentResult = {
+  enriched_name: string;
+  confidence: "high" | "medium" | "low";
+  source: "serpapi";
   sourceUrl: string | null;
 };
 
@@ -61,9 +66,12 @@ export async function enrichLineItems(params: {
 
   const skuMap = new Map<string, number[]>();
   const skuHints = new Map<string, LookupHint>();
+  const skuByIndex = new Map<number, string>();
   result.forEach((item, index) => {
     const sku = selectLookupIdentifier(item);
     if (!sku) return;
+    skuByIndex.set(index, sku);
+    if (!item.sku) item.sku = sku;
 
     const bucket = skuMap.get(sku) ?? [];
     bucket.push(index);
@@ -89,11 +97,11 @@ export async function enrichLineItems(params: {
 
     const unresolvedIndices = result
       .map((item, index) => ({ item, index }))
-      .filter(({ item }) => shouldLookupViaSerp(item))
+      .filter(({ item, index }) => shouldLookupViaSerp(item, skuByIndex.get(index) ?? null))
       .map(({ index }) => index);
 
     const missingSkus = Array.from(new Set(unresolvedIndices
-      .map((index) => normalizeIdentifier(result[index].sku))
+      .map((index) => normalizeIdentifier(skuByIndex.get(index) ?? result[index].sku))
       .filter((sku): sku is string => Boolean(sku))
       .filter((sku) => !cached.has(sku))));
 
@@ -171,10 +179,11 @@ function applyLookup(
   item.qualityScore = Math.max(item.qualityScore, source === "normalized" ? 0.65 : 0.88);
 }
 
-function shouldLookupViaSerp(item: EnrichedReceiptItem): boolean {
-  if (!item.sku) return false;
+function shouldLookupViaSerp(item: EnrichedReceiptItem, productNumber: string | null): boolean {
+  if (!productNumber) return false;
+  const hasNumericIdentifier = /\d{5,}/.test(productNumber);
   if (item.enrichmentSource !== "normalized") return false;
-  return item.qualityScore < 0.75 || isLowConfidenceName(item.enrichedName);
+  return hasNumericIdentifier || item.qualityScore < 0.75 || isLowConfidenceName(item.enrichedName);
 }
 
 function isLowConfidenceName(name: string): boolean {
@@ -241,66 +250,91 @@ async function lookupSkusViaSerpApi(
   skuHints: Map<string, LookupHint>,
 ): Promise<ProductLookupRow[]> {
   const rows: ProductLookupRow[] = [];
+  const serpCache = new Map<string, SerpEnrichmentResult | null>();
 
   for (const sku of skus) {
     const hint = skuHints.get(sku);
-    const queries = buildSerpQueries(sku, hint);
+    const match = await enrichWithSerpAPI(sku, hint?.storeHint ?? "bulk retail", serpApiKey, serpCache);
 
-    console.log("receipt_enrichment_identifier", { sku, query_count: queries.length, hint: hint?.normalizedName ?? null });
-
-    let bestMatch: { match: SerpMatch; score: number } | null = null;
-
-    for (const query of queries) {
-      console.log("receipt_enrichment_serp_query", { sku, query });
-      const matches = await searchShoppingResults(query, serpApiKey);
-      const ranked = rankSerpMatches(matches, sku, hint);
-      if (ranked.length && (!bestMatch || ranked[0].score > bestMatch.score)) {
-        bestMatch = ranked[0];
-      }
-      if (ranked.length && ranked[0].score >= 0.82) break;
-    }
-
-    if (!bestMatch) {
+    if (!match || match.confidence === "low") {
       console.log("receipt_enrichment_failed", { sku, reason: "no_product_match" });
       continue;
     }
 
-    console.log("receipt_enrichment_success", { sku, title: bestMatch.match.title, brand: bestMatch.match.brand, score: bestMatch.score });
+    console.log("receipt_enrichment_success", { sku, title: match.enriched_name, confidence: match.confidence });
 
     rows.push({
       sku,
-      clean_name: bestMatch.match.title,
+      clean_name: match.enriched_name,
       source: "serpapi",
-      brand: bestMatch.match.brand,
-      category: bestMatch.match.category,
-      source_url: bestMatch.match.sourceUrl,
+      brand: inferBrand(match.enriched_name),
+      category: null,
+      source_url: match.sourceUrl,
     });
   }
 
   return rows;
 }
 
-async function searchShoppingResults(query: string, serpApiKey: string): Promise<SerpMatch[]> {
-  const url = new URL("https://serpapi.com/search.json");
-  url.searchParams.set("engine", "google_shopping");
+async function searchGoogleResults(query: string, serpApiKey: string): Promise<SerpMatch[]> {
+  const url = new URL("https://serpapi.com/search");
+  url.searchParams.set("engine", "google");
+  url.searchParams.set("location", "United States");
   url.searchParams.set("q", query);
   url.searchParams.set("api_key", serpApiKey);
-  url.searchParams.set("num", "8");
+  url.searchParams.set("num", "5");
 
   const payload = await fetchWithRetry(url, { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS });
   if (!payload) return [];
 
-  const shopping = Array.isArray(payload?.shopping_results) ? payload.shopping_results : [];
+  const organic = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
 
-  return shopping
+  return organic
     .map((entry: any) => ({
       title: String(entry?.title ?? "").trim(),
-      brand: entry?.brand ? String(entry.brand).trim() : null,
-      category: entry?.category ? String(entry.category).trim() : null,
-      price: parsePrice(entry?.price),
-      sourceUrl: entry?.link ? String(entry.link) : null,
+      snippet: entry?.snippet ? String(entry.snippet).trim() : null,
+      link: entry?.link ? String(entry.link) : null,
     }))
     .filter((entry: SerpMatch) => entry.title.length >= 4);
+}
+
+async function enrichWithSerpAPI(
+  productNumber: string,
+  storeHint: string,
+  serpApiKey: string,
+  cache: Map<string, SerpEnrichmentResult | null>,
+): Promise<SerpEnrichmentResult | null> {
+  const normalizedNumber = normalizeIdentifier(productNumber);
+  if (!normalizedNumber) return null;
+
+  if (cache.has(normalizedNumber)) return cache.get(normalizedNumber) ?? null;
+
+  const query = `${normalizedNumber} ${storeHint} product`;
+  const matches = await searchGoogleResults(query, serpApiKey);
+  const top = matches[0] ?? null;
+  const resultTitle = top?.title ?? top?.snippet ?? null;
+
+  console.log({
+    step: "SERPAPI_QUERY",
+    query,
+    result_title: resultTitle,
+  });
+
+  if (!top || !resultTitle) {
+    cache.set(normalizedNumber, null);
+    return null;
+  }
+
+  const confidence = scoreEnrichmentConfidence(top, normalizedNumber, storeHint);
+  const enrichment: SerpEnrichmentResult = {
+    enriched_name: top.title || top.snippet || normalizedNumber,
+    confidence,
+    source: "serpapi",
+    sourceUrl: top.link,
+  };
+
+  cache.set(normalizedNumber, enrichment);
+  return enrichment;
 }
 
 async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number }): Promise<any | null> {
@@ -328,68 +362,21 @@ async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: 
   return null;
 }
 
-function rankSerpMatches(matches: SerpMatch[], sku: string, hint?: LookupHint) {
-  return matches
-    .map((match) => ({
-      match,
-      score: scoreSerpMatch(match, sku, hint),
-    }))
-    .filter((entry) => entry.score > 0.35)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
+function scoreEnrichmentConfidence(match: SerpMatch, normalizedNumber: string, storeHint: string): "high" | "medium" | "low" {
+  const text = `${match.title} ${match.snippet ?? ""}`.toLowerCase();
+  const hasNumber = text.includes(normalizedNumber.toLowerCase());
+  const hasStore = text.includes(storeHint.toLowerCase().split(" ")[0]);
+  const unrelated = /manual|replacement|part|coupon|deal|review|youtube|ebay/i.test(text);
+
+  if (unrelated) return "low";
+  if (hasNumber && hasStore) return "high";
+  if (match.title.length >= 12) return "medium";
+  return "low";
 }
 
-function scoreSerpMatch(match: SerpMatch, sku: string, hint?: LookupHint): number {
-  const title = match.title.toLowerCase();
-  const hintTokens = `${hint?.rawName ?? ""} ${hint?.normalizedName ?? ""}`
-    .toLowerCase()
-    .match(/[a-z]{3,}/g) ?? [];
-
-  let score = 0.45;
-  if (title.includes(sku)) score += 0.35;
-
-  for (const token of hintTokens.slice(0, 5)) {
-    if (title.includes(token)) score += 0.08;
-  }
-
-  if (match.brand && title.includes(match.brand.toLowerCase())) score += 0.08;
-  if (hint?.storeHint && title.includes(hint.storeHint.toLowerCase().split(" ")[0])) score += 0.06;
-
-  if (/replacement|manual|part|review|deal|coupon/i.test(match.title)) score -= 0.35;
-  if (match.title.length < 6) score -= 0.2;
-
-  return Math.max(0, Math.min(1, Number(score.toFixed(2))));
-}
-
-function buildSerpQueries(sku: string, hint?: LookupHint): string[] {
-  const compactHint = [hint?.rawName ?? "", hint?.normalizedName ?? ""]
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const keywordHint = (compactHint.match(/[A-Za-z]{2,}/g) ?? [])
-    .slice(0, 4)
-    .join(" ");
-
-  const storeHint = hint?.storeHint ?? "bulk retail";
-
-  const queries = [
-    `${sku}`,
-    `${storeHint} ${sku}`,
-    `${storeHint} item ${sku}`,
-    keywordHint ? `${sku} ${keywordHint}` : "",
-    keywordHint ? `${storeHint} ${sku} ${keywordHint}` : "",
-  ].filter(Boolean);
-
-  return Array.from(new Set(queries));
-}
-
-function parsePrice(raw: unknown): number | null {
-  if (typeof raw === "number") return Number.isFinite(raw) ? Number(raw.toFixed(2)) : null;
-  const normalized = String(raw ?? "").replace(/[^\d.]/g, "").trim();
-  if (!normalized) return null;
-  const value = Number(normalized);
-  return Number.isFinite(value) ? Number(value.toFixed(2)) : null;
+function inferBrand(name: string): string | null {
+  const token = String(name ?? "").trim().split(/\s+/)[0] ?? "";
+  return token.length >= 3 ? token : null;
 }
 
 
