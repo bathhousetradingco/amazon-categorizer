@@ -74,15 +74,17 @@ Deno.serve(async (req) => {
       serpApiKey: SERPAPI_API_KEY,
     });
 
+    const receiptTotal = parseCurrencyToNumber(parsed.total);
+    const reconciledLineItems = reconcileLineItemsWithReceiptTotal(enrichedLineItems, receiptTotal);
+
     const categorySuggestions = await Promise.all(
-      enrichedLineItems.map((item) => suggestCategories(item.enrichedName, categories, OPENAI_API_KEY)),
+      reconciledLineItems.map((item) => suggestCategories(item.enrichedName, categories, OPENAI_API_KEY)),
     );
 
-    const receiptTotal = parseCurrencyToNumber(parsed.total);
-    const lineItemsTotal = toMoney(enrichedLineItems.reduce((sum, item) => sum + (item.total || 0), 0));
+    const lineItemsTotal = toMoney(reconciledLineItems.reduce((sum, item) => sum + (item.total || 0), 0));
     const totalMismatch = Number.isFinite(receiptTotal) && Math.abs(lineItemsTotal - receiptTotal) > 0.75;
 
-    const problematicLineItems = enrichedLineItems
+    const problematicLineItems = reconciledLineItems
       .map((item, index) => ({ item, index }))
       .filter(({ item }) => item.totalMismatch || item.needsReview)
       .map(({ index }) => index);
@@ -90,7 +92,7 @@ Deno.serve(async (req) => {
     return jsonResponse({
       success: true,
       data: {
-        line_items: enrichedLineItems.map((item, index) => {
+        line_items: reconciledLineItems.map((item, index) => {
           const suggested_categories = categorySuggestions[index];
           const needsReview = item.needsReview || item.totalMismatch || suggested_categories.length === 0;
 
@@ -274,7 +276,9 @@ function suggestCategoriesByRules(itemName: string, categories: string[]): Categ
       }
 
       if (/(pen|paper|notebook|ink|staple|label|printer)/i.test(lowered) && /office|supply/i.test(category)) score += 0.75;
-      if (/(chicken|beef|milk|grocery|produce|fruit|vegetable|snack)/i.test(lowered) && /inventory|cogs|food|grocery/i.test(category)) score += 0.7;
+      if (/(toilet\s*paper|tissue|paper\s*towel|bath\s*tissue|charmin)/i.test(lowered) && /office|supply/i.test(category)) score -= 0.5;
+      if (/(toilet\s*paper|tissue|paper\s*towel|bath\s*tissue|charmin)/i.test(lowered) && /clean|janitorial|house|cogs|inventory/i.test(category)) score += 0.65;
+      if (/(chicken|beef|milk|grocery|produce|fruit|vegetable|snack|yogurt|coconut|oil|sugar)/i.test(lowered) && /inventory|cogs|food|grocery|ingredient/i.test(category)) score += 0.7;
       if (/(soap|clean|bleach|detergent|trash|towel)/i.test(lowered) && /clean|janitorial|supply/i.test(category)) score += 0.7;
       if (/(shipping|box|tape|postage|mail)/i.test(lowered) && /shipping|postage/i.test(category)) score += 0.7;
 
@@ -385,6 +389,48 @@ async function requestReceiptExtraction(asset: Awaited<ReturnType<typeof prepare
   }
 
   return payload;
+}
+
+
+function reconcileLineItemsWithReceiptTotal<T extends { quantity: number; unitPrice: number; total: number; rawName: string; qualityFlags: string[] }>(
+  items: T[],
+  receiptTotal: number,
+): T[] {
+  if (!Number.isFinite(receiptTotal) || !items.length) return items;
+
+  const nextItems = items.map((item) => ({ ...item, qualityFlags: [...item.qualityFlags] }));
+  const currentTotal = toMoney(nextItems.reduce((sum, item) => sum + (item.total || 0), 0));
+  const delta = toMoney(receiptTotal - currentTotal);
+  if (Math.abs(delta) <= 0.75) return nextItems;
+
+  const candidateIndexes = nextItems
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.quantity <= 1 && item.unitPrice > 0 && item.total >= 40)
+    .map(({ index }) => index);
+
+  for (const index of candidateIndexes) {
+    const item = nextItems[index];
+    const ratio = (item.total + delta) / item.unitPrice;
+    const inferredQty = Math.round(ratio);
+
+    if (inferredQty <= 1 || inferredQty > 300) continue;
+    if (Math.abs(ratio - inferredQty) > 0.03) continue;
+
+    const correctedTotal = toMoney(inferredQty * item.unitPrice);
+    const correctedDelta = toMoney(receiptTotal - (currentTotal - item.total + correctedTotal));
+    if (Math.abs(correctedDelta) > Math.abs(delta)) continue;
+
+    nextItems[index] = {
+      ...item,
+      quantity: inferredQty,
+      total: correctedTotal,
+      qualityFlags: Array.from(new Set([...item.qualityFlags, "reconciled_quantity"])),
+    };
+
+    break;
+  }
+
+  return nextItems;
 }
 
 function toMoney(value: number): number {

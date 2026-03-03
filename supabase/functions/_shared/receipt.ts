@@ -199,12 +199,34 @@ function parseSamsClubReceipt(rawItems: unknown): ParsedReceiptItem[] {
 
     const name = String(current.name ?? "").trim();
     const amount = parseCurrencyToNumber(current.amount);
+    const nextName = String(next.name ?? "").trim();
+    const nextAmount = parseCurrencyToNumber(next.amount);
 
-    const isContinuation = name && (!Number.isFinite(amount) || amount <= 0) && String(next.name ?? "").trim();
-    if (isContinuation) {
+    const isDescriptorLine = /^\d{1,4}\s*(?:AT|@)\s*\d{0,4}\s*(?:FOR)?\s*\$?\d+(?:\.\d{1,2})?/i.test(name)
+      || /^\d{1,4}\s+FOR\s+\$?\d+(?:\.\d{1,2})?/i.test(name)
+      || /^INST\s+SV\b/i.test(name);
+
+    if (isDescriptorLine && mergedEntries.length) {
+      const previous = (mergedEntries[mergedEntries.length - 1] ?? {}) as Record<string, unknown>;
+      const previousName = String(previous.name ?? "").trim();
+      mergedEntries[mergedEntries.length - 1] = {
+        ...previous,
+        name: `${previousName} ${name}`.trim(),
+        amount: Number.isFinite(amount) && amount > 0 ? amount : previous.amount,
+        code: previous.code ?? current.code ?? null,
+      };
+      continue;
+    }
+
+    const isContinuation = name && (!Number.isFinite(amount) || amount <= 0) && nextName;
+    const nextLooksLikeDescriptor = /^\d{1,4}\s*(?:AT|@)\s*\d{0,4}\s*(?:FOR)?\s*\$?\d+(?:\.\d{1,2})?/i.test(nextName)
+      || /^\d{1,4}\s+FOR\s+\$?\d+(?:\.\d{1,2})?/i.test(nextName);
+
+    if (isContinuation && !nextLooksLikeDescriptor) {
       mergedEntries.push({
         ...next,
-        name: `${name} ${String(next.name ?? "")}`.trim(),
+        name: `${name} ${nextName}`.trim(),
+        amount: Number.isFinite(nextAmount) && nextAmount > 0 ? nextAmount : amount,
         code: current.code ?? next.code ?? null,
       });
       index += 1;
