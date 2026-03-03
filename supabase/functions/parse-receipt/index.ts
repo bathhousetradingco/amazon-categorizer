@@ -1,86 +1,113 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { corsHeaders, jsonResponse, parseJsonBody, toHttpError } from "../_shared/http.ts";
 import {
-  HttpError,
-  corsHeaders,
-  getRequiredEnv,
-  jsonResponse,
-  parseJsonBody,
-  toHttpError,
-} from "../_shared/http.ts";
-import {
-  buildOcrInput,
-  requestTabscannerExtraction,
-  extractJsonFromModelResponse,
-  normalizeIncomingFilePath,
-  mergeExtractedReceiptItems,
-  parseReceiptItems,
-  parseCurrencyToNumber,
-  parseTax,
-  prepareReceiptAsset,
-  safeParseJsonResponse,
-} from "../_shared/receipt.ts";
-import { enrichLineItems } from "../_shared/enrich-line-items.ts";
+  groupSamsClubReceiptLines,
+  isAcceptableProductTitle,
+  parseSamsClubGroup,
+} from "../_shared/sams-club-receipt.ts";
 
-const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
-const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
-const TABSCANNER_API_KEY = Deno.env.get("TABSCANNER_API_KEY") ?? undefined;
-const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API_KEY") ?? undefined;
+type SerpApiPayload = {
+  organic_results?: Array<{ title?: string }>;
+  shopping_results?: Array<{ title?: string }>;
+};
+
+type ItemResult = {
+  raw_line: string;
+  item_number_raw: string | null;
+  item_number_normalized: string | null;
+  quantity: number;
+  serpapi_query: string | null;
+  serpapi_first_title: string | null;
+  final_title_used: string | null;
+  status: "ok" | "parse_invalid" | "enrich_failed";
+};
+
+const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API_KEY") ?? "";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const user = await requireAuthenticatedUser(req);
     const body = await parseJsonBody(req);
-    const filePath = normalizeIncomingFilePath(body.filePath);
+    const rawLines = extractRawLines(body);
 
-    const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    await assertReceiptBelongsToUser(adminClient, user.id, filePath);
+    const groups = groupSamsClubReceiptLines(rawLines);
+    const results: ItemResult[] = [];
 
-    const blob = await downloadReceiptBlob(adminClient, filePath);
-    const asset = await prepareReceiptAsset(filePath, blob);
-    const tabscannerData = await requestTabscannerExtraction({
-      asset,
-      apiKey: TABSCANNER_API_KEY,
-      timeoutMs: 12000,
-    });
-    const extraction = await requestExtraction(asset, tabscannerData);
-    const parsed = extractJsonFromModelResponse(extraction);
+    for (const group of groups) {
+      const parsed = parseSamsClubGroup(group);
 
-    if (!parsed) {
-      throw new HttpError(422, "OCR did not return parseable JSON");
+      if (!parsed) {
+        const invalidResult: ItemResult = {
+          raw_line: group.line1,
+          item_number_raw: null,
+          item_number_normalized: null,
+          quantity: 1,
+          serpapi_query: null,
+          serpapi_first_title: null,
+          final_title_used: null,
+          status: "parse_invalid",
+        };
+        console.log("PARSE_RESULT", invalidResult);
+        results.push(invalidResult);
+        continue;
+      }
+
+      console.log("PARSE_RESULT", {
+        raw_line: parsed.raw_line,
+        item_number_raw: parsed.item_number_raw,
+        item_number_normalized: parsed.item_number_normalized,
+      });
+      console.log("QUANTITY_DETECTED", {
+        item_number_normalized: parsed.item_number_normalized,
+        quantity: parsed.quantity,
+      });
+
+      const serpapi_query = parsed.item_number_normalized;
+      console.log("SERPAPI_REQUEST", { query: serpapi_query });
+
+      const { firstTitle, ok } = await fetchSerpApiFirstTitle(serpapi_query);
+      console.log("SERPAPI_RESPONSE", {
+        item_number_normalized: parsed.item_number_normalized,
+        status: ok ? "ok" : "error",
+        first_title: firstTitle,
+      });
+
+      if (!ok || !isAcceptableProductTitle(firstTitle)) {
+        const failedResult: ItemResult = {
+          raw_line: parsed.raw_line,
+          item_number_raw: parsed.item_number_raw,
+          item_number_normalized: parsed.item_number_normalized,
+          quantity: parsed.quantity,
+          serpapi_query,
+          serpapi_first_title: firstTitle,
+          final_title_used: null,
+          status: "enrich_failed",
+        };
+        console.log("FINAL_SELECTION", failedResult);
+        results.push(failedResult);
+        continue;
+      }
+
+      const successResult: ItemResult = {
+        raw_line: parsed.raw_line,
+        item_number_raw: parsed.item_number_raw,
+        item_number_normalized: parsed.item_number_normalized,
+        quantity: parsed.quantity,
+        serpapi_query,
+        serpapi_first_title: firstTitle,
+        final_title_used: firstTitle,
+        status: "ok",
+      };
+      console.log("FINAL_SELECTION", successResult);
+      results.push(successResult);
     }
-
-    const store = detectStoreType(parsed.store, parsed.merchant, tabscannerData?.store, tabscannerData?.merchant);
-    if (!SERPAPI_API_KEY) {
-      console.log("SERPAPI_KEY missing");
-    }
-    const items = parseReceiptItems(
-      mergeExtractedReceiptItems(parsed.items, tabscannerData?.items),
-      { store },
-    );
-    const enrichedItems = await enrichLineItems({
-      adminClient,
-      items,
-      openAiApiKey: OPENAI_API_KEY,
-      serpApiKey: SERPAPI_API_KEY,
-      store,
-    });
 
     return jsonResponse({
       success: true,
       data: {
-        items: enrichedItems,
-        tax: parseTax(firstFiniteNumber(tabscannerData?.tax, parsed.tax)),
-        receipt_total: parseCurrencyToNumber(firstFiniteNumber(tabscannerData?.total, parsed.total)),
-        store,
-      },
-      meta: {
-        user_id: user.id,
-        file_path: filePath,
+        store: "sams_club",
+        items: results,
       },
     });
   } catch (error: unknown) {
@@ -99,84 +126,27 @@ Deno.serve(async (req) => {
   }
 });
 
-async function requireAuthenticatedUser(req: Request) {
-  const authorization = req.headers.get("Authorization");
-  if (!authorization) throw new HttpError(401, "Missing Authorization header");
-
-  const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: authorization } },
-  });
-
-  const { data, error } = await authClient.auth.getUser();
-  if (error || !data.user) {
-    throw new HttpError(401, "Invalid or expired JWT", error ? { auth_error: error.message } : undefined);
-  }
-
-  return data.user;
+function extractRawLines(body: Record<string, unknown>): string[] {
+  const candidates = [body.raw_lines, body.rawLines, body.lines, body.ocr_lines];
+  const lines = candidates.find((value) => Array.isArray(value));
+  return Array.isArray(lines) ? lines.map((line) => String(line ?? "")) : [];
 }
 
-async function assertReceiptBelongsToUser(
-  adminClient: ReturnType<typeof createClient>,
-  userId: string,
-  filePath: string,
-): Promise<void> {
-  const { data, error } = await adminClient
-    .from("transactions")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("receipt_url", filePath)
-    .limit(1)
-    .maybeSingle();
+async function fetchSerpApiFirstTitle(query: string): Promise<{ firstTitle: string | null; ok: boolean }> {
+  if (!SERPAPI_API_KEY) return { firstTitle: null, ok: false };
 
-  if (error) throw new HttpError(500, "Unable to validate receipt ownership", { db_error: error.message });
-  if (!data) throw new HttpError(403, "Receipt does not belong to authenticated user", { file_path: filePath });
-}
+  const endpoint = new URL("https://serpapi.com/search.json");
+  endpoint.searchParams.set("engine", "google");
+  endpoint.searchParams.set("q", query);
+  endpoint.searchParams.set("api_key", SERPAPI_API_KEY);
 
-async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>, filePath: string): Promise<Blob> {
-  const { data, error } = await adminClient.storage.from("receipts").download(filePath);
+  const response = await fetch(endpoint.toString(), { method: "GET" });
+  if (!response.ok) return { firstTitle: null, ok: false };
 
-  if (error || !data) {
-    throw new HttpError(400, "Failed to download receipt", {
-      file_path: filePath,
-      storage_error: error?.message ?? "unknown",
-    });
-  }
+  const payload = await response.json() as SerpApiPayload;
+  const firstTitle = payload.organic_results?.[0]?.title?.trim()
+    || payload.shopping_results?.[0]?.title?.trim()
+    || null;
 
-  return data;
-}
-
-async function requestExtraction(
-  asset: Awaited<ReturnType<typeof prepareReceiptAsset>>,
-  tabscannerData: Awaited<ReturnType<typeof requestTabscannerExtraction>> = null,
-) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4.1",
-      input: [{ role: "user", content: buildOcrInput(asset, { tabscannerData }) }],
-      max_output_tokens: 1200,
-    }),
-  });
-
-  const payload = await safeParseJsonResponse(response);
-  if (!response.ok) {
-    throw new HttpError(502, "OpenAI OCR request failed", {
-      status: response.status,
-      openai_error: payload?.error?.message ?? payload?.raw ?? null,
-      file_mime_type: asset.mimeType,
-    });
-  }
-
-  return payload;
-}
-
-function detectStoreType(...candidates: unknown[]): "sams_club" | "walmart" | "generic" {
-  const combined = candidates.map((value) => String(value ?? "").toLowerCase()).join(" ");
-  if (combined.includes("sam") || combined.includes("sams club")) return "sams_club";
-  if (combined.includes("walmart")) return "walmart";
-  return "generic";
+  return { firstTitle, ok: Boolean(firstTitle) };
 }
