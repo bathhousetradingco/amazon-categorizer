@@ -2446,7 +2446,14 @@ async function analyzeReceipt(item){
     return { raw, normalized };
   }
 
-  
+  function getSuggestionDisplayName(suggestion){
+    return (
+      suggestion?.enriched_description ||
+      suggestion?.normalized_description ||
+      suggestion?.raw_description ||
+      "Unknown item"
+    );
+  }
 
  async function acceptSuggestion(itemId, index){
 
@@ -2477,28 +2484,25 @@ async function analyzeReceipt(item){
   // =============================
   try {
 
-    // Extract product code if available
-    const codeMatch = suggestion.raw_description?.match(/\b\d{5,15}\b/);
+    const fromProductCode = suggestion?.product_code
+      ? { raw: String(suggestion.product_code), normalized: String(suggestion.product_code).replace(/^0+/, "") || String(suggestion.product_code) }
+      : null;
+    const fromLine = extractProductCode(suggestion.raw_description || "");
+    const code = fromProductCode || fromLine;
 
-    if(codeMatch){
-
-      const rawCode = codeMatch[0];
-      const normalizedCode = rawCode.replace(/^0+/, "") || rawCode;
-
-      const productName =
-        suggestion.normalized_description ||
-        suggestion.raw_description;
+    if(code){
+      const productName = getSuggestionDisplayName(suggestion);
 
       await supabaseClient
         .from("product_match_memory")
         .upsert({
-          product_code: normalizedCode,
+          product_code: code.normalized,
           product_name: productName
         }, {
           onConflict: "product_code"
         });
 
-      console.log("✅ Learned product:", normalizedCode, productName);
+      console.log("✅ Learned product:", code.normalized, productName);
     }
 
   } catch(e){
@@ -2611,7 +2615,7 @@ function renderReceiptSuggestions(item, suggestions){
             const amount = parseFloat(s.amount || 0);
             return `
               <div id="suggestion_${i}" class="splitItemRow" style="border:${isAccepted ? "2px solid #2e7d32" : "1px solid #dce3ef"}; opacity:${isAccepted ? "0.7" : "1"};">
-                <div><strong>${s.normalized_description || s.raw_description}</strong></div>
+                <div><strong>${getSuggestionDisplayName(s)}</strong></div>
                 <div class="splitItemMeta">
                   <span>$${amount.toFixed(2)}</span>
                   <strong>${category || "Needs Review"}</strong>
