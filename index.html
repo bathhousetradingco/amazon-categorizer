@@ -725,10 +725,33 @@ async function hydrateStoredReceiptAnalyses(){
     const cached = byPath.get(item.receipt_url);
     if(!cached?.analysis_data) return;
 
+    const normalized = normalizeStoredReceiptAnalysis(cached.analysis_data, {
+      filePath: item.receipt_url,
+      transactionId: item.id,
+      source: "hydrate"
+    });
+
+    if(!normalized){
+      console.warn("[receipt-analysis] legacy analysis invalid; ignored", {
+        transaction_id: item.id,
+        file_path: item.receipt_url
+      });
+      return;
+    }
+
     item.receipt_analysis = {
-      ...cached.analysis_data,
+      ...normalized,
       user_state: cached.user_state || {}
     };
+
+    if(normalized._legacy_migrated){
+      console.warn("[receipt-analysis] legacy analysis detected and normalized", {
+        transaction_id: item.id,
+        file_path: item.receipt_url,
+        migrated_items: item.receipt_analysis.items.length
+      });
+      persistNormalizedReceiptAnalysis(item.receipt_url, item.receipt_analysis);
+    }
 
     applyStoredReceiptState(item);
 
@@ -740,10 +763,116 @@ async function hydrateStoredReceiptAnalyses(){
   });
 }
 
+function normalizeStoredReceiptAnalysis(rawAnalysis, context = {}){
+  if(!rawAnalysis || typeof rawAnalysis !== "object") return null;
+
+  const rawItems = Array.isArray(rawAnalysis.items)
+    ? rawAnalysis.items
+    : (Array.isArray(rawAnalysis.line_items) ? rawAnalysis.line_items : []);
+
+  if(!rawItems.length){
+    return null;
+  }
+
+  let migrated = !Array.isArray(rawAnalysis.items);
+
+  const normalizedItems = rawItems
+    .map((rawItem, index) => {
+      if(!rawItem || typeof rawItem !== "object"){
+        migrated = true;
+        return null;
+      }
+
+      const amount = Number(rawItem.amount ?? rawItem.line_total ?? rawItem.total ?? 0);
+      const lineTotal = Number(rawItem.line_total ?? rawItem.total ?? rawItem.amount ?? 0);
+
+      const normalized = {
+        raw_description: String(rawItem.raw_description ?? rawItem.original_description ?? rawItem.name ?? "").trim(),
+        normalized_description: String(rawItem.normalized_description ?? rawItem.name ?? rawItem.raw_description ?? "").trim(),
+        enriched_description: String(rawItem.enriched_description ?? rawItem.name ?? rawItem.normalized_description ?? "").trim(),
+        amount: Number.isFinite(amount) ? amount : 0,
+        quantity: Number.isFinite(Number(rawItem.quantity)) ? Number(rawItem.quantity) : 1,
+        unit_price: Number.isFinite(Number(rawItem.unit_price)) ? Number(rawItem.unit_price) : null,
+        line_total: Number.isFinite(lineTotal) ? lineTotal : (Number.isFinite(amount) ? amount : 0),
+        total_mismatch: Boolean(rawItem.total_mismatch),
+        suggested_category: String(rawItem.suggested_category ?? "").trim() || "Needs Review",
+        suggested_categories: Array.isArray(rawItem.suggested_categories) ? rawItem.suggested_categories : [],
+        product_code: rawItem.product_code ?? rawItem.code ?? null,
+        sku: rawItem.sku ?? null,
+        enrichment_source: rawItem.enrichment_source ?? null,
+        brand: rawItem.brand ?? null,
+        product_category: rawItem.product_category ?? null,
+        quality_score: Number.isFinite(Number(rawItem.quality_score)) ? Number(rawItem.quality_score) : 0,
+        needs_review: Boolean(rawItem.needs_review),
+        needs_review_reason: rawItem.needs_review_reason ?? null,
+        quality_flags: Array.isArray(rawItem.quality_flags) ? rawItem.quality_flags : [],
+        original_description: String(rawItem.original_description ?? rawItem.raw_description ?? rawItem.name ?? "").trim(),
+      };
+
+      if(!normalized.raw_description && !normalized.normalized_description && !normalized.enriched_description){
+        migrated = true;
+        normalized.raw_description = `Legacy item ${index + 1}`;
+        normalized.normalized_description = normalized.raw_description;
+        normalized.enriched_description = normalized.raw_description;
+      }
+
+      if(rawItem.amount === undefined || rawItem.suggested_category === undefined){
+        migrated = true;
+      }
+
+      return normalized;
+    })
+    .filter(Boolean);
+
+  if(!normalizedItems.length){
+    console.warn("[receipt-analysis] normalized receipt has no usable items", context);
+    return null;
+  }
+
+  return {
+    items: normalizedItems,
+    tax_amount: Number(rawAnalysis.tax_amount ?? rawAnalysis.tax ?? 0) || 0,
+    receipt_total: Number(rawAnalysis.receipt_total ?? rawAnalysis.total ?? 0) || 0,
+    computed_total: Number(rawAnalysis.computed_total ?? 0) || 0,
+    problematic_line_items: Array.isArray(rawAnalysis.problematic_line_items) ? rawAnalysis.problematic_line_items : [],
+    user_state: (typeof rawAnalysis.user_state === "object" && rawAnalysis.user_state) ? rawAnalysis.user_state : {},
+    _legacy_migrated: migrated
+  };
+}
+
+async function persistNormalizedReceiptAnalysis(filePath, normalizedAnalysis){
+  try {
+    const payload = {
+      ...normalizedAnalysis
+    };
+    delete payload._legacy_migrated;
+
+    const { error } = await supabaseClient
+      .from("receipt_analyses")
+      .update({ analysis_data: payload })
+      .eq("file_path", filePath);
+
+    if(error){
+      console.warn("[receipt-analysis] failed to persist normalized analysis", {
+        file_path: filePath,
+        error
+      });
+      return;
+    }
+
+    console.log("[receipt-analysis] normalized analysis persisted", { file_path: filePath });
+  } catch (error) {
+    console.warn("[receipt-analysis] normalization persist exception", {
+      file_path: filePath,
+      error
+    });
+  }
+}
+
 function applyStoredReceiptState(item){
   if(!item?.receipt_analysis) return;
 
-  const items = item.receipt_analysis.items || [];
+  const items = getReceiptAnalysisItems(item);
   const splits = item.Splits || [];
 
   items.forEach((suggestion, index) => {
@@ -1986,7 +2115,7 @@ async function openSplitModal(){
             ${item.receipt_url ? `<button class="touchButton" onclick="openSplitReceiptViewer()" style="background:#1565c0;color:#fff;flex:1;">View Receipt</button>` : ""}
           </div>
           ${item.receipt_url ? `
-            <button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:8px;">${item.receipt_analysis?.items?.length ? "🔁 Load Saved Analysis" : "🤖 Analyze Receipt"}</button>
+            <button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:8px;">${getReceiptAnalysisItems(item).length ? "🔁 Load Saved Analysis" : "🤖 Analyze Receipt"}</button>
             <button class="touchButton" onclick="analyzeReceipt(data[currentIndex], { forceReanalyze: true })" style="background:#6b7280;color:#fff;width:100%;margin-bottom:10px;">♻️ Re-analyze Receipt</button>
           ` : `<div class="small" style="margin-bottom:8px;">No receipt attached. Use keypad-first split entry for fast mobile input.</div>`}
           <div class="small" style="padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--panel-alt);">Receipt hidden by default. Tap <strong>View Receipt</strong> to open it.</div>
@@ -2447,13 +2576,14 @@ async function analyzeReceipt(item, options = {}){
 
     const forceReanalyze = options?.forceReanalyze === true;
 
-    if(!forceReanalyze && item?.receipt_analysis?.items?.length){
+    const existingItems = getReceiptAnalysisItems(item);
+    if(!forceReanalyze && existingItems.length){
       console.log("[receipt-analysis] skipping edge analyze; using in-memory stored result", {
         transaction_id: item.id,
         file_path: item.receipt_url
       });
       applyStoredReceiptState(item);
-      renderReceiptSuggestions(item, item.receipt_analysis.items);
+      renderReceiptSuggestions(item, getReceiptAnalysisItems(item));
       logReceiptReviewDebug(item, "analysis_cache_hydrate");
       return;
     }
@@ -2481,7 +2611,15 @@ async function analyzeReceipt(item, options = {}){
 
     // ✅ Normalize expected structure
     const resultPayload = result?.data || result;
-    const lineItems = resultPayload.line_items || resultPayload.items || [];
+    const lineItemsRaw = resultPayload.line_items || resultPayload.items || [];
+    const lineItems = Array.isArray(lineItemsRaw) ? lineItemsRaw : [];
+
+    if(!Array.isArray(lineItemsRaw)){
+      console.warn("[receipt-analysis] invalid edge payload items", {
+        transaction_id: item?.id,
+        file_path: item?.receipt_url
+      });
+    }
     const taxAmount = resultPayload.tax_amount ?? resultPayload.tax ?? 0;
 
     // 🚫 Prevent empty results
@@ -2528,7 +2666,7 @@ async function analyzeReceipt(item, options = {}){
     if(btn){
       btn.dataset.loading = "false";
       btn.disabled = false;
-      btn.innerText = item?.receipt_analysis?.items?.length ? "🔁 Load Saved Analysis" : "🤖 Analyze Receipt";
+      btn.innerText = getReceiptAnalysisItems(item).length ? "🔁 Load Saved Analysis" : "🤖 Analyze Receipt";
       btn.style.opacity = "1";
     }
 
@@ -2577,8 +2715,23 @@ function canonicalSuggestionCents(suggestion){
   return preferredCents || toCents(suggestion?.amount);
 }
 
+function getReceiptAnalysisItems(item){
+  if(Array.isArray(item?.receipt_analysis?.items)) return item.receipt_analysis.items;
+  if(Array.isArray(item?.receipt_analysis?.line_items)) return item.receipt_analysis.line_items;
+  return [];
+}
+
+function getReceiptSuggestion(item, index){
+  const suggestions = getReceiptAnalysisItems(item);
+  const safeIndex = Number(index);
+  if(!Number.isInteger(safeIndex) || safeIndex < 0 || safeIndex >= suggestions.length){
+    return null;
+  }
+  return suggestions[safeIndex] || null;
+}
+
 function getReceiptReviewDebugBreakdown(item){
-  const suggestions = item?.receipt_analysis?.items || [];
+  const suggestions = getReceiptAnalysisItems(item);
   const splits = item?.Splits || [];
   const receiptTotalCents = toCents(item?.receipt_analysis?.receipt_total ?? item?.Amount ?? 0);
 
@@ -2649,7 +2802,11 @@ function logReceiptReviewDebug(item, source){
   const item = data.find(d => d.id === itemId);
   if(!item) return;
 
-  const suggestion = item.receipt_analysis.items[index];
+  const suggestion = getReceiptSuggestion(item, index);
+  if(!suggestion){
+    console.warn("[receipt-analysis] missing suggestion on accept", { transaction_id: item?.id, index });
+    return;
+  }
 
   if(!item.Splits) item.Splits = [];
 
@@ -2708,7 +2865,7 @@ function logReceiptReviewDebug(item, source){
   updateTotals();
 
   await persistReceiptInteractions(item);
-  renderReceiptSuggestions(item, item.receipt_analysis.items);
+  renderReceiptSuggestions(item, getReceiptAnalysisItems(item));
   logReceiptReviewDebug(item, "accept_suggestion");
 }
 
@@ -2774,7 +2931,12 @@ function moveToNextSuggestion(){
 
 function renderReceiptSuggestions(item, suggestions){
 
-  receiptSuggestions = suggestions;
+  receiptSuggestions = Array.isArray(suggestions) ? suggestions : [];
+
+  if(!Array.isArray(suggestions)){
+    console.warn("[receipt-analysis] invalid suggestions payload", { transaction_id: item?.id });
+    suggestions = receiptSuggestions;
+  }
 
   const breakdown = getReceiptReviewDebugBreakdown(item);
   const total = breakdown.receipt_total_cents / 100;
@@ -2802,7 +2964,7 @@ function renderReceiptSuggestions(item, suggestions){
             const existing = (item.Splits || []).find(sp => sp.item_index === i);
             const isAccepted = !!existing;
             const category = existing ? existing.Category : s.suggested_category;
-            const amount = parseFloat(s.amount || 0);
+            const amount = canonicalSuggestionCents(s) / 100;
             return `
               <div id="suggestion_${i}" class="splitItemRow" style="border:${isAccepted ? "2px solid #2e7d32" : "1px solid #dce3ef"}; opacity:${isAccepted ? "0.7" : "1"};">
                 <div><strong>${getSuggestionDisplayName(s)}</strong></div>
@@ -3894,7 +4056,12 @@ async function applyAISuggestion(category){
 
     const item = data[currentIndex];
     const index = aiContext.index;
-    const suggestion = item.receipt_analysis.items[index];
+    const suggestion = getReceiptSuggestion(item, index);
+  if(!suggestion){
+    console.warn("[receipt-analysis] missing suggestion for AI apply", { transaction_id: item?.id, index });
+    aiContext = null;
+    return;
+  }
 
     if(!item.Splits) item.Splits = [];
 
@@ -3917,7 +4084,7 @@ async function applyAISuggestion(category){
 
     // ✅ RETURN TO RECEIPT REVIEW
     await persistReceiptInteractions(item);
-    renderReceiptSuggestions(item, item.receipt_analysis.items);
+    renderReceiptSuggestions(item, getReceiptAnalysisItems(item));
 
     updateRemainingUI();
     updateSplitSummaryUI();
@@ -3971,7 +4138,12 @@ async function selectCategory(category){
 
     const item = data[currentIndex];
     const index = aiContext.index;
-    const suggestion = item.receipt_analysis.items[index];
+    const suggestion = getReceiptSuggestion(item, index);
+  if(!suggestion){
+    console.warn("[receipt-analysis] missing suggestion for category select", { transaction_id: item?.id, index });
+    aiContext = null;
+    return;
+  }
 
     if(!item.Splits) item.Splits = [];
 
@@ -3992,7 +4164,7 @@ async function selectCategory(category){
     // ✅ DO NOT close full modal
     // ✅ Just re-render inside it
     await persistReceiptInteractions(item);
-    renderReceiptSuggestions(item, item.receipt_analysis.items);
+    renderReceiptSuggestions(item, getReceiptAnalysisItems(item));
 
     updateRemainingUI();
     updateSplitSummaryUI();

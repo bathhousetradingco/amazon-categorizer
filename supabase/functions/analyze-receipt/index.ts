@@ -261,12 +261,41 @@ async function loadCachedReceiptAnalysis(params: {
 
   if (!data || typeof data.analysis_data !== "object" || !data.analysis_data) return null;
 
+  const normalized = normalizeStoredAnalysis(data.analysis_data as Record<string, unknown>);
+  if (!normalized) {
+    console.warn("RECEIPT_ANALYSIS_LEGACY_INVALID_RESET", {
+      user_id: params.userId,
+      file_path: params.filePath,
+    });
+
+    await clearReceiptAnalysisCache(params.adminClient, params.userId, params.filePath);
+    return null;
+  }
+
+  if (normalized.migrated) {
+    console.warn("RECEIPT_ANALYSIS_LEGACY_MIGRATED", {
+      user_id: params.userId,
+      file_path: params.filePath,
+      item_count: Array.isArray((normalized.analysis as any).line_items)
+        ? (normalized.analysis as any).line_items.length
+        : 0,
+    });
+
+    await persistReceiptAnalysis({
+      adminClient: params.adminClient,
+      userId: params.userId,
+      filePath: params.filePath,
+      analysis: normalized.analysis,
+      clearUserState: false,
+    });
+  }
+
   const userState = (typeof data.user_state === "object" && data.user_state)
     ? data.user_state as Record<string, unknown>
     : {};
 
   return {
-    analysis: data.analysis_data as Record<string, unknown>,
+    analysis: normalized.analysis,
     userState,
     lastAnalyzedAt: typeof data.last_analyzed_at === "string" ? data.last_analyzed_at : null,
   };
@@ -304,6 +333,95 @@ async function persistReceiptAnalysis(params: {
     }
 
     throw new HttpError(500, "Failed to persist receipt analysis", { db_error: error.message });
+  }
+}
+
+
+function normalizeStoredAnalysis(analysis: Record<string, unknown>): { analysis: Record<string, unknown>; migrated: boolean } | null {
+  const lineItemsSource = Array.isArray((analysis as any).line_items)
+    ? (analysis as any).line_items
+    : (Array.isArray((analysis as any).items) ? (analysis as any).items : []);
+
+  if (!lineItemsSource.length) return null;
+
+  let migrated = !Array.isArray((analysis as any).line_items);
+
+  const normalizedLineItems = lineItemsSource
+    .map((raw: any, index: number) => {
+      if (!raw || typeof raw !== "object") {
+        migrated = true;
+        return null;
+      }
+
+      const amount = Number(raw.amount ?? raw.line_total ?? raw.total ?? 0);
+      const lineTotal = Number(raw.line_total ?? raw.total ?? raw.amount ?? amount ?? 0);
+      const normalizedName = String(raw.normalized_description ?? raw.name ?? raw.raw_description ?? "").trim();
+      const rawName = String(raw.raw_description ?? raw.original_description ?? raw.name ?? "").trim();
+      const enrichedName = String(raw.enriched_description ?? raw.name ?? normalizedName ?? rawName ?? "").trim();
+
+      if (!normalizedName && !rawName && !enrichedName) {
+        migrated = true;
+      }
+
+      return {
+        raw_description: rawName || `Legacy item ${index + 1}`,
+        normalized_description: normalizedName || rawName || `Legacy item ${index + 1}`,
+        enriched_description: enrichedName || normalizedName || rawName || `Legacy item ${index + 1}`,
+        amount: Number.isFinite(amount) ? amount : 0,
+        quantity: Number.isFinite(Number(raw.quantity)) ? Number(raw.quantity) : 1,
+        unit_price: Number.isFinite(Number(raw.unit_price)) ? Number(raw.unit_price) : null,
+        line_total: Number.isFinite(lineTotal) ? lineTotal : (Number.isFinite(amount) ? amount : 0),
+        total_mismatch: Boolean(raw.total_mismatch),
+        suggested_category: String(raw.suggested_category ?? "").trim() || "Needs Review",
+        suggested_categories: Array.isArray(raw.suggested_categories) ? raw.suggested_categories : [],
+        product_code: raw.product_code ?? raw.code ?? null,
+        sku: raw.sku ?? null,
+        enrichment_source: raw.enrichment_source ?? null,
+        brand: raw.brand ?? null,
+        product_category: raw.product_category ?? null,
+        quality_score: Number.isFinite(Number(raw.quality_score)) ? Number(raw.quality_score) : 0,
+        needs_review: Boolean(raw.needs_review),
+        needs_review_reason: raw.needs_review_reason ?? null,
+        quality_flags: Array.isArray(raw.quality_flags) ? raw.quality_flags : [],
+        original_description: String(raw.original_description ?? raw.raw_description ?? raw.name ?? "").trim(),
+      };
+    })
+    .filter((item: unknown) => Boolean(item));
+
+  if (!normalizedLineItems.length) return null;
+
+  return {
+    migrated,
+    analysis: {
+      ...(analysis ?? {}),
+      line_items: normalizedLineItems,
+      tax_amount: Number((analysis as any).tax_amount ?? (analysis as any).tax ?? 0) || 0,
+      receipt_total: Number((analysis as any).receipt_total ?? (analysis as any).total ?? 0) || 0,
+      computed_total: Number((analysis as any).computed_total ?? 0) || 0,
+      problematic_line_items: Array.isArray((analysis as any).problematic_line_items)
+        ? (analysis as any).problematic_line_items
+        : [],
+    },
+  };
+}
+
+async function clearReceiptAnalysisCache(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+  filePath: string,
+): Promise<void> {
+  const { error } = await adminClient
+    .from("receipt_analyses")
+    .delete()
+    .eq("user_id", userId)
+    .eq("file_path", filePath);
+
+  if (error && !isReceiptAnalysisCacheUnavailable(error)) {
+    console.warn("RECEIPT_ANALYSIS_LEGACY_RESET_FAILED", {
+      user_id: userId,
+      file_path: filePath,
+      db_error: error.message,
+    });
   }
 }
 
