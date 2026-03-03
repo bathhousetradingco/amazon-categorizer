@@ -13,6 +13,7 @@ import {
   buildOcrInput,
   requestTabscannerExtraction,
   extractJsonFromModelResponse,
+  mergeExtractedReceiptItems,
   normalizeIncomingFilePath,
   parseCurrencyToNumber,
   parseReceiptItems,
@@ -112,7 +113,7 @@ Deno.serve(async (req) => {
     }
 
     const store = detectStoreType(parsed.store, parsed.merchant, tabscannerData?.store, tabscannerData?.merchant);
-    const lineItems = parseReceiptItems(mergeReceiptItems(parsed.items, tabscannerData?.items), { store });
+    const lineItems = parseReceiptItems(mergeExtractedReceiptItems(parsed.items, tabscannerData?.items), { store });
     if (!lineItems.length) {
       throw new HttpError(422, "No valid line items detected", {
         item_count_from_model: Array.isArray(parsed.items) ? parsed.items.length : 0,
@@ -712,33 +713,6 @@ async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>,
 
   return data;
 }
-
-
-function mergeReceiptItems(primaryItems: unknown, tabscannerItems: unknown): unknown[] {
-  const primary = Array.isArray(primaryItems) ? primaryItems : [];
-  const secondary = Array.isArray(tabscannerItems) ? tabscannerItems : [];
-  if (!secondary.length) return primary;
-
-  const secondaryByCode = new Map<string, any>();
-  for (const item of secondary as any[]) {
-    const code = String(item?.code ?? "").replace(/^0+/, "").trim();
-    if (code) secondaryByCode.set(code, item);
-  }
-
-  return primary.map((item: any) => {
-    const code = String(item?.code ?? "").replace(/^0+/, "").trim();
-    const match = code ? secondaryByCode.get(code) : null;
-    if (!match) return item;
-
-    return {
-      ...item,
-      amount: firstFiniteNumber(match.amount, item?.amount),
-      code: item?.code ?? match.code ?? null,
-      name: String(item?.name ?? "").trim() || match.name,
-    };
-  });
-}
-
 function firstFiniteNumber(...values: unknown[]): unknown {
   for (const value of values) {
     if (Number.isFinite(parseCurrencyToNumber(value))) return value;

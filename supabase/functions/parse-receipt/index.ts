@@ -13,6 +13,7 @@ import {
   requestTabscannerExtraction,
   extractJsonFromModelResponse,
   normalizeIncomingFilePath,
+  mergeExtractedReceiptItems,
   parseReceiptItems,
   parseCurrencyToNumber,
   parseTax,
@@ -58,7 +59,7 @@ Deno.serve(async (req) => {
       console.log("SERPAPI_KEY missing");
     }
     const items = parseReceiptItems(
-      mergeReceiptItems(parsed.items, tabscannerData?.items),
+      mergeExtractedReceiptItems(parsed.items, tabscannerData?.items),
       { store },
     );
     const enrichedItems = await enrichLineItems({
@@ -171,41 +172,6 @@ async function requestExtraction(
   }
 
   return payload;
-}
-
-
-
-function mergeReceiptItems(primaryItems: unknown, tabscannerItems: unknown): unknown[] {
-  const primary = Array.isArray(primaryItems) ? primaryItems : [];
-  const secondary = Array.isArray(tabscannerItems) ? tabscannerItems : [];
-  if (!secondary.length) return primary;
-
-  const byCode = new Map<string, any>();
-  for (const item of secondary as any[]) {
-    const code = String(item?.code ?? "").replace(/^0+/, "").trim();
-    if (code) byCode.set(code, item);
-  }
-
-  return primary.map((item: any) => {
-    const code = String(item?.code ?? "").replace(/^0+/, "").trim();
-    const match = code ? byCode.get(code) : null;
-    if (!match) return item;
-
-    const mergedAmount = firstFiniteNumber(match.amount, item?.amount);
-    return {
-      ...item,
-      amount: Number.isFinite(parseCurrencyToNumber(mergedAmount)) ? mergedAmount : item?.amount,
-      code: item?.code ?? match.code ?? null,
-      name: String(item?.name ?? "").trim() || match.name,
-    };
-  });
-}
-
-function firstFiniteNumber(...values: unknown[]): unknown {
-  for (const value of values) {
-    if (Number.isFinite(parseCurrencyToNumber(value))) return value;
-  }
-  return values[0] ?? null;
 }
 
 function detectStoreType(...candidates: unknown[]): "sams_club" | "walmart" | "generic" {

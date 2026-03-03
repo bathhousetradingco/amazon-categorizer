@@ -139,7 +139,7 @@ export function buildOcrInput(
   const prompt = {
     type: "input_text",
     text:
-      "Extract purchasable line items from this receipt. Return JSON only with shape {\"items\":[{\"name\":string,\"amount\":number|string,\"code\":string|null}],\"tax\":number|string,\"total\":number|string,\"store\":string|null}. Keep quantity and unit price hints in item names (e.g. '36 @ 8.98', '36CT'). Do not include subtotal/total/payment lines as items.",
+      "Extract purchasable line items from this receipt. Return JSON only with shape {\"items\":[{\"name\":string,\"amount\":number|string,\"code\":string|null}],\"tax\":number|string,\"total\":number|string,\"store\":string|null}. Keep quantity and unit price hints in item names (e.g. '36 @ 8.98', '36CT'). Capture product numbers/SKU/item codes into code whenever present, especially 8-14 digit identifiers commonly printed on warehouse receipts. Do not include subtotal/total/payment lines as items.",
   };
 
   const tabscannerContext = options.tabscannerData
@@ -170,6 +170,78 @@ export function buildOcrInput(
       image_url: `data:${asset.mimeType};base64,${asset.base64}`,
     },
   ];
+}
+
+export function mergeExtractedReceiptItems(primaryItems: unknown, tabscannerItems: unknown): unknown[] {
+  const primary = Array.isArray(primaryItems) ? primaryItems : [];
+  const secondary = Array.isArray(tabscannerItems) ? tabscannerItems : [];
+  if (!secondary.length) return primary;
+  if (!primary.length) return secondary;
+
+  const byCode = new Map<string, any>();
+  const byNameAmount = new Map<string, any[]>();
+  (secondary as any[]).forEach((item, index) => {
+    const code = normalizeLookupCode(item?.code);
+    const amount = parseCurrencyToNumber(item?.amount);
+    const key = buildMergeKey(item?.name, amount);
+    if (code) byCode.set(code, item);
+    if (key) byNameAmount.set(key, [...(byNameAmount.get(key) ?? []), item]);
+  });
+
+  const merged = primary.map((item: any, index) => {
+    const code = normalizeLookupCode(item?.code);
+    const primaryAmount = parseCurrencyToNumber(item?.amount);
+    const key = buildMergeKey(item?.name, primaryAmount);
+
+    const byCodeMatch = code ? byCode.get(code) : null;
+    const byNameMatch = !byCodeMatch && key ? (byNameAmount.get(key)?.[0] ?? null) : null;
+    const byIndexMatch = !byCodeMatch && !byNameMatch ? (secondary[index] ?? null) : null;
+    const match = byCodeMatch ?? byNameMatch ?? byIndexMatch;
+    if (!match) return item;
+
+    const mergedAmount = firstFiniteNumber(match.amount, item?.amount);
+    return {
+      ...item,
+      amount: Number.isFinite(parseCurrencyToNumber(mergedAmount)) ? mergedAmount : item?.amount,
+      code: item?.code ?? match.code ?? null,
+      name: String(item?.name ?? "").trim() || match.name,
+    };
+  });
+
+  for (const secondaryItem of secondary as any[]) {
+    const used = merged.some((entry: any) => {
+      const mergedCode = normalizeLookupCode(entry?.code);
+      const secondaryCode = normalizeLookupCode(secondaryItem?.code);
+      if (mergedCode && secondaryCode && mergedCode === secondaryCode) return true;
+
+      const mergedKey = buildMergeKey(entry?.name, parseCurrencyToNumber(entry?.amount));
+      const secondaryKey = buildMergeKey(secondaryItem?.name, parseCurrencyToNumber(secondaryItem?.amount));
+      return Boolean(mergedKey && secondaryKey && mergedKey === secondaryKey);
+    });
+
+    if (!used) merged.push(secondaryItem);
+  }
+
+  return merged;
+}
+
+function normalizeLookupCode(raw: unknown): string | null {
+  const value = String(raw ?? "").replace(/[^A-Za-z0-9]/g, "").replace(/^0+/, "").trim();
+  return value || null;
+}
+
+function buildMergeKey(rawName: unknown, amount: number): string | null {
+  const normalizedName = String(rawName ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalizedName) return null;
+  if (!Number.isFinite(amount)) return normalizedName;
+  return `${normalizedName}|${amount.toFixed(2)}`;
+}
+
+function firstFiniteNumber(...values: unknown[]): unknown {
+  for (const value of values) {
+    if (Number.isFinite(parseCurrencyToNumber(value))) return value;
+  }
+  return values[0] ?? null;
 }
 
 export async function requestTabscannerExtraction(params: {
