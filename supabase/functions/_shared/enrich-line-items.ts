@@ -9,8 +9,8 @@ export type EnrichedReceiptItem = ParsedReceiptItem & {
   name_final: string;
   item_number_raw: string | null;
   normalized_item_number: string | null;
-  enrichmentSource: "serpapi" | "cache" | "ai_cleanup" | "normalized";
-  enrichment_source: "serpapi" | "cache" | "ai_cleanup" | "normalized";
+  enrichmentSource: "samsclub_site" | "serpapi" | "cache" | "ai_cleanup" | "normalized" | "none";
+  enrichment_source: "samsclub_site" | "serpapi" | "cache" | "ai_cleanup" | "normalized" | "none";
   brand: string | null;
   category: string | null;
   qualityScore: number;
@@ -42,7 +42,7 @@ type SerpMatch = {
 type SerpEnrichmentResult = {
   enriched_name: string;
   confidence: "high" | "medium" | "low";
-  source: "serpapi";
+  source: "samsclub_site" | "serpapi";
   sourceUrl: string | null;
 };
 
@@ -59,8 +59,9 @@ export async function enrichLineItems(params: {
   items: ParsedReceiptItem[];
   openAiApiKey: string;
   serpApiKey?: string;
+  store?: "sams_club" | "walmart" | "generic";
 }): Promise<EnrichedReceiptItem[]> {
-  const { adminClient, items, openAiApiKey, serpApiKey } = params;
+  const { adminClient, items, openAiApiKey, serpApiKey, store } = params;
   const result: EnrichedReceiptItem[] = items.map((item) => {
     const displayName = extractNameWithoutProductNumber(item.rawName) ?? item.name;
     const reasons = collectReviewReasons(item, displayName);
@@ -74,8 +75,8 @@ export async function enrichLineItems(params: {
       name: displayName,
       item_number_raw: null,
       normalized_item_number: null,
-      enrichmentSource: "normalized",
-      enrichment_source: "normalized",
+      enrichmentSource: "none",
+      enrichment_source: "none",
       brand: null,
       category: null,
       needsReview: reasons.length > 0,
@@ -94,6 +95,7 @@ export async function enrichLineItems(params: {
       step: "PRODUCT_NUMBER_EXTRACTED",
       raw: extracted.raw,
       normalized: extracted.normalized,
+      ocr_name: item.rawName,
     });
 
     const sku = extracted.normalized ?? selectLookupIdentifier(item);
@@ -119,31 +121,36 @@ export async function enrichLineItems(params: {
 
     for (const [sku, row] of cached.entries()) {
       for (const index of skuMap.get(sku) ?? []) {
-        applyLookup(result[index], row.clean_name, "cache", row.brand, row.category);
+        applyLookup(result[index], row.clean_name, "cache", row.brand, row.category, "lookup:cache");
       }
     }
 
     const unresolvedIndices = result
       .map((item, index) => ({ item, index }))
-      .filter(({ item, index }) => shouldLookupViaSerp(item, skuByIndex.get(index) ?? null))
+      .filter(({ item, index }) => shouldLookupViaSerp(item, skuByIndex.get(index) ?? null, store))
       .map(({ index }) => index);
 
     const missingSkus = Array.from(new Set(unresolvedIndices
-      .map((index) => normalizeIdentifier(skuByIndex.get(index) ?? result[index].sku))
+      .map((index) => normalizeIdentifier(skuByIndex.get(index) ?? result[index].normalized_item_number ?? result[index].sku))
       .filter((sku): sku is string => Boolean(sku))
       .filter((sku) => !cached.has(sku))));
 
-    if (missingSkus.length && serpApiKey) {
-      const lookedUp = await lookupSkusViaSerpApi(
-        missingSkus.slice(0, SERP_MAX_SKUS_PER_BATCH),
-        serpApiKey,
-        skuHints,
-      );
+    if (missingSkus.length) {
+      if (!serpApiKey) {
+        console.log("SERPAPI_KEY missing");
+      } else {
+        const lookedUp = await lookupSkusViaSerpApi(
+          missingSkus.slice(0, SERP_MAX_SKUS_PER_BATCH),
+          serpApiKey,
+          skuHints,
+        );
 
-      for (const row of lookedUp) {
-        await upsertCacheRow(adminClient, row);
-        for (const index of skuMap.get(row.sku) ?? []) {
-          applyLookup(result[index], row.clean_name, "serpapi", row.brand, row.category);
+        for (const row of lookedUp) {
+          await upsertCacheRow(adminClient, row);
+          for (const index of skuMap.get(row.sku) ?? []) {
+            const source = row.source === "samsclub_site" ? "samsclub_site" : "serpapi";
+            applyLookup(result[index], row.clean_name, source, row.brand, row.category, `lookup:${source}`);
+          }
         }
       }
     }
@@ -151,7 +158,7 @@ export async function enrichLineItems(params: {
 
   const unresolved = result
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => item.enrichmentSource === "normalized" || item.needsReview);
+    .filter(({ item }) => item.enrichmentSource === "none" || item.enrichmentSource === "normalized" || item.needsReview);
 
   if (unresolved.length) {
     const cleaned = await aiCleanupNames(
@@ -162,7 +169,7 @@ export async function enrichLineItems(params: {
     cleaned.forEach((name, idx) => {
       const target = unresolved[idx];
       if (!target || !name) return;
-      applyLookup(result[target.index], name, "ai_cleanup", null, null);
+      applyLookup(result[target.index], name, "ai_cleanup", null, null, "lookup:ai_cleanup");
     });
   }
 
@@ -185,6 +192,7 @@ export async function enrichProductName(params: {
     items: [params.item],
     openAiApiKey: params.openAiApiKey,
     serpApiKey: params.serpApiKey,
+    store: "generic",
   });
 
   return single;
@@ -196,9 +204,14 @@ function applyLookup(
   source: EnrichedReceiptItem["enrichmentSource"],
   brand: string | null,
   category: string | null,
+  reason = "enriched",
 ) {
   const nextName = cleanName.trim();
-  if (!nextName) return;
+  const before = item.name_final || item.enrichedName || item.name;
+  if (!nextName) {
+    console.log({ step: "NAME_APPLY", before, after: before, applied: false, reason: "empty_candidate" });
+    return;
+  }
 
   item.name = nextName;
   item.enrichedName = nextName;
@@ -208,13 +221,19 @@ function applyLookup(
   item.enrichment_source = source;
   item.brand = brand;
   item.category = category;
-  item.qualityScore = Math.max(item.qualityScore, source === "normalized" ? 0.65 : 0.88);
+  item.qualityScore = Math.max(item.qualityScore, source === "normalized" || source === "none" ? 0.65 : 0.88);
+  console.log({ step: "NAME_APPLY", before, after: nextName, applied: true, reason });
 }
 
-function shouldLookupViaSerp(item: EnrichedReceiptItem, productNumber: string | null): boolean {
+function shouldLookupViaSerp(
+  item: EnrichedReceiptItem,
+  productNumber: string | null,
+  store?: "sams_club" | "walmart" | "generic",
+): boolean {
   if (!productNumber) return false;
+  if (store === "sams_club") return true;
   const hasNumericIdentifier = /\d{5,}/.test(productNumber);
-  if (item.enrichmentSource !== "normalized") return false;
+  if (item.enrichmentSource !== "none" && item.enrichmentSource !== "normalized") return false;
   return hasNumericIdentifier || item.qualityScore < 0.75 || isLowConfidenceName(item.enrichedName);
 }
 
@@ -236,7 +255,7 @@ function collectReviewReasons(item: ParsedReceiptItem | EnrichedReceiptItem, can
   if (item.qualityScore < 0.6 || isLowConfidenceName(candidateName)) reasons.push("low confidence OCR");
   if (item.totalMismatch) reasons.push("price mismatch");
 
-  if ((item as EnrichedReceiptItem).enrichmentSource === "normalized" && isLowConfidenceName(candidateName)) {
+  if (["normalized", "none"].includes((item as EnrichedReceiptItem).enrichmentSource) && isLowConfidenceName(candidateName)) {
     reasons.push("no product match found");
   }
 
@@ -295,16 +314,14 @@ async function lookupSkusViaSerpApi(
     );
 
     if (!match || match.confidence === "low") {
-      console.log("receipt_enrichment_failed", { sku, reason: "no_product_match" });
+      console.log({ step: "NAME_APPLY", before: hint?.rawName ?? sku, after: hint?.rawName ?? sku, applied: false, reason: "no_product_match" });
       continue;
     }
-
-    console.log("receipt_enrichment_success", { sku, title: match.enriched_name, confidence: match.confidence });
 
     rows.push({
       sku,
       clean_name: match.enriched_name,
-      source: "serpapi",
+      source: match.source,
       brand: inferBrand(match.enriched_name),
       category: null,
       source_url: match.sourceUrl,
@@ -314,7 +331,7 @@ async function lookupSkusViaSerpApi(
   return rows;
 }
 
-async function searchGoogleResults(query: string, serpApiKey: string): Promise<SerpMatch[]> {
+async function searchGoogleResults(query: string, serpApiKey: string, strategy: "samsclub_site" | "serpapi"): Promise<SerpMatch[]> {
   const url = new URL("https://serpapi.com/search");
   url.searchParams.set("engine", "google");
   url.searchParams.set("location", "United States");
@@ -322,18 +339,28 @@ async function searchGoogleResults(query: string, serpApiKey: string): Promise<S
   url.searchParams.set("api_key", serpApiKey);
   url.searchParams.set("num", "5");
 
-  const payload = await fetchWithRetry(url, { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS });
-  if (!payload) return [];
+  console.log({ step: "SERPAPI_QUERY", strategy, query, url: url.toString() });
 
+  const { payload, status } = await fetchWithRetry(url, { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS });
   const organic = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
 
-  return organic
+  const mapped = organic
     .map((entry: any) => ({
       title: String(entry?.title ?? "").trim(),
       snippet: entry?.snippet ? String(entry.snippet).trim() : null,
       link: entry?.link ? String(entry.link) : null,
     }))
     .filter((entry: SerpMatch) => entry.title.length >= 4);
+
+  console.log({
+    step: "SERPAPI_RESPONSE",
+    status,
+    hasResults: mapped.length > 0,
+    firstTitle: mapped[0]?.title ?? null,
+    firstLink: mapped[0]?.link ?? null,
+  });
+
+  return mapped;
 }
 
 async function enrichWithSerpAPI(
@@ -349,25 +376,21 @@ async function enrichWithSerpAPI(
   if (cache.has(normalizedNumber)) return cache.get(normalizedNumber) ?? null;
 
   const queries = [
-    { query: `site:samsclub.com ${normalizedNumber}`, strategy: "samsclub" as const },
+    { query: `site:samsclub.com ${normalizedNumber}`, strategy: "samsclub_site" as const },
     { query: `${normalizedNumber} Sam's Club product`, strategy: "serpapi" as const },
-    { query: `${normalizedNumber} ${storeHint} product`, strategy: "serpapi" as const },
   ];
 
   let top: SerpMatch | null = null;
+  let source: "samsclub_site" | "serpapi" = "serpapi";
   for (const candidate of queries) {
-    console.log({ step: "SEARCH_QUERY", query: candidate.query, strategy: candidate.strategy });
-    const matches = await searchGoogleResults(candidate.query, serpApiKey);
+    const matches = await searchGoogleResults(candidate.query, serpApiKey, candidate.strategy);
     const current = matches[0] ?? null;
-    if (!current) {
-      console.log({ step: "SEARCH_RESULT", title: null, accepted: false });
-      continue;
-    }
+    if (!current) continue;
 
-    const accepted = isAcceptedSearchResult(current, ocrName);
-    console.log({ step: "SEARCH_RESULT", title: current.title, accepted });
+    const accepted = isAcceptedSearchResult(current, ocrName, normalizedNumber);
     if (accepted) {
       top = current;
+      source = candidate.strategy;
       break;
     }
   }
@@ -381,7 +404,7 @@ async function enrichWithSerpAPI(
   const enrichment: SerpEnrichmentResult = {
     enriched_name: top.title || top.snippet || normalizedNumber,
     confidence,
-    source: "serpapi",
+    source,
     sourceUrl: top.link,
   };
 
@@ -389,8 +412,9 @@ async function enrichWithSerpAPI(
   return enrichment;
 }
 
-async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number }): Promise<any | null> {
+async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number }): Promise<{ payload: any | null; status: number | null }> {
   let lastError: unknown = null;
+  let lastStatus: number | null = null;
 
   for (let attempt = 1; attempt <= options.attempts; attempt++) {
     const controller = new AbortController();
@@ -398,11 +422,12 @@ async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: 
 
     try {
       const response = await fetch(url, { signal: controller.signal });
+      lastStatus = response.status;
       if (!response.ok) {
         lastError = new Error(`http_${response.status}`);
         continue;
       }
-      return await response.json();
+      return { payload: await response.json(), status: response.status };
     } catch (error) {
       lastError = error;
     } finally {
@@ -411,7 +436,7 @@ async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: 
   }
 
   console.log("receipt_enrichment_request_failed", { url: url.toString(), error: String(lastError ?? "unknown") });
-  return null;
+  return { payload: null, status: lastStatus };
 }
 
 function scoreEnrichmentConfidence(
@@ -506,24 +531,26 @@ function extractNameWithoutProductNumber(rawLine: string): string | null {
 }
 
 function extractProductNumberFromLine(rawLine: string): ProductNumberExtraction {
-  const match = rawLine.match(/^\s*(\d{8,14})\b/);
+  const match = rawLine.match(/^\s*(\d{8,14})\s+/);
   const raw = match?.[1] ?? null;
   const normalized = raw ? normalizeIdentifier(raw) : null;
   return { raw, normalized };
 }
 
-function isAcceptedSearchResult(match: SerpMatch, ocrName: string): boolean {
+function isAcceptedSearchResult(match: SerpMatch, ocrName: string, normalizedNumber: string): boolean {
   const fullText = `${match.title} ${match.snippet ?? ""}`.toLowerCase();
   const domain = (match.link ?? "").toLowerCase();
   if (domain.includes("samsclub.com")) return true;
 
+  const hasNumber = fullText.includes(normalizedNumber);
+  const navNoise = /login|sign in|account|cart|help|membership|hours|locations/.test(fullText);
   const keywordHit = /coffee|yogurt|oil|milk|chicken|beef|bread|water|detergent|paper|snack/i.test(fullText);
-  if (keywordHit) return true;
+  if (hasNumber && keywordHit && !navNoise) return true;
 
   const ocrTokens = tokenizeMeaningful(ocrName);
   const resultTokens = tokenizeMeaningful(`${match.title} ${match.snippet ?? ""}`);
   const overlap = ocrTokens.filter((token) => resultTokens.includes(token)).length;
-  return overlap >= 2;
+  return hasNumber && overlap >= 1;
 }
 
 function tokenizeMeaningful(text: string): string[] {
