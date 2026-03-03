@@ -151,7 +151,7 @@ export async function enrichLineItems(params: {
     const missingSkus = Array.from(new Set(unresolvedIndices
       .map((index) => normalizeIdentifier(skuByIndex.get(index) ?? result[index].normalized_item_number ?? result[index].sku))
       .filter((sku): sku is string => Boolean(sku))
-      )));
+      ));
 
     if (missingSkus.length) {
       if (!serpApiKey) {
