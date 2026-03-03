@@ -50,6 +50,7 @@ type SerpEnrichmentResult = {
 type ProductNumberExtraction = {
   raw: string | null;
   normalized: string | null;
+  compact: string | null;
 };
 
 const SEARCH_TIMEOUT_MS = 4500;
@@ -435,6 +436,7 @@ async function enrichWithSerpAPI(
   budget: EnrichmentBudget,
 ): Promise<SerpEnrichmentResult | null> {
   const normalizedNumber = normalizeIdentifier(productNumber);
+  const compactNumber = compactIdentifier(productNumber);
   if (!normalizedNumber) {
     console.log("SERPAPI_SKIPPED", { reason: "invalid_product_number" });
     return null;
@@ -442,38 +444,46 @@ async function enrichWithSerpAPI(
 
   if (cache.has(normalizedNumber)) return cache.get(normalizedNumber) ?? null;
 
+  const productTokens = tokenizeMeaningful(ocrName).slice(0, 4).join(" ");
+  const numberQueryToken = compactNumber && compactNumber !== normalizedNumber
+    ? `"${compactNumber}" OR "${normalizedNumber}"`
+    : `"${normalizedNumber}"`;
   const queries = [
-    { query: `site:samsclub.com ${normalizedNumber}`, strategy: "samsclub_site" as const },
-    { query: `${normalizedNumber} Sam's Club product`, strategy: "serpapi" as const },
+    { query: `site:samsclub.com ${numberQueryToken} ${productTokens}`.trim(), strategy: "samsclub_site" as const },
+    { query: `${numberQueryToken} Sam's Club ${productTokens}`.trim(), strategy: "serpapi" as const },
+    { query: `${numberQueryToken} ${productTokens}`.trim(), strategy: "serpapi" as const },
   ];
 
   let top: SerpMatch | null = null;
   let source: "samsclub_site" | "serpapi" = "serpapi";
+  let bestScore = 0;
   for (const candidate of queries) {
     const matches = await searchGoogleResults(candidate.query, serpApiKey, candidate.strategy, budget);
-    const current = matches[0] ?? null;
-    if (!current) {
+    if (!matches.length) {
       console.log({ step: "VALIDATION", strategy: candidate.strategy, accepted: false, reason: "no_results" });
       continue;
     }
 
-    const validation = validateSearchResult(current, ocrName, normalizedNumber);
-    console.log({ step: "VALIDATION", strategy: candidate.strategy, accepted: validation.accepted, reason: validation.reason });
-    if (validation.accepted) {
-      top = current;
-      source = candidate.strategy;
-      break;
+    for (const current of matches) {
+      const validation = validateSearchResult(current, ocrName, normalizedNumber, compactNumber);
+      console.log({ step: "VALIDATION", strategy: candidate.strategy, accepted: validation.accepted, reason: validation.reason, score: validation.score, title: current.title });
+      if (!validation.accepted) continue;
+      if (validation.score > bestScore) {
+        bestScore = validation.score;
+        top = current;
+        source = candidate.strategy;
+      }
     }
   }
 
-  if (!top) {
+  if (!top || bestScore < 4.2) {
     cache.set(normalizedNumber, null);
     return null;
   }
 
   const confidence = scoreEnrichmentConfidence(top, normalizedNumber, storeHint, ocrName);
   const enrichment: SerpEnrichmentResult = {
-    enriched_name: top.title || top.snippet || normalizedNumber,
+    enriched_name: cleanProductTitle(top.title || top.snippet || normalizedNumber),
     confidence,
     source,
     sourceUrl: top.link,
@@ -541,22 +551,31 @@ function inferBrand(name: string): string | null {
 
 function selectLookupIdentifier(item: ParsedReceiptItem): ProductNumberExtraction {
   const runtimeProductCode = (item as Record<string, unknown>).product_code;
-  const raw = [item.sku, item.code, runtimeProductCode]
+  const directCandidates = [item.sku, item.code, runtimeProductCode]
     .map((value) => String(value ?? "").trim())
-    .find((value) => value.length > 0) ?? null;
+    .filter((value) => value.length > 0)
+    .map((value) => ({ raw: value, compact: compactIdentifier(value), normalized: normalizeIdentifier(value) }))
+    .filter((entry) => isLikelyProductCode(entry.compact));
+
+  const raw = directCandidates[0]?.raw ?? null;
 
   if (raw) {
     return {
       raw,
       normalized: normalizeIdentifier(raw),
+      compact: compactIdentifier(raw),
     };
   }
 
-  const fallback = String(item.rawName ?? "").match(/\b[0-9A-Za-z]{5,18}\b/g) ?? [];
-  const seededRaw = fallback.sort((a, b) => b.length - a.length)[0] ?? null;
+  const fallback = String(item.rawName ?? "").match(/[0-9A-Za-z-]{5,20}/g) ?? [];
+  const seededRaw = fallback
+    .map((value) => ({ raw: value, compact: compactIdentifier(value) }))
+    .filter((entry) => isLikelyProductCode(entry.compact))
+    .sort((a, b) => b.compact.length - a.compact.length)[0]?.raw ?? null;
   return {
     raw: seededRaw,
     normalized: normalizeIdentifier(seededRaw),
+    compact: compactIdentifier(seededRaw),
   };
 }
 
@@ -635,38 +654,58 @@ async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>
 }
 
 function extractNameWithoutProductNumber(rawLine: string): string | null {
-  const withoutProductNumber = rawLine.replace(/^\s*\d{8,14}\s+/, "").trim();
+  const withoutProductNumber = rawLine.replace(/^\s*(?:#|item\s*#?\s*)?[0-9A-Za-z-]{6,20}\s+/, "").trim();
   return withoutProductNumber || null;
 }
 
 function extractProductNumberFromLine(rawLine: string): ProductNumberExtraction {
-  const match = rawLine.match(/^\s*(\d{8,14})\s+/);
+  const match = rawLine.match(/^\s*(?:#|item\s*#?\s*)?([0-9A-Za-z-]{6,20})\b/i);
   const raw = match?.[1] ?? null;
   const normalized = raw ? normalizeIdentifier(raw) : null;
-  return { raw, normalized };
+  const compact = raw ? compactIdentifier(raw) : null;
+  if (!isLikelyProductCode(compact)) return { raw: null, normalized: null, compact: null };
+  return { raw, normalized, compact };
 }
 
 function validateSearchResult(
   match: SerpMatch,
   ocrName: string,
   normalizedNumber: string,
-): { accepted: boolean; reason: string } {
+  compactNumber: string | null,
+): { accepted: boolean; reason: string; score: number } {
   const fullText = `${match.title} ${match.snippet ?? ""}`.toLowerCase();
+  const compactText = compactIdentifier(fullText);
   const domain = (match.link ?? "").toLowerCase();
-  if (domain.includes("samsclub.com")) return { accepted: true, reason: "samsclub_domain" };
+  const isSamsDomain = domain.includes("samsclub.com");
+  const productLikePath = /\/p\/|\/ip\//.test(domain);
 
-  const hasNumber = fullText.includes(normalizedNumber);
   const navNoise = /login|sign in|account|cart|help|membership|hours|locations/.test(fullText);
-  const keywordHit = /coffee|yogurt|oil|milk|chicken|beef|bread|water|detergent|paper|snack/i.test(fullText);
-  if (hasNumber && keywordHit && !navNoise) return { accepted: true, reason: "number_keyword_match" };
+  const genericPage = /how to|review|top\s\d+|best\s|news|blog|article|category|homepage|home page|deals|coupons/.test(fullText);
+  if (navNoise || genericPage) return { accepted: false, reason: navNoise ? "navigation_noise" : "generic_content", score: 0 };
+
+  const hasNormalizedNumber = compactText?.includes(normalizedNumber.toLowerCase()) ?? false;
+  const hasCompactNumber = compactNumber ? (compactText?.includes(compactNumber.toLowerCase()) ?? false) : false;
+  const hasNumber = hasNormalizedNumber || hasCompactNumber;
+  const keywordHit = /coffee|yogurt|oil|milk|chicken|beef|bread|water|detergent|paper|snack|organic|oz|pack|count|bottle|member'?s mark/i.test(fullText);
 
   const ocrTokens = tokenizeMeaningful(ocrName);
   const resultTokens = tokenizeMeaningful(`${match.title} ${match.snippet ?? ""}`);
   const overlap = ocrTokens.filter((token) => resultTokens.includes(token)).length;
-  if (hasNumber && overlap >= 1) return { accepted: true, reason: "number_token_overlap" };
-  if (!hasNumber) return { accepted: false, reason: "missing_product_number" };
-  if (navNoise) return { accepted: false, reason: "navigation_noise" };
-  return { accepted: false, reason: "insufficient_signal" };
+
+  let score = 0;
+  if (isSamsDomain) score += 2.8;
+  if (productLikePath) score += 1.7;
+  if (hasNormalizedNumber) score += 2.5;
+  else if (hasCompactNumber) score += 2;
+  if (overlap >= 2) score += 1.8;
+  else if (overlap >= 1) score += 0.9;
+  if (keywordHit) score += 0.8;
+  if (/\d+\s?(oz|lb|ct|pack|pk)\b/i.test(fullText)) score += 0.7;
+  if (/item\s?#?\s*\d+/.test(fullText)) score += 0.6;
+
+  if (!hasNumber) return { accepted: false, reason: "missing_product_number", score };
+  if (score >= 4.2) return { accepted: true, reason: isSamsDomain ? "high_confidence_samsclub_match" : "scored_match", score };
+  return { accepted: false, reason: "insufficient_signal", score };
 }
 
 
@@ -687,4 +726,32 @@ function hasSemanticTokenOverlap(source: string, candidate: string): boolean {
   const candidateTokens = tokenizeMeaningful(candidate);
   const overlap = sourceTokens.filter((token) => candidateTokens.includes(token)).length;
   return overlap >= 2;
+}
+
+
+function compactIdentifier(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const compact = String(input).replace(/[^A-Za-z0-9]/g, "").trim();
+  return compact || null;
+}
+
+function isLikelyProductCode(compact: string | null): boolean {
+  if (!compact) return false;
+  if (compact.length < 5 || compact.length > 18) return false;
+  const hasDigit = /\d/.test(compact);
+  const hasAlpha = /[a-z]/i.test(compact);
+  if (!hasDigit) return false;
+  if (hasAlpha && compact.length < 7) return false;
+  return true;
+}
+
+function cleanProductTitle(title: string): string {
+  const trimmed = title.replace(/\s+/g, " ").trim();
+  if (!trimmed) return trimmed;
+  const stripped = trimmed
+    .replace(/\s+[|\-–]\s+(sam'?s club|walmart|costco|target|amazon).*$/i, "")
+    .replace(/\s*:\s*buy\s+online.*$/i, "")
+    .replace(/\s*\|\s*official\s+site.*$/i, "")
+    .trim();
+  return stripped || trimmed;
 }
