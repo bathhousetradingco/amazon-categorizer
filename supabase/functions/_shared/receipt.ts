@@ -1,8 +1,9 @@
 import { HttpError } from "./http.ts";
 import {
-  extractSkuCandidate,
+  extractSKU,
   isNonPurchasableLine,
-  normalizeLineItemName,
+  normalizeLineItem,
+  parseQuantityAndPrice,
   scoreLineItemQuality,
 } from "./line-items.ts";
 
@@ -17,8 +18,16 @@ export type ParsedReceiptItem = {
   amount: number;
   code: string | null;
   sku: string | null;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  totalMismatch: boolean;
   qualityScore: number;
   qualityFlags: string[];
+};
+
+export type ParseReceiptItemOptions = {
+  store?: "sams_club" | "walmart" | "generic";
 };
 
 export type ReceiptAsset = {
@@ -27,6 +36,12 @@ export type ReceiptAsset = {
   mimeType: string;
   extension: string;
   base64: string;
+};
+
+const storeParsers = {
+  sams_club: parseSamsClubReceipt,
+  walmart: parseWalmartReceipt,
+  generic: parseGenericReceipt,
 };
 
 export function normalizeIncomingFilePath(inputPath: unknown): string {
@@ -110,7 +125,7 @@ export function buildOcrInput(asset: ReceiptAsset): Array<Record<string, unknown
   const prompt = {
     type: "input_text",
     text:
-      "Extract purchasable line items from this receipt. Return JSON only with shape {\"items\":[{\"name\":string,\"amount\":number|string,\"code\":string|null}],\"tax\":number|string}. Do not include subtotal/total/payment lines as items.",
+      "Extract purchasable line items from this receipt. Return JSON only with shape {\"items\":[{\"name\":string,\"amount\":number|string,\"code\":string|null}],\"tax\":number|string,\"total\":number|string,\"store\":string|null}. Keep quantity and unit price hints in item names (e.g. '36 @ 8.98', '36CT'). Do not include subtotal/total/payment lines as items.",
   };
 
   if (asset.mimeType === "application/pdf") {
@@ -159,28 +174,80 @@ export function extractJsonFromModelResponse(payload: any): Record<string, unkno
   return null;
 }
 
-export function parseReceiptItems(rawItems: unknown): ParsedReceiptItem[] {
+export function parseReceiptItems(rawItems: unknown, options: ParseReceiptItemOptions = {}): ParsedReceiptItem[] {
+  const parser = storeParsers[options.store ?? "generic"];
+  return parser(rawItems);
+}
+
+function parseGenericReceipt(rawItems: unknown): ParsedReceiptItem[] {
+  if (!Array.isArray(rawItems)) return [];
+  return parseEntries(rawItems);
+}
+
+function parseWalmartReceipt(rawItems: unknown): ParsedReceiptItem[] {
+  if (!Array.isArray(rawItems)) return [];
+  return parseEntries(rawItems);
+}
+
+function parseSamsClubReceipt(rawItems: unknown): ParsedReceiptItem[] {
   if (!Array.isArray(rawItems)) return [];
 
-  return rawItems
+  const mergedEntries: unknown[] = [];
+  for (let index = 0; index < rawItems.length; index++) {
+    const current = (rawItems[index] ?? {}) as Record<string, unknown>;
+    const next = (rawItems[index + 1] ?? {}) as Record<string, unknown>;
+
+    const name = String(current.name ?? "").trim();
+    const amount = parseCurrencyToNumber(current.amount);
+
+    const isContinuation = name && (!Number.isFinite(amount) || amount <= 0) && String(next.name ?? "").trim();
+    if (isContinuation) {
+      mergedEntries.push({
+        ...next,
+        name: `${name} ${String(next.name ?? "")}`.trim(),
+        code: current.code ?? next.code ?? null,
+      });
+      index += 1;
+      continue;
+    }
+
+    mergedEntries.push(current);
+  }
+
+  return parseEntries(mergedEntries);
+}
+
+function parseEntries(entries: unknown[]): ParsedReceiptItem[] {
+  return entries
     .map((entry): ParsedReceiptItem => {
       const rawName = String((entry as any)?.name ?? "").trim();
       const code = normalizeCode((entry as any)?.code);
-      const normalizedName = normalizeLineItemName(rawName);
-      const sku = extractSkuCandidate(rawName, code);
+      const normalizedName = normalizeLineItem(rawName);
+      const sku = extractSKU(rawName, code);
+      const amount = parseCurrencyToNumber((entry as any)?.amount);
+      const quantityAndPrice = parseQuantityAndPrice(`${rawName} ${String((entry as any)?.amount ?? "")}`, amount);
       const quality = scoreLineItemQuality(rawName, normalizedName, sku);
+      const qualityFlags = [...quality.flags];
+
+      if (quantityAndPrice.hasTotalMismatch) {
+        qualityFlags.push("recalculated_total");
+      }
 
       return {
         rawName,
         name: normalizedName || rawName,
-        amount: parseCurrencyToNumber((entry as any)?.amount),
+        amount: quantityAndPrice.total,
         code,
         sku,
-        qualityScore: quality.score,
-        qualityFlags: quality.flags,
+        quantity: quantityAndPrice.quantity,
+        unitPrice: quantityAndPrice.unitPrice,
+        total: quantityAndPrice.total,
+        totalMismatch: quantityAndPrice.hasTotalMismatch,
+        qualityScore: quantity.score,
+        qualityFlags,
       };
     })
-    .filter((item) => !isNonPurchasableLine(item.name, item.amount));
+    .filter((item) => !isNonPurchasableLine(item.name, item.total));
 }
 
 export function parseCurrencyToNumber(raw: unknown): number {

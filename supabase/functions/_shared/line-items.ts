@@ -36,6 +36,8 @@ const ABBREVIATION_MAP: Record<string, string> = {
   TOM: "Tomato",
   TOMS: "Tomatoes",
   CKN: "Chicken",
+  CKNT: "Coconut",
+  OIL: "Oil",
   GRND: "Ground",
   BEEF: "Beef",
   BRKFST: "Breakfast",
@@ -54,15 +56,27 @@ const ABBREVIATION_MAP: Record<string, string> = {
   BNLSS: "Boneless",
 };
 
-const STOP_WORDS = new Set(["pkg", "package", "ea", "each", "ct", "count"]);
+const STOP_WORDS = new Set(["pkg", "package", "ea", "each"]);
 
 export type LineItemQuality = {
   score: number;
   flags: string[];
 };
 
-export function normalizeLineItemName(rawName: string): string {
-  const ascii = rawName
+export type QuantityAndPrice = {
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  totalFromLine: number | null;
+  expectedTotal: number;
+  hasTotalMismatch: boolean;
+  source: "at_pattern" | "count_pattern" | "default";
+};
+
+export function normalizeLineItem(rawName: string): string {
+  const withoutLeadingSku = rawName.replace(/^\s*\d{6,14}\s+/, " ");
+
+  const ascii = withoutLeadingSku
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9\s\-\/]/g, " ")
@@ -83,13 +97,69 @@ export function normalizeLineItemName(rawName: string): string {
   return titleCase(expanded);
 }
 
-export function extractSkuCandidate(rawName: string, code: string | null): string | null {
+export function normalizeLineItemName(rawName: string): string {
+  return normalizeLineItem(rawName);
+}
+
+export function extractSKU(rawName: string, code: string | null): string | null {
   const candidates = [code ?? "", rawName]
     .flatMap((value) => value.match(/\b\d{6,14}\b/g) ?? [])
     .map((value) => value.replace(/^0+/, ""))
     .filter((value) => value.length >= 5 && value.length <= 14);
 
   return candidates[0] ?? null;
+}
+
+export function extractSkuCandidate(rawName: string, code: string | null): string | null {
+  return extractSKU(rawName, code);
+}
+
+export function parseQuantityAndPrice(line: string, amount: number): QuantityAndPrice {
+  const atPattern = line.match(/\b(\d{1,4})\s*@\s*(\d+(?:\.\d{1,2})?)\b/i);
+  if (atPattern) {
+    const quantity = Number(atPattern[1]);
+    const unitPrice = toMoney(Number(atPattern[2]));
+    const expectedTotal = toMoney(quantity * unitPrice);
+    const totalFromLine = Number.isFinite(amount) && amount > 0 ? toMoney(amount) : expectedTotal;
+
+    return {
+      quantity,
+      unitPrice,
+      total: expectedTotal,
+      totalFromLine,
+      expectedTotal,
+      hasTotalMismatch: Math.abs(totalFromLine - expectedTotal) > 0.02,
+      source: "at_pattern",
+    };
+  }
+
+  const countPattern = line.match(/\b(\d{1,4})\s*(?:CT|COUNT|PK|PACK)\b/i);
+  if (countPattern) {
+    const quantity = Number(countPattern[1]);
+    const totalFromLine = Number.isFinite(amount) && amount > 0 ? toMoney(amount) : null;
+    const unitPrice = totalFromLine ? toMoney(totalFromLine / quantity) : 0;
+    const expectedTotal = totalFromLine ? toMoney(quantity * unitPrice) : 0;
+
+    return {
+      quantity,
+      unitPrice,
+      total: totalFromLine ?? 0,
+      totalFromLine,
+      expectedTotal,
+      hasTotalMismatch: false,
+      source: "count_pattern",
+    };
+  }
+
+  return {
+    quantity: 1,
+    unitPrice: Number.isFinite(amount) ? toMoney(amount) : 0,
+    total: Number.isFinite(amount) ? toMoney(amount) : 0,
+    totalFromLine: Number.isFinite(amount) ? toMoney(amount) : null,
+    expectedTotal: Number.isFinite(amount) ? toMoney(amount) : 0,
+    hasTotalMismatch: false,
+    source: "default",
+  };
 }
 
 export function isNonPurchasableLine(name: string, amount: number): boolean {
@@ -143,4 +213,8 @@ function titleCase(input: string): string {
       return `${word[0].toUpperCase()}${word.slice(1).toLowerCase()}`;
     })
     .join(" ");
+}
+
+function toMoney(value: number): number {
+  return Number(value.toFixed(2));
 }
