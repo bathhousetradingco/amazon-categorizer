@@ -6,6 +6,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bathhouse Categorizer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%9B%81%3C/text%3E%3C/svg%3E">
 
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
@@ -653,6 +654,8 @@ let splitMode = false;
 let activeYearFilter = null;
 let activeDateFilter = null;
 let aiContext = null; 
+let receiptAnalysesAvailable = true;
+let saveReceiptAnalysisStateFunctionAvailable = true;
 // null = normal transaction
 // { type: "receipt", index: X } = receipt item mode
 /* ================= LOAD FROM SUPABASE ================= */
@@ -705,6 +708,8 @@ async function loadTransactions() {
 
 
 async function hydrateStoredReceiptAnalyses(){
+  if(!receiptAnalysesAvailable) return;
+
   const receiptItems = data.filter(item => item?.receipt_url);
   if(!receiptItems.length) return;
 
@@ -716,6 +721,7 @@ async function hydrateStoredReceiptAnalyses(){
 
   if(error){
     if(isReceiptAnalysesUnavailableError(error)){
+      receiptAnalysesAvailable = false;
       console.info("Receipt analyses table/functionality not available in this environment yet.", {
         code: error.code,
         message: error.message
@@ -849,6 +855,8 @@ function normalizeStoredReceiptAnalysis(rawAnalysis, context = {}){
 }
 
 async function persistNormalizedReceiptAnalysis(filePath, normalizedAnalysis){
+  if(!receiptAnalysesAvailable) return;
+
   try {
     const payload = {
       ...normalizedAnalysis
@@ -861,6 +869,11 @@ async function persistNormalizedReceiptAnalysis(filePath, normalizedAnalysis){
       .eq("file_path", filePath);
 
     if(error){
+      if(isReceiptAnalysesUnavailableError(error)){
+        receiptAnalysesAvailable = false;
+        return;
+      }
+
       console.warn("[receipt-analysis] failed to persist normalized analysis", {
         file_path: filePath,
         error
@@ -891,6 +904,7 @@ function applyStoredReceiptState(item){
 
 async function persistReceiptAnalysisUserState(item){
   if(!item?.receipt_url || !item?.receipt_analysis) return;
+  if(!receiptAnalysesAvailable) return;
 
   const payload = {
     filePath: item.receipt_url,
@@ -908,9 +922,26 @@ async function persistReceiptAnalysisUserState(item){
     }
   };
 
+  const fallbackSaved = await persistReceiptAnalysisUserStateFallback(item, payload.user_state);
+  if(fallbackSaved){
+    item.receipt_analysis.user_state = payload.user_state;
+    return;
+  }
+
+  if(!saveReceiptAnalysisStateFunctionAvailable) return;
+
   const { response, result } = await invokeEdgeFunction("save-receipt-analysis-state", payload);
   if(response.ok){
     item.receipt_analysis.user_state = payload.user_state;
+    return;
+  }
+
+  if(response.status === 0 || response.status === 404){
+    saveReceiptAnalysisStateFunctionAvailable = false;
+    console.info("Disabling save-receipt-analysis-state edge function in this environment.", {
+      status: response.status,
+      result
+    });
     return;
   }
 
@@ -918,11 +949,6 @@ async function persistReceiptAnalysisUserState(item){
     status: response.status,
     result
   });
-
-  const fallbackSaved = await persistReceiptAnalysisUserStateFallback(item, payload.user_state);
-  if(!fallbackSaved) return;
-
-  item.receipt_analysis.user_state = payload.user_state;
 }
 
 async function persistReceiptAnalysisUserStateFallback(item, userState){
@@ -941,6 +967,7 @@ async function persistReceiptAnalysisUserStateFallback(item, userState){
 
     if(error){
       if(isReceiptAnalysesUnavailableError(error)){
+        receiptAnalysesAvailable = false;
         console.info("Skipping receipt user-state persistence because receipt_analyses is unavailable in this environment.", {
           code: error.code,
           message: error.message
