@@ -32,12 +32,26 @@ type LookupHint = {
   rawName: string;
   normalizedName: string;
   storeHint: string;
+  extractedProductNumber: string | null;
+  normalizedProductNumber: string | null;
+};
+
+type SerpLineItemTrace = {
+  raw_line_item: string;
+  parsed_name: string;
+  extracted_product_number: string | null;
+  normalized_product_number: string | null;
 };
 
 type SerpMatch = {
   title: string;
   snippet: string | null;
   link: string | null;
+};
+
+type SerpSearchResult = {
+  matches: SerpMatch[];
+  rawResponse: unknown;
 };
 
 type SerpEnrichmentResult = {
@@ -131,6 +145,8 @@ export async function enrichLineItems(params: {
         rawName: item.rawName,
         normalizedName: item.name,
         storeHint: detectStoreHint(item.rawName, item.name),
+        extractedProductNumber: extracted.raw,
+        normalizedProductNumber: extracted.normalized,
       });
     }
   });
@@ -410,6 +426,12 @@ async function lookupSkusViaSerpApi(
       serpApiKey,
       serpCache,
       budget,
+      {
+        raw_line_item: hint?.rawName ?? sku,
+        parsed_name: hint?.normalizedName ?? hint?.rawName ?? sku,
+        extracted_product_number: hint?.extractedProductNumber ?? null,
+        normalized_product_number: hint?.normalizedProductNumber ?? null,
+      },
     );
 
     if (!match) {
@@ -431,7 +453,7 @@ async function lookupSkusViaSerpApi(
   return rows;
 }
 
-async function searchGoogleResults(query: string, serpApiKey: string, strategy: "samsclub_site" | "serpapi", budget: EnrichmentBudget): Promise<SerpMatch[]> {
+async function searchGoogleResults(query: string, serpApiKey: string, strategy: "samsclub_site" | "serpapi", budget: EnrichmentBudget): Promise<SerpSearchResult> {
   const url = new URL("https://serpapi.com/search");
   url.searchParams.set("engine", "google");
   url.searchParams.set("location", "United States");
@@ -457,7 +479,18 @@ async function searchGoogleResults(query: string, serpApiKey: string, strategy: 
     hasResults: !!data?.organic_results?.length,
   });
 
-  return mapped;
+  return { matches: mapped, rawResponse: data };
+}
+
+function trimSerpRawResponse(payload: unknown): unknown {
+  if (payload == null) return null;
+  try {
+    const serialized = JSON.stringify(payload);
+    if (serialized.length <= 1200) return payload;
+    return `${serialized.slice(0, 1200)}...<trimmed:${serialized.length - 1200}_chars>`;
+  } catch {
+    return "<unserializable_serpapi_payload>";
+  }
 }
 
 async function enrichWithSerpAPI(
@@ -467,6 +500,7 @@ async function enrichWithSerpAPI(
   serpApiKey: string,
   cache: Map<string, SerpEnrichmentResult | null>,
   budget: EnrichmentBudget,
+  trace: SerpLineItemTrace,
 ): Promise<SerpEnrichmentResult | null> {
   const normalizedNumber = normalizeIdentifier(productNumber);
   const compactNumber = compactIdentifier(productNumber);
@@ -491,7 +525,25 @@ async function enrichWithSerpAPI(
   let source: "samsclub_site" | "serpapi" = "serpapi";
   let bestScore = 0;
   for (const candidate of queries) {
-    const matches = await searchGoogleResults(candidate.query, serpApiKey, candidate.strategy, budget);
+    console.log("SERPAPI_LINE_ITEM_TRACE", {
+      ...trace,
+      value_sent_to_serpapi: candidate.query,
+      serpapi_response_title: null,
+      serpapi_raw_response: null,
+      final_product_title_used: null,
+      strategy: candidate.strategy,
+      phase: "request",
+    });
+    const { matches, rawResponse } = await searchGoogleResults(candidate.query, serpApiKey, candidate.strategy, budget);
+    console.log("SERPAPI_LINE_ITEM_TRACE", {
+      ...trace,
+      value_sent_to_serpapi: candidate.query,
+      serpapi_response_title: matches[0]?.title ?? null,
+      serpapi_raw_response: trimSerpRawResponse(rawResponse),
+      final_product_title_used: null,
+      strategy: candidate.strategy,
+      phase: "response",
+    });
     if (!matches.length) {
       console.log({ step: "VALIDATION", strategy: candidate.strategy, accepted: false, reason: "no_results" });
       continue;
@@ -523,6 +575,15 @@ async function enrichWithSerpAPI(
   };
 
   cache.set(normalizedNumber, enrichment);
+  console.log("SERPAPI_LINE_ITEM_TRACE", {
+    ...trace,
+    value_sent_to_serpapi: null,
+    serpapi_response_title: top.title ?? null,
+    serpapi_raw_response: null,
+    final_product_title_used: enrichment.enriched_name,
+    strategy: source,
+    phase: "selected_enrichment",
+  });
   return enrichment;
 }
 
