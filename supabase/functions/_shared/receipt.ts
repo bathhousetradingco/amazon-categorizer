@@ -341,7 +341,7 @@ function parseSamsClubReceipt(rawItems: unknown): ParsedReceiptItem[] {
 }
 
 function parseEntries(entries: unknown[]): ParsedReceiptItem[] {
-  return entries
+  const parsedItems = entries
     .map((entry): ParsedReceiptItem => {
       const rawName = String((entry as any)?.name ?? "").trim();
       const code = normalizeCode((entry as any)?.code);
@@ -371,6 +371,66 @@ function parseEntries(entries: unknown[]): ParsedReceiptItem[] {
       };
     })
     .filter((item) => !isNonPurchasableLine(item.name, item.total));
+
+  return consolidatePromotionalDuplicates(parsedItems);
+}
+
+function consolidatePromotionalDuplicates(items: ParsedReceiptItem[]): ParsedReceiptItem[] {
+  const consolidated: ParsedReceiptItem[] = [];
+  const promoKeyToIndex = new Map<string, number>();
+
+  for (const item of items) {
+    if (!isPromotionQuantityLine(item)) {
+      consolidated.push(item);
+      continue;
+    }
+
+    const key = buildPromoMergeKey(item);
+    if (!key) {
+      consolidated.push(item);
+      continue;
+    }
+
+    const existingIndex = promoKeyToIndex.get(key);
+    if (existingIndex === undefined) {
+      promoKeyToIndex.set(key, consolidated.length);
+      consolidated.push(item);
+      continue;
+    }
+
+    const existing = consolidated[existingIndex];
+    const mergedQuantity = existing.quantity + item.quantity;
+    const mergedTotal = toMoney(existing.total + item.total);
+    const expectedTotal = toMoney(mergedQuantity * existing.unitPrice);
+
+    consolidated[existingIndex] = {
+      ...existing,
+      quantity: mergedQuantity,
+      amount: mergedTotal,
+      total: mergedTotal,
+      totalMismatch: Math.abs(mergedTotal - expectedTotal) > 0.02,
+      qualityFlags: Array.from(new Set([...existing.qualityFlags, ...item.qualityFlags, "consolidated_duplicate_promo"])),
+    };
+  }
+
+  return consolidated;
+}
+
+function isPromotionQuantityLine(item: ParsedReceiptItem): boolean {
+  if (item.quantity <= 1) return false;
+  return /\b\d{1,4}\s*(?:@|AT)\s*\d{0,4}\s*(?:FOR)?\s*\$?\d+(?:\.\d{1,2})?\b/i.test(item.rawName)
+    || /\b\d{1,4}\s+FOR\s+\$?\d+(?:\.\d{1,2})?\b/i.test(item.rawName);
+}
+
+function buildPromoMergeKey(item: ParsedReceiptItem): string | null {
+  const stableIdentifier = item.code ?? item.sku;
+  if (!stableIdentifier) return null;
+  const compactName = item.name.toLowerCase().replace(/\s+/g, " ").trim();
+  return `${stableIdentifier}|${compactName}|${item.unitPrice}`;
+}
+
+function toMoney(value: number): number {
+  return Number(value.toFixed(2));
 }
 
 export function parseCurrencyToNumber(raw: unknown): number {
