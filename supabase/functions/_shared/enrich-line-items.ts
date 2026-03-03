@@ -92,6 +92,12 @@ export async function enrichLineItems(params: {
     item.item_number_raw = extracted.raw;
     item.normalized_item_number = extracted.normalized;
     console.log({
+      step: "ENRICH_START",
+      store,
+      normalized: extracted.normalized,
+      original: item.name,
+    });
+    console.log({
       step: "PRODUCT_NUMBER_EXTRACTED",
       raw: extracted.raw,
       normalized: extracted.normalized,
@@ -158,7 +164,7 @@ export async function enrichLineItems(params: {
 
   const unresolved = result
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => item.enrichmentSource === "none" || item.enrichmentSource === "normalized" || item.needsReview);
+    .filter(({ item }) => item.enrichmentSource === "none" || item.enrichmentSource === "normalized");
 
   if (unresolved.length) {
     const cleaned = await aiCleanupNames(
@@ -169,6 +175,7 @@ export async function enrichLineItems(params: {
     cleaned.forEach((name, idx) => {
       const target = unresolved[idx];
       if (!target || !name) return;
+      console.log({ step: "AI_CLEANUP_FALLBACK", reason: "no acceptable serpapi match", index: target.index });
       applyLookup(result[target.index], name, "ai_cleanup", null, null, "lookup:ai_cleanup");
     });
   }
@@ -206,10 +213,23 @@ function applyLookup(
   category: string | null,
   reason = "enriched",
 ) {
+  if (item.enrichmentSource === "serpapi" || item.enrichmentSource === "samsclub_site") {
+    console.log({
+      step: "NAME_APPLY",
+      strategy: source,
+      before: item.name_final || item.enrichedName || item.name,
+      after: item.name_final || item.enrichedName || item.name,
+      source_set: item.enrichmentSource,
+      applied: false,
+      reason: "protected_existing_enrichment",
+    });
+    return;
+  }
+
   const nextName = cleanName.trim();
   const before = item.name_final || item.enrichedName || item.name;
   if (!nextName) {
-    console.log({ step: "NAME_APPLY", before, after: before, applied: false, reason: "empty_candidate" });
+    console.log({ step: "NAME_APPLY", strategy: source, before, after: before, source_set: item.enrichmentSource, applied: false, reason: "empty_candidate" });
     return;
   }
 
@@ -222,7 +242,7 @@ function applyLookup(
   item.brand = brand;
   item.category = category;
   item.qualityScore = Math.max(item.qualityScore, source === "normalized" || source === "none" ? 0.65 : 0.88);
-  console.log({ step: "NAME_APPLY", before, after: nextName, applied: true, reason });
+  console.log({ step: "NAME_APPLY", strategy: source, before, after: nextName, source_set: source, applied: true, reason });
 }
 
 function shouldLookupViaSerp(
@@ -354,6 +374,7 @@ async function searchGoogleResults(query: string, serpApiKey: string, strategy: 
 
   console.log({
     step: "SERPAPI_RESPONSE",
+    strategy,
     status,
     hasResults: mapped.length > 0,
     firstTitle: mapped[0]?.title ?? null,
@@ -385,10 +406,14 @@ async function enrichWithSerpAPI(
   for (const candidate of queries) {
     const matches = await searchGoogleResults(candidate.query, serpApiKey, candidate.strategy);
     const current = matches[0] ?? null;
-    if (!current) continue;
+    if (!current) {
+      console.log({ step: "VALIDATION", strategy: candidate.strategy, accepted: false, reason: "no_results" });
+      continue;
+    }
 
-    const accepted = isAcceptedSearchResult(current, ocrName, normalizedNumber);
-    if (accepted) {
+    const validation = validateSearchResult(current, ocrName, normalizedNumber);
+    console.log({ step: "VALIDATION", strategy: candidate.strategy, accepted: validation.accepted, reason: validation.reason });
+    if (validation.accepted) {
       top = current;
       source = candidate.strategy;
       break;
@@ -537,20 +562,27 @@ function extractProductNumberFromLine(rawLine: string): ProductNumberExtraction 
   return { raw, normalized };
 }
 
-function isAcceptedSearchResult(match: SerpMatch, ocrName: string, normalizedNumber: string): boolean {
+function validateSearchResult(
+  match: SerpMatch,
+  ocrName: string,
+  normalizedNumber: string,
+): { accepted: boolean; reason: string } {
   const fullText = `${match.title} ${match.snippet ?? ""}`.toLowerCase();
   const domain = (match.link ?? "").toLowerCase();
-  if (domain.includes("samsclub.com")) return true;
+  if (domain.includes("samsclub.com")) return { accepted: true, reason: "samsclub_domain" };
 
   const hasNumber = fullText.includes(normalizedNumber);
   const navNoise = /login|sign in|account|cart|help|membership|hours|locations/.test(fullText);
   const keywordHit = /coffee|yogurt|oil|milk|chicken|beef|bread|water|detergent|paper|snack/i.test(fullText);
-  if (hasNumber && keywordHit && !navNoise) return true;
+  if (hasNumber && keywordHit && !navNoise) return { accepted: true, reason: "number_keyword_match" };
 
   const ocrTokens = tokenizeMeaningful(ocrName);
   const resultTokens = tokenizeMeaningful(`${match.title} ${match.snippet ?? ""}`);
   const overlap = ocrTokens.filter((token) => resultTokens.includes(token)).length;
-  return hasNumber && overlap >= 1;
+  if (hasNumber && overlap >= 1) return { accepted: true, reason: "number_token_overlap" };
+  if (!hasNumber) return { accepted: false, reason: "missing_product_number" };
+  if (navNoise) return { accepted: false, reason: "navigation_noise" };
+  return { accepted: false, reason: "insufficient_signal" };
 }
 
 function tokenizeMeaningful(text: string): string[] {
