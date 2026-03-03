@@ -232,6 +232,22 @@ function applyLookup(
   category: string | null,
   reason = "enriched",
 ) {
+  const currentSource = item.enrichmentSource;
+  const incomingPriority = sourcePriority(source);
+  const existingPriority = sourcePriority(currentSource);
+  if (existingPriority > incomingPriority) {
+    console.log({
+      step: "NAME_APPLY",
+      strategy: source,
+      before: item.name_final || item.enrichedName || item.name,
+      after: item.name_final || item.enrichedName || item.name,
+      source_set: item.enrichmentSource,
+      applied: false,
+      reason: "lower_priority_source",
+    });
+    return;
+  }
+
   if (item.enrichmentSource === "serpapi" || item.enrichmentSource === "samsclub_site") {
     console.log({
       step: "NAME_APPLY",
@@ -262,6 +278,23 @@ function applyLookup(
   item.category = category;
   item.qualityScore = Math.max(item.qualityScore, source === "normalized" || source === "none" ? 0.65 : 0.88);
   console.log({ step: "NAME_APPLY", strategy: source, before, after: nextName, source_set: source, applied: true, reason });
+}
+
+function sourcePriority(source: EnrichedReceiptItem["enrichmentSource"]): number {
+  switch (source) {
+    case "samsclub_site":
+      return 5;
+    case "serpapi":
+      return 4;
+    case "cache":
+      return 3;
+    case "ai_cleanup":
+      return 2;
+    case "normalized":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 function shouldRunSerpLookup(_item: EnrichedReceiptItem, productNumber: string | null): boolean {
@@ -659,12 +692,20 @@ function extractNameWithoutProductNumber(rawLine: string): string | null {
 }
 
 function extractProductNumberFromLine(rawLine: string): ProductNumberExtraction {
-  const match = rawLine.match(/^\s*(?:#|item\s*#?\s*)?([0-9A-Za-z-]{6,20})\b/i);
-  const raw = match?.[1] ?? null;
-  const normalized = raw ? normalizeIdentifier(raw) : null;
-  const compact = raw ? compactIdentifier(raw) : null;
-  if (!isLikelyProductCode(compact)) return { raw: null, normalized: null, compact: null };
-  return { raw, normalized, compact };
+  const tokens = String(rawLine ?? "").match(/[0-9A-Za-z-]{5,20}/g) ?? [];
+  const candidates = tokens
+    .map((token) => ({ raw: token, compact: compactIdentifier(token), normalized: normalizeIdentifier(token) }))
+    .filter((entry) => isLikelyProductCode(entry.compact) && entry.normalized)
+    .sort((a, b) => {
+      const aNumericScore = /^\d{8,14}$/.test(a.compact ?? "") ? 2 : /^\d+$/.test(a.compact ?? "") ? 1 : 0;
+      const bNumericScore = /^\d{8,14}$/.test(b.compact ?? "") ? 2 : /^\d+$/.test(b.compact ?? "") ? 1 : 0;
+      if (aNumericScore !== bNumericScore) return bNumericScore - aNumericScore;
+      return (b.compact?.length ?? 0) - (a.compact?.length ?? 0);
+    });
+
+  const best = candidates[0];
+  if (!best) return { raw: null, normalized: null, compact: null };
+  return { raw: best.raw, normalized: best.normalized, compact: best.compact };
 }
 
 function validateSearchResult(
