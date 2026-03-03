@@ -70,7 +70,7 @@ export type QuantityAndPrice = {
   totalFromLine: number | null;
   expectedTotal: number;
   hasTotalMismatch: boolean;
-  source: "at_pattern" | "count_pattern" | "default";
+  source: "at_pattern" | "count_pattern" | "for_pattern" | "inferred_bulk" | "default";
 };
 
 export function normalizeLineItem(rawName: string): string {
@@ -115,21 +115,44 @@ export function extractSkuCandidate(rawName: string, code: string | null): strin
 }
 
 export function parseQuantityAndPrice(line: string, amount: number): QuantityAndPrice {
-  const atPattern = line.match(/\b(\d{1,4})\s*@\s*(\d+(?:\.\d{1,2})?)\b/i);
+  const atPattern = line.match(/\b(\d{1,4})\s*(?:@|AT)\s*(\d{1,4})?\s*(?:FOR)?\s*\$?(\d+(?:\.\d{1,2})?)\b/i);
   if (atPattern) {
     const quantity = Number(atPattern[1]);
-    const unitPrice = toMoney(Number(atPattern[2]));
+    const promoCount = Math.max(1, Number(atPattern[2] ?? 1));
+    const promoPrice = toMoney(Number(atPattern[3]));
+    const unitPrice = toMoney(promoPrice / promoCount);
     const expectedTotal = toMoney(quantity * unitPrice);
     const totalFromLine = Number.isFinite(amount) && amount > 0 ? toMoney(amount) : expectedTotal;
 
     return {
       quantity,
       unitPrice,
-      total: expectedTotal,
+      total: totalFromLine,
       totalFromLine,
       expectedTotal,
       hasTotalMismatch: Math.abs(totalFromLine - expectedTotal) > 0.02,
       source: "at_pattern",
+    };
+  }
+
+  const forPattern = line.match(/\b(\d{1,4})\s*(?:FOR)\s*\$?(\d+(?:\.\d{1,2})?)\b/i);
+  if (forPattern) {
+    const quantity = Number(forPattern[1]);
+    const promoPrice = toMoney(Number(forPattern[2]));
+    const totalFromLine = Number.isFinite(amount) && amount > 0 ? toMoney(amount) : promoPrice;
+    const inferredQty = inferBulkQuantity(totalFromLine, promoPrice);
+    const finalQuantity = inferredQty > 1 ? inferredQty : quantity;
+    const unitPrice = finalQuantity > 0 ? toMoney(totalFromLine / finalQuantity) : promoPrice;
+    const expectedTotal = toMoney(finalQuantity * unitPrice);
+
+    return {
+      quantity: finalQuantity,
+      unitPrice,
+      total: totalFromLine,
+      totalFromLine,
+      expectedTotal,
+      hasTotalMismatch: Math.abs(totalFromLine - expectedTotal) > 0.02,
+      source: inferredQty > 1 ? "inferred_bulk" : "for_pattern",
     };
   }
 
@@ -160,6 +183,17 @@ export function parseQuantityAndPrice(line: string, amount: number): QuantityAnd
     hasTotalMismatch: false,
     source: "default",
   };
+}
+
+function inferBulkQuantity(total: number, candidateUnitPrice: number): number {
+  if (!Number.isFinite(total) || !Number.isFinite(candidateUnitPrice) || total <= 0 || candidateUnitPrice <= 0) {
+    return 1;
+  }
+
+  const ratio = total / candidateUnitPrice;
+  const rounded = Math.round(ratio);
+  if (rounded < 2 || rounded > 500) return 1;
+  return Math.abs(ratio - rounded) <= 0.03 ? rounded : 1;
 }
 
 export function isNonPurchasableLine(name: string, amount: number): boolean {
