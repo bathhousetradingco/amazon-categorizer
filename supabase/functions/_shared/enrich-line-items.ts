@@ -3,11 +3,13 @@ import { ParsedReceiptItem } from "./receipt.ts";
 
 export type EnrichedReceiptItem = ParsedReceiptItem & {
   enrichedName: string;
+  originalName: string;
   enrichmentSource: "serpapi" | "cache" | "ai_cleanup" | "normalized";
   brand: string | null;
   category: string | null;
   qualityScore: number;
   needsReview: boolean;
+  reviewReasons: string[];
 };
 
 type ProductLookupRow = {
@@ -16,12 +18,25 @@ type ProductLookupRow = {
   source: string;
   brand: string | null;
   category: string | null;
+  source_url?: string | null;
 };
 
 type LookupHint = {
   rawName: string;
   normalizedName: string;
+  storeHint: string;
 };
+
+type SerpMatch = {
+  title: string;
+  brand: string | null;
+  category: string | null;
+  price: number | null;
+  sourceUrl: string | null;
+};
+
+const SEARCH_TIMEOUT_MS = 4500;
+const SERP_MAX_SKUS_PER_BATCH = 12;
 
 export async function enrichLineItems(params: {
   adminClient: ReturnType<typeof createClient>;
@@ -30,27 +45,35 @@ export async function enrichLineItems(params: {
   serpApiKey?: string;
 }): Promise<EnrichedReceiptItem[]> {
   const { adminClient, items, openAiApiKey, serpApiKey } = params;
-  const result: EnrichedReceiptItem[] = items.map((item) => ({
-    ...item,
-    enrichedName: item.name,
-    enrichmentSource: "normalized",
-    brand: null,
-    category: null,
-    needsReview: item.qualityScore < 0.65 || item.totalMismatch,
-  }));
+  const result: EnrichedReceiptItem[] = items.map((item) => {
+    const reasons = collectReviewReasons(item, item.name);
+    return {
+      ...item,
+      originalName: item.name,
+      enrichedName: item.name,
+      enrichmentSource: "normalized",
+      brand: null,
+      category: null,
+      needsReview: reasons.length > 0,
+      reviewReasons: reasons,
+    };
+  });
 
   const skuMap = new Map<string, number[]>();
   const skuHints = new Map<string, LookupHint>();
   result.forEach((item, index) => {
-    if (!item.sku) return;
-    const bucket = skuMap.get(item.sku) ?? [];
-    bucket.push(index);
-    skuMap.set(item.sku, bucket);
+    const sku = selectLookupIdentifier(item);
+    if (!sku) return;
 
-    if (!skuHints.has(item.sku)) {
-      skuHints.set(item.sku, {
+    const bucket = skuMap.get(sku) ?? [];
+    bucket.push(index);
+    skuMap.set(sku, bucket);
+
+    if (!skuHints.has(sku)) {
+      skuHints.set(sku, {
         rawName: item.rawName,
         normalizedName: item.name,
+        storeHint: detectStoreHint(item.rawName, item.name),
       });
     }
   });
@@ -64,9 +87,23 @@ export async function enrichLineItems(params: {
       }
     }
 
-    const missingSkus = Array.from(skuMap.keys()).filter((sku) => !cached.has(sku));
+    const unresolvedIndices = result
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => shouldLookupViaSerp(item))
+      .map(({ index }) => index);
+
+    const missingSkus = Array.from(new Set(unresolvedIndices
+      .map((index) => normalizeIdentifier(result[index].sku))
+      .filter((sku): sku is string => Boolean(sku))
+      .filter((sku) => !cached.has(sku))));
+
     if (missingSkus.length && serpApiKey) {
-      const lookedUp = await lookupSkusViaSerpApi(missingSkus, serpApiKey, skuHints);
+      const lookedUp = await lookupSkusViaSerpApi(
+        missingSkus.slice(0, SERP_MAX_SKUS_PER_BATCH),
+        serpApiKey,
+        skuHints,
+      );
+
       for (const row of lookedUp) {
         await upsertCacheRow(adminClient, row);
         for (const index of skuMap.get(row.sku) ?? []) {
@@ -92,6 +129,11 @@ export async function enrichLineItems(params: {
       applyLookup(result[target.index], name, "ai_cleanup", null, null);
     });
   }
+
+  result.forEach((item) => {
+    item.reviewReasons = collectReviewReasons(item, item.enrichedName);
+    item.needsReview = item.reviewReasons.length > 0;
+  });
 
   return result;
 }
@@ -126,18 +168,56 @@ function applyLookup(
   item.enrichmentSource = source;
   item.brand = brand;
   item.category = category;
-  item.needsReview = nextName.length < 5 || item.totalMismatch;
-  item.qualityScore = Math.max(item.qualityScore, source === "normalized" ? 0.65 : 0.85);
+  item.qualityScore = Math.max(item.qualityScore, source === "normalized" ? 0.65 : 0.88);
+}
+
+function shouldLookupViaSerp(item: EnrichedReceiptItem): boolean {
+  if (!item.sku) return false;
+  if (item.enrichmentSource !== "normalized") return false;
+  return item.qualityScore < 0.75 || isLowConfidenceName(item.enrichedName);
+}
+
+function isLowConfidenceName(name: string): boolean {
+  const compact = name.replace(/\s+/g, " ").trim();
+  if (!compact || compact.length < 7) return true;
+
+  const tokens = compact.split(" ").filter(Boolean);
+  const alphaTokens = tokens.filter((token) => /[a-z]/i.test(token));
+  const numericHeavy = (compact.match(/\d/g)?.length ?? 0) >= Math.ceil(compact.length * 0.4);
+  const mostlyUpper = compact === compact.toUpperCase() && /[A-Z]/.test(compact);
+
+  return numericHeavy || mostlyUpper || alphaTokens.length <= 1;
+}
+
+function collectReviewReasons(item: ParsedReceiptItem | EnrichedReceiptItem, candidateName: string): string[] {
+  const reasons: string[] = [];
+
+  if (item.qualityScore < 0.6 || isLowConfidenceName(candidateName)) reasons.push("low confidence OCR");
+  if (item.totalMismatch) reasons.push("price mismatch");
+
+  if ((item as EnrichedReceiptItem).enrichmentSource === "normalized" && isLowConfidenceName(candidateName)) {
+    reasons.push("no product match found");
+  }
+
+  return Array.from(new Set(reasons));
+}
+
+function detectStoreHint(rawName: string, normalizedName: string): string {
+  const combined = `${rawName} ${normalizedName}`.toLowerCase();
+  if (combined.includes("sam") || combined.includes("member's mark") || combined.includes("members mark")) return "sams club";
+  if (combined.includes("walmart") || combined.includes("great value")) return "walmart";
+  if (combined.includes("costco") || combined.includes("kirkland")) return "costco";
+  return "bulk retail";
 }
 
 async function fetchCacheRows(adminClient: ReturnType<typeof createClient>, skus: string[]) {
   const { data, error } = await adminClient
     .from("product_lookup_cache")
     .select("sku, clean_name, source, brand, category")
-    .in("sku", skus);
+    .in("normalized_sku", skus);
 
   if (error || !data) return new Map<string, ProductLookupRow>();
-  return new Map((data as ProductLookupRow[]).map((row) => [row.sku, row]));
+  return new Map((data as ProductLookupRow[]).map((row) => [normalizeIdentifier(row.sku) ?? row.sku, row]));
 }
 
 async function upsertCacheRow(adminClient: ReturnType<typeof createClient>, row: ProductLookupRow) {
@@ -148,6 +228,8 @@ async function upsertCacheRow(adminClient: ReturnType<typeof createClient>, row:
       source: row.source,
       brand: row.brand,
       category: row.category,
+      source_url: row.source_url ?? null,
+      last_checked_at: new Date().toISOString(),
     },
     { onConflict: "sku" },
   );
@@ -160,39 +242,123 @@ async function lookupSkusViaSerpApi(
 ): Promise<ProductLookupRow[]> {
   const rows: ProductLookupRow[] = [];
 
-  for (const sku of skus.slice(0, 8)) {
+  for (const sku of skus) {
     const hint = skuHints.get(sku);
     const queries = buildSerpQueries(sku, hint);
 
-    for (const query of queries) {
-      const match = await searchShoppingResult(query, serpApiKey);
-      if (!match) continue;
+    console.log("receipt_enrichment_identifier", { sku, query_count: queries.length, hint: hint?.normalizedName ?? null });
 
-      rows.push({
-        sku,
-        clean_name: String(match.title).trim(),
-        source: "serpapi",
-        brand: match.brand ? String(match.brand) : null,
-        category: match.category ? String(match.category) : null,
-      });
-      break;
+    let bestMatch: { match: SerpMatch; score: number } | null = null;
+
+    for (const query of queries) {
+      console.log("receipt_enrichment_serp_query", { sku, query });
+      const matches = await searchShoppingResults(query, serpApiKey);
+      const ranked = rankSerpMatches(matches, sku, hint);
+      if (ranked.length && (!bestMatch || ranked[0].score > bestMatch.score)) {
+        bestMatch = ranked[0];
+      }
+      if (ranked.length && ranked[0].score >= 0.82) break;
     }
+
+    if (!bestMatch) {
+      console.log("receipt_enrichment_failed", { sku, reason: "no_product_match" });
+      continue;
+    }
+
+    console.log("receipt_enrichment_success", { sku, title: bestMatch.match.title, brand: bestMatch.match.brand, score: bestMatch.score });
+
+    rows.push({
+      sku,
+      clean_name: bestMatch.match.title,
+      source: "serpapi",
+      brand: bestMatch.match.brand,
+      category: bestMatch.match.category,
+      source_url: bestMatch.match.sourceUrl,
+    });
   }
 
   return rows;
 }
 
-async function searchShoppingResult(query: string, serpApiKey: string) {
+async function searchShoppingResults(query: string, serpApiKey: string): Promise<SerpMatch[]> {
   const url = new URL("https://serpapi.com/search.json");
   url.searchParams.set("engine", "google_shopping");
   url.searchParams.set("q", query);
   url.searchParams.set("api_key", serpApiKey);
+  url.searchParams.set("num", "8");
 
-  const response = await fetch(url);
-  if (!response.ok) return null;
+  const payload = await fetchWithRetry(url, { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS });
+  if (!payload) return [];
 
-  const payload = await response.json();
-  return payload?.shopping_results?.[0] ?? null;
+  const shopping = Array.isArray(payload?.shopping_results) ? payload.shopping_results : [];
+
+  return shopping
+    .map((entry: any) => ({
+      title: String(entry?.title ?? "").trim(),
+      brand: entry?.brand ? String(entry.brand).trim() : null,
+      category: entry?.category ? String(entry.category).trim() : null,
+      price: parsePrice(entry?.price),
+      sourceUrl: entry?.link ? String(entry.link) : null,
+    }))
+    .filter((entry: SerpMatch) => entry.title.length >= 4);
+}
+
+async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number }): Promise<any | null> {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= options.attempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        lastError = new Error(`http_${response.status}`);
+        continue;
+      }
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  console.log("receipt_enrichment_request_failed", { url: url.toString(), error: String(lastError ?? "unknown") });
+  return null;
+}
+
+function rankSerpMatches(matches: SerpMatch[], sku: string, hint?: LookupHint) {
+  return matches
+    .map((match) => ({
+      match,
+      score: scoreSerpMatch(match, sku, hint),
+    }))
+    .filter((entry) => entry.score > 0.35)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+}
+
+function scoreSerpMatch(match: SerpMatch, sku: string, hint?: LookupHint): number {
+  const title = match.title.toLowerCase();
+  const hintTokens = `${hint?.rawName ?? ""} ${hint?.normalizedName ?? ""}`
+    .toLowerCase()
+    .match(/[a-z]{3,}/g) ?? [];
+
+  let score = 0.45;
+  if (title.includes(sku)) score += 0.35;
+
+  for (const token of hintTokens.slice(0, 5)) {
+    if (title.includes(token)) score += 0.08;
+  }
+
+  if (match.brand && title.includes(match.brand.toLowerCase())) score += 0.08;
+  if (hint?.storeHint && title.includes(hint.storeHint.toLowerCase().split(" ")[0])) score += 0.06;
+
+  if (/replacement|manual|part|review|deal|coupon/i.test(match.title)) score -= 0.35;
+  if (match.title.length < 6) score -= 0.2;
+
+  return Math.max(0, Math.min(1, Number(score.toFixed(2))));
 }
 
 function buildSerpQueries(sku: string, hint?: LookupHint): string[] {
@@ -205,15 +371,46 @@ function buildSerpQueries(sku: string, hint?: LookupHint): string[] {
     .slice(0, 4)
     .join(" ");
 
+  const storeHint = hint?.storeHint ?? "bulk retail";
+
   const queries = [
-    `sams club item ${sku}`,
-    `samsclub ${sku}`,
-    sku,
+    `${sku}`,
+    `${storeHint} ${sku}`,
+    `${storeHint} item ${sku}`,
     keywordHint ? `${sku} ${keywordHint}` : "",
-    keywordHint ? `sams club item ${sku} ${keywordHint}` : "",
+    keywordHint ? `${storeHint} ${sku} ${keywordHint}` : "",
   ].filter(Boolean);
 
   return Array.from(new Set(queries));
+}
+
+function parsePrice(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? Number(raw.toFixed(2)) : null;
+  const normalized = String(raw ?? "").replace(/[^\d.]/g, "").trim();
+  if (!normalized) return null;
+  const value = Number(normalized);
+  return Number.isFinite(value) ? Number(value.toFixed(2)) : null;
+}
+
+
+function selectLookupIdentifier(item: ParsedReceiptItem): string | null {
+  const seeded = [item.sku ?? "", item.code ?? "", item.rawName]
+    .flatMap((value) => String(value ?? "").match(/\b[0-9A-Za-z]{5,18}\b/g) ?? [])
+    .map((token) => normalizeIdentifier(token))
+    .filter((token): token is string => Boolean(token))
+    .sort((a, b) => b.length - a.length);
+
+  return seeded[0] ?? null;
+}
+
+function normalizeIdentifier(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const cleaned = String(input).replace(/[^A-Za-z0-9]/g, "").trim();
+  if (!cleaned) return null;
+
+  const numeric = cleaned.replace(/^0+/, "");
+  const normalized = numeric || cleaned;
+  return normalized.length >= 5 ? normalized : null;
 }
 
 async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>, openAiApiKey: string): Promise<string[]> {

@@ -94,7 +94,12 @@ Deno.serve(async (req) => {
       data: {
         line_items: reconciledLineItems.map((item, index) => {
           const suggested_categories = categorySuggestions[index];
-          const needsReview = item.needsReview || item.totalMismatch || suggested_categories.length === 0;
+          const enrichedSuggestions = suggested_categories.length ? suggested_categories : fallbackCategorySuggestion(categories);
+          const reviewReasons = [
+            ...(item.reviewReasons ?? []),
+            ...(enrichedSuggestions.length ? [] : ["no category match"]),
+          ];
+          const needsReview = item.needsReview || item.totalMismatch || reviewReasons.length > 0;
 
           return {
             raw_description: item.rawName,
@@ -105,8 +110,8 @@ Deno.serve(async (req) => {
             unit_price: item.unitPrice,
             line_total: item.total,
             total_mismatch: item.totalMismatch,
-            suggested_category: suggested_categories[0]?.name ?? null,
-            suggested_categories,
+            suggested_category: enrichedSuggestions[0]?.name ?? null,
+            suggested_categories: enrichedSuggestions,
             product_code: item.code,
             sku: item.sku,
             enrichment_source: item.enrichmentSource,
@@ -114,7 +119,9 @@ Deno.serve(async (req) => {
             product_category: item.category,
             quality_score: item.qualityScore,
             needs_review: needsReview,
+            needs_review_reason: Array.from(new Set(reviewReasons)).join(", ") || null,
             quality_flags: item.qualityFlags,
+            original_description: item.originalName ?? item.name,
           };
         }),
         tax_amount: parseTax(parsed.tax),
@@ -242,6 +249,12 @@ function sanitizeCategories(categories: unknown): string[] {
 
 type CategorySuggestion = { name: string; confidence: number };
 
+
+function fallbackCategorySuggestion(categories: string[]): CategorySuggestion[] {
+  if (!categories.length) return [];
+  return [{ name: categories[0], confidence: 0.12 }];
+}
+
 async function suggestCategories(itemName: string, categories: string[], openAiApiKey: string): Promise<CategorySuggestion[]> {
   if (!categories.length) return [];
 
@@ -258,6 +271,7 @@ async function suggestCategories(itemName: string, categories: string[], openAiA
     if (merged.length >= 3) break;
   }
 
+  if (!merged.length) return fallbackCategorySuggestion(categories);
   return merged.slice(0, 3);
 }
 
