@@ -6,6 +6,7 @@ import {
   parseQuantityAndPrice,
   scoreLineItemQuality,
 } from "./line-items.ts";
+import { fetchWithTimeout } from "./fetch.ts";
 
 const STORAGE_MARKER = "/storage/v1/object/";
 
@@ -36,6 +37,16 @@ export type ReceiptAsset = {
   mimeType: string;
   extension: string;
   base64: string;
+};
+
+export type TabscannerReceiptData = {
+  items: Array<{ name: string; amount: number | string; code: string | null }>;
+  tax: number | string | null;
+  total: number | string | null;
+  subtotal: number | string | null;
+  store: string | null;
+  merchant: string | null;
+  raw: Record<string, unknown>;
 };
 
 const storeParsers = {
@@ -121,16 +132,28 @@ export async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(binary);
 }
 
-export function buildOcrInput(asset: ReceiptAsset): Array<Record<string, unknown>> {
+export function buildOcrInput(
+  asset: ReceiptAsset,
+  options: { tabscannerData?: TabscannerReceiptData | null } = {},
+): Array<Record<string, unknown>> {
   const prompt = {
     type: "input_text",
     text:
       "Extract purchasable line items from this receipt. Return JSON only with shape {\"items\":[{\"name\":string,\"amount\":number|string,\"code\":string|null}],\"tax\":number|string,\"total\":number|string,\"store\":string|null}. Keep quantity and unit price hints in item names (e.g. '36 @ 8.98', '36CT'). Do not include subtotal/total/payment lines as items.",
   };
 
+  const tabscannerContext = options.tabscannerData
+    ? {
+      type: "input_text",
+      text:
+        `Tabscanner OCR candidate JSON (prefer its numeric totals and item prices when confidence conflicts): ${JSON.stringify(options.tabscannerData)}`,
+    }
+    : null;
+
   if (asset.mimeType === "application/pdf") {
     return [
       prompt,
+      ...(tabscannerContext ? [tabscannerContext] : []),
       {
         type: "input_file",
         filename: `receipt.${asset.extension}`,
@@ -141,11 +164,89 @@ export function buildOcrInput(asset: ReceiptAsset): Array<Record<string, unknown
 
   return [
     prompt,
+    ...(tabscannerContext ? [tabscannerContext] : []),
     {
       type: "input_image",
       image_url: `data:${asset.mimeType};base64,${asset.base64}`,
     },
   ];
+}
+
+export async function requestTabscannerExtraction(params: {
+  asset: ReceiptAsset;
+  apiKey?: string;
+  timeoutMs?: number;
+}): Promise<TabscannerReceiptData | null> {
+  const apiKey = params.apiKey?.trim();
+  if (!apiKey) return null;
+
+  const endpoint = Deno.env.get("TABSCANNER_API_URL") ?? "https://api.tabscanner.com";
+  const timeoutMs = params.timeoutMs ?? 12000;
+  const form = new FormData();
+  form.append("file", new File([params.asset.blob], `receipt.${params.asset.extension}`, { type: params.asset.mimeType }));
+
+  try {
+    const submit = await fetchWithTimeout(`${endpoint}/api/2/process`, {
+      method: "POST",
+      headers: { apikey: apiKey },
+      body: form,
+    }, timeoutMs);
+    const submitPayload = await safeParseJsonResponse(submit);
+    if (!submit.ok) {
+      console.warn("tabscanner_submit_failed", { status: submit.status, payload: submitPayload });
+      return null;
+    }
+
+    const immediate = normalizeTabscannerPayload(submitPayload);
+    if (immediate.items.length) return immediate;
+
+    const jobId = String(submitPayload?.token ?? submitPayload?.id ?? submitPayload?.uuid ?? "").trim();
+    if (!jobId) return null;
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const poll = await fetchWithTimeout(`${endpoint}/api/2/result/${jobId}`, {
+        method: "GET",
+        headers: { apikey: apiKey },
+      }, timeoutMs);
+      const pollPayload = await safeParseJsonResponse(poll);
+      if (!poll.ok) continue;
+      const normalized = normalizeTabscannerPayload(pollPayload);
+      if (normalized.items.length || Number.isFinite(parseCurrencyToNumber(normalized.total))) {
+        return normalized;
+      }
+    }
+  } catch (error) {
+    console.warn("tabscanner_request_failed", { error: String(error) });
+  }
+
+  return null;
+}
+
+function normalizeTabscannerPayload(payload: any): TabscannerReceiptData {
+  const source = (payload?.result ?? payload?.data ?? payload ?? {}) as Record<string, unknown>;
+  const rawItems = [
+    source.items,
+    source.lineItems,
+    source.products,
+    (source.receipt as any)?.items,
+  ].find((value) => Array.isArray(value));
+
+  const items = (Array.isArray(rawItems) ? rawItems : []).map((item: any) => ({
+    name: String(item?.name ?? item?.description ?? item?.title ?? "").trim(),
+    amount: item?.price ?? item?.amount ?? item?.total ?? "",
+    code: item?.code ?? item?.sku ?? item?.barcode ?? null,
+  })).filter((item) => item.name);
+
+  return {
+    items,
+    tax: source.tax ?? source.totalTax ?? (source.receipt as any)?.tax ?? null,
+    total: source.total ?? source.grandTotal ?? (source.receipt as any)?.total ?? null,
+    subtotal: source.subtotal ?? source.subTotal ?? (source.receipt as any)?.subtotal ?? null,
+    store: String(source.store ?? source.storeName ?? (source.receipt as any)?.store ?? "").trim() || null,
+    merchant: String(source.merchant ?? source.merchantName ?? (source.receipt as any)?.merchant ?? "").trim() || null,
+    raw: source,
+  };
 }
 
 export async function safeParseJsonResponse(response: Response): Promise<any> {
