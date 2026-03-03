@@ -13,6 +13,7 @@ import {
   extractJsonFromModelResponse,
   normalizeIncomingFilePath,
   parseReceiptItems,
+  parseCurrencyToNumber,
   parseTax,
   prepareReceiptAsset,
   safeParseJsonResponse,
@@ -45,7 +46,8 @@ Deno.serve(async (req) => {
       throw new HttpError(422, "OCR did not return parseable JSON");
     }
 
-    const items = parseReceiptItems(parsed.items);
+    const store = detectStoreType(parsed.store, parsed.merchant);
+    const items = parseReceiptItems(parsed.items, { store });
     const enrichedItems = await enrichLineItems({
       adminClient,
       items,
@@ -58,6 +60,8 @@ Deno.serve(async (req) => {
       data: {
         items: enrichedItems,
         tax: parseTax(parsed.tax),
+        receipt_total: parseCurrencyToNumber(parsed.total),
+        store,
       },
       meta: {
         user_id: user.id,
@@ -150,4 +154,12 @@ async function requestExtraction(asset: Awaited<ReturnType<typeof prepareReceipt
   }
 
   return payload;
+}
+
+
+function detectStoreType(...candidates: unknown[]): "sams_club" | "walmart" | "generic" {
+  const combined = candidates.map((value) => String(value ?? "").toLowerCase()).join(" ");
+  if (combined.includes("sam") || combined.includes("sams club")) return "sams_club";
+  if (combined.includes("walmart")) return "walmart";
+  return "generic";
 }

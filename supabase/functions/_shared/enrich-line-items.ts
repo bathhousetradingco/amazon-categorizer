@@ -31,7 +31,7 @@ export async function enrichLineItems(params: {
     enrichmentSource: "normalized",
     brand: null,
     category: null,
-    needsReview: item.qualityScore < 0.65,
+    needsReview: item.qualityScore < 0.65 || item.totalMismatch,
   }));
 
   const skuMap = new Map<string, number[]>();
@@ -83,6 +83,22 @@ export async function enrichLineItems(params: {
   return result;
 }
 
+export async function enrichProductName(params: {
+  adminClient: ReturnType<typeof createClient>;
+  item: ParsedReceiptItem;
+  openAiApiKey: string;
+  serpApiKey?: string;
+}): Promise<EnrichedReceiptItem> {
+  const [single] = await enrichLineItems({
+    adminClient: params.adminClient,
+    items: [params.item],
+    openAiApiKey: params.openAiApiKey,
+    serpApiKey: params.serpApiKey,
+  });
+
+  return single;
+}
+
 function applyLookup(
   item: EnrichedReceiptItem,
   cleanName: string,
@@ -97,7 +113,7 @@ function applyLookup(
   item.enrichmentSource = source;
   item.brand = brand;
   item.category = category;
-  item.needsReview = nextName.length < 5;
+  item.needsReview = nextName.length < 5 || item.totalMismatch;
   item.qualityScore = Math.max(item.qualityScore, source === "normalized" ? 0.65 : 0.85);
 }
 
@@ -156,7 +172,7 @@ async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>
   const prompt = [
     "Clean and expand receipt line item names into user-friendly product titles.",
     "Return JSON only with shape: {\"items\": [{\"clean_name\": string}]}",
-    "Rules: remove shorthand, remove internal SKU noise, keep names concise and specific.",
+    "Rules: expand abbreviations, remove shorthand and store internal codes, keep package size/count when present.",
     `Input: ${JSON.stringify(items)}`,
   ].join("\n");
 
