@@ -4,7 +4,13 @@ import { ParsedReceiptItem } from "./receipt.ts";
 export type EnrichedReceiptItem = ParsedReceiptItem & {
   enrichedName: string;
   originalName: string;
+  name_original: string;
+  name_enriched: string;
+  name_final: string;
+  item_number_raw: string | null;
+  normalized_item_number: string | null;
   enrichmentSource: "serpapi" | "cache" | "ai_cleanup" | "normalized";
+  enrichment_source: "serpapi" | "cache" | "ai_cleanup" | "normalized";
   brand: string | null;
   category: string | null;
   qualityScore: number;
@@ -40,6 +46,11 @@ type SerpEnrichmentResult = {
   sourceUrl: string | null;
 };
 
+type ProductNumberExtraction = {
+  raw: string | null;
+  normalized: string | null;
+};
+
 const SEARCH_TIMEOUT_MS = 4500;
 const SERP_MAX_SKUS_PER_BATCH = 12;
 
@@ -51,12 +62,20 @@ export async function enrichLineItems(params: {
 }): Promise<EnrichedReceiptItem[]> {
   const { adminClient, items, openAiApiKey, serpApiKey } = params;
   const result: EnrichedReceiptItem[] = items.map((item) => {
-    const reasons = collectReviewReasons(item, item.name);
+    const displayName = extractNameWithoutProductNumber(item.rawName) ?? item.name;
+    const reasons = collectReviewReasons(item, displayName);
     return {
       ...item,
-      originalName: item.name,
-      enrichedName: item.name,
+      originalName: displayName,
+      enrichedName: displayName,
+      name_original: displayName,
+      name_enriched: displayName,
+      name_final: displayName,
+      name: displayName,
+      item_number_raw: null,
+      normalized_item_number: null,
       enrichmentSource: "normalized",
+      enrichment_source: "normalized",
       brand: null,
       category: null,
       needsReview: reasons.length > 0,
@@ -68,7 +87,16 @@ export async function enrichLineItems(params: {
   const skuHints = new Map<string, LookupHint>();
   const skuByIndex = new Map<number, string>();
   result.forEach((item, index) => {
-    const sku = selectLookupIdentifier(item);
+    const extracted = extractProductNumberFromLine(item.rawName);
+    item.item_number_raw = extracted.raw;
+    item.normalized_item_number = extracted.normalized;
+    console.log({
+      step: "PRODUCT_NUMBER_EXTRACTED",
+      raw: extracted.raw,
+      normalized: extracted.normalized,
+    });
+
+    const sku = extracted.normalized ?? selectLookupIdentifier(item);
     if (!sku) return;
     skuByIndex.set(index, sku);
     if (!item.sku) item.sku = sku;
@@ -172,8 +200,12 @@ function applyLookup(
   const nextName = cleanName.trim();
   if (!nextName) return;
 
+  item.name = nextName;
   item.enrichedName = nextName;
+  item.name_enriched = nextName;
+  item.name_final = nextName;
   item.enrichmentSource = source;
+  item.enrichment_source = source;
   item.brand = brand;
   item.category = category;
   item.qualityScore = Math.max(item.qualityScore, source === "normalized" ? 0.65 : 0.88);
@@ -254,7 +286,13 @@ async function lookupSkusViaSerpApi(
 
   for (const sku of skus) {
     const hint = skuHints.get(sku);
-    const match = await enrichWithSerpAPI(sku, hint?.storeHint ?? "bulk retail", serpApiKey, serpCache);
+    const match = await enrichWithSerpAPI(
+      sku,
+      hint?.rawName ?? hint?.normalizedName ?? "",
+      hint?.storeHint ?? "bulk retail",
+      serpApiKey,
+      serpCache,
+    );
 
     if (!match || match.confidence === "low") {
       console.log("receipt_enrichment_failed", { sku, reason: "no_product_match" });
@@ -300,6 +338,7 @@ async function searchGoogleResults(query: string, serpApiKey: string): Promise<S
 
 async function enrichWithSerpAPI(
   productNumber: string,
+  ocrName: string,
   storeHint: string,
   serpApiKey: string,
   cache: Map<string, SerpEnrichmentResult | null>,
@@ -309,23 +348,36 @@ async function enrichWithSerpAPI(
 
   if (cache.has(normalizedNumber)) return cache.get(normalizedNumber) ?? null;
 
-  const query = `${normalizedNumber} ${storeHint} product`;
-  const matches = await searchGoogleResults(query, serpApiKey);
-  const top = matches[0] ?? null;
-  const resultTitle = top?.title ?? top?.snippet ?? null;
+  const queries = [
+    { query: `site:samsclub.com ${normalizedNumber}`, strategy: "samsclub" as const },
+    { query: `${normalizedNumber} Sam's Club product`, strategy: "serpapi" as const },
+    { query: `${normalizedNumber} ${storeHint} product`, strategy: "serpapi" as const },
+  ];
 
-  console.log({
-    step: "SERPAPI_QUERY",
-    query,
-    result_title: resultTitle,
-  });
+  let top: SerpMatch | null = null;
+  for (const candidate of queries) {
+    console.log({ step: "SEARCH_QUERY", query: candidate.query, strategy: candidate.strategy });
+    const matches = await searchGoogleResults(candidate.query, serpApiKey);
+    const current = matches[0] ?? null;
+    if (!current) {
+      console.log({ step: "SEARCH_RESULT", title: null, accepted: false });
+      continue;
+    }
 
-  if (!top || !resultTitle) {
+    const accepted = isAcceptedSearchResult(current, ocrName);
+    console.log({ step: "SEARCH_RESULT", title: current.title, accepted });
+    if (accepted) {
+      top = current;
+      break;
+    }
+  }
+
+  if (!top) {
     cache.set(normalizedNumber, null);
     return null;
   }
 
-  const confidence = scoreEnrichmentConfidence(top, normalizedNumber, storeHint);
+  const confidence = scoreEnrichmentConfidence(top, normalizedNumber, storeHint, ocrName);
   const enrichment: SerpEnrichmentResult = {
     enriched_name: top.title || top.snippet || normalizedNumber,
     confidence,
@@ -362,14 +414,22 @@ async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: 
   return null;
 }
 
-function scoreEnrichmentConfidence(match: SerpMatch, normalizedNumber: string, storeHint: string): "high" | "medium" | "low" {
+function scoreEnrichmentConfidence(
+  match: SerpMatch,
+  normalizedNumber: string,
+  storeHint: string,
+  ocrName: string,
+): "high" | "medium" | "low" {
   const text = `${match.title} ${match.snippet ?? ""}`.toLowerCase();
   const hasNumber = text.includes(normalizedNumber.toLowerCase());
   const hasStore = text.includes(storeHint.toLowerCase().split(" ")[0]);
+  const inSamsDomain = (match.link ?? "").toLowerCase().includes("samsclub.com");
   const unrelated = /manual|replacement|part|coupon|deal|review|youtube|ebay/i.test(text);
 
   if (unrelated) return "low";
+  if (inSamsDomain && hasNumber) return "high";
   if (hasNumber && hasStore) return "high";
+  if (hasSemanticTokenOverlap(ocrName, `${match.title} ${match.snippet ?? ""}`)) return "high";
   if (match.title.length >= 12) return "medium";
   return "low";
 }
@@ -438,4 +498,45 @@ async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>
   } catch {
     return [];
   }
+}
+
+function extractNameWithoutProductNumber(rawLine: string): string | null {
+  const withoutProductNumber = rawLine.replace(/^\s*\d{8,14}\s+/, "").trim();
+  return withoutProductNumber || null;
+}
+
+function extractProductNumberFromLine(rawLine: string): ProductNumberExtraction {
+  const match = rawLine.match(/^\s*(\d{8,14})\b/);
+  const raw = match?.[1] ?? null;
+  const normalized = raw ? normalizeIdentifier(raw) : null;
+  return { raw, normalized };
+}
+
+function isAcceptedSearchResult(match: SerpMatch, ocrName: string): boolean {
+  const fullText = `${match.title} ${match.snippet ?? ""}`.toLowerCase();
+  const domain = (match.link ?? "").toLowerCase();
+  if (domain.includes("samsclub.com")) return true;
+
+  const keywordHit = /coffee|yogurt|oil|milk|chicken|beef|bread|water|detergent|paper|snack/i.test(fullText);
+  if (keywordHit) return true;
+
+  const ocrTokens = tokenizeMeaningful(ocrName);
+  const resultTokens = tokenizeMeaningful(`${match.title} ${match.snippet ?? ""}`);
+  const overlap = ocrTokens.filter((token) => resultTokens.includes(token)).length;
+  return overlap >= 2;
+}
+
+function tokenizeMeaningful(text: string): string[] {
+  return String(text)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3);
+}
+
+
+function hasSemanticTokenOverlap(source: string, candidate: string): boolean {
+  const sourceTokens = tokenizeMeaningful(source);
+  const candidateTokens = tokenizeMeaningful(candidate);
+  const overlap = sourceTokens.filter((token) => candidateTokens.includes(token)).length;
+  return overlap >= 2;
 }
