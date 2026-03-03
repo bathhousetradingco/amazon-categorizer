@@ -24,7 +24,7 @@ const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
-const SERPAPI_API_KEY = Deno.env.get("SERPAPI_API_KEY") ?? undefined;
+const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API_KEY") ?? undefined;
 
 const CATEGORY_BLOCKLIST = new Set(["other", "general", "unknown", "needs review"]);
 
@@ -60,6 +60,9 @@ Deno.serve(async (req) => {
     }
 
     const store = detectStoreType(parsed.store, parsed.merchant);
+    if (!SERPAPI_API_KEY) {
+      console.log("SERPAPI_KEY missing");
+    }
     const lineItems = parseReceiptItems(parsed.items, { store });
     if (!lineItems.length) {
       throw new HttpError(422, "No valid line items detected", {
@@ -72,6 +75,7 @@ Deno.serve(async (req) => {
       items: lineItems,
       openAiApiKey: OPENAI_API_KEY,
       serpApiKey: SERPAPI_API_KEY,
+      store,
     });
 
     const receiptTotal = parseCurrencyToNumber(parsed.total);
