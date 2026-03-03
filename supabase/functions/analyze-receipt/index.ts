@@ -248,6 +248,14 @@ async function loadCachedReceiptAnalysis(params: {
     .maybeSingle();
 
   if (error) {
+    if (isReceiptAnalysisCacheUnavailable(error)) {
+      console.warn("Receipt analysis cache unavailable; continuing without cache", {
+        code: error.code,
+        message: error.message,
+      });
+      return null;
+    }
+
     throw new HttpError(500, "Failed to load cached receipt analysis", { db_error: error.message });
   }
 
@@ -287,8 +295,28 @@ async function persistReceiptAnalysis(params: {
     .upsert(payload, { onConflict: "user_id,file_path" });
 
   if (error) {
+    if (isReceiptAnalysisCacheUnavailable(error)) {
+      console.warn("Receipt analysis cache unavailable; skipping persistence", {
+        code: error.code,
+        message: error.message,
+      });
+      return;
+    }
+
     throw new HttpError(500, "Failed to persist receipt analysis", { db_error: error.message });
   }
+}
+
+function isReceiptAnalysisCacheUnavailable(error: { code?: string; message?: string }): boolean {
+  if (!error) return false;
+  if (error.code === "42P01" || error.code === "42703") return true;
+
+  const message = (error.message ?? "").toLowerCase();
+  return message.includes("receipt_analyses") && (
+    message.includes("does not exist")
+    || message.includes("undefined table")
+    || message.includes("column")
+  );
 }
 
 async function assertReceiptBelongsToUser(
