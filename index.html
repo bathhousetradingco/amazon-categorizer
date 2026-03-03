@@ -2396,7 +2396,10 @@ async function analyzeReceipt(item){
     // ✅ Store result
     item.receipt_analysis = {
       items: lineItems,
-      tax_amount: taxAmount
+      tax_amount: taxAmount,
+      receipt_total: resultPayload.receipt_total ?? item.Amount ?? 0,
+      computed_total: resultPayload.computed_total ?? 0,
+      problematic_line_items: resultPayload.problematic_line_items || []
     };
 
     // ✅ Apply tax
@@ -2404,6 +2407,7 @@ async function analyzeReceipt(item){
 
     // ✅ Render UI
     renderReceiptSuggestions(item, lineItems);
+    logReceiptReviewDebug(item, "analysis_complete");
 
   } catch (err) {
     console.error("❌ Analyze error:", err);
@@ -2455,6 +2459,87 @@ async function analyzeReceipt(item){
     );
   }
 
+function toCents(value){
+  const num = Number(value);
+  if(!Number.isFinite(num)) return 0;
+  return Math.round(num * 100);
+}
+
+function canonicalSuggestionCents(suggestion){
+  const hasQtyAndUnit = Number.isFinite(Number(suggestion?.quantity)) && Number(suggestion?.quantity) > 0
+    && Number.isFinite(Number(suggestion?.unit_price));
+  const preferred = hasQtyAndUnit ? suggestion?.line_total : suggestion?.amount;
+  const preferredCents = toCents(preferred);
+  return preferredCents || toCents(suggestion?.amount);
+}
+
+function getReceiptReviewDebugBreakdown(item){
+  const suggestions = item?.receipt_analysis?.items || [];
+  const splits = item?.Splits || [];
+  const receiptTotalCents = toCents(item?.receipt_analysis?.receipt_total ?? item?.Amount ?? 0);
+
+  let acceptedAmountCents = 0;
+  let acceptedLineTotalCents = 0;
+  let allocatedIndexedCents = 0;
+  const rows = suggestions.map((s, index) => {
+    const split = splits.find((sp) => sp.item_index === index);
+    const accepted = !!split;
+    const included = accepted;
+    const canonicalCents = canonicalSuggestionCents(s);
+
+    if(included){
+      allocatedIndexedCents += canonicalCents;
+      acceptedAmountCents += toCents(s?.amount);
+      acceptedLineTotalCents += toCents(s?.line_total);
+    }
+
+    return {
+      index,
+      raw_description: s?.raw_description || "",
+      amount_cents: toCents(s?.amount),
+      line_total_cents: toCents(s?.line_total),
+      quantity: Number(s?.quantity || 0),
+      unit_price_cents: toCents(s?.unit_price),
+      accepted,
+      included_in_allocated: included,
+      reason_if_excluded: included ? null : "not_accepted",
+      canonical_allocated_cents: canonicalCents,
+      needs_review: !!s?.needs_review,
+      enrichment_source: s?.enrichment_source || null
+    };
+  });
+
+  const nonIndexedSplitCents = splits
+    .filter((sp) => !Number.isInteger(sp.item_index))
+    .reduce((sum, sp) => sum + toCents(sp.Amount), 0);
+
+  const allocatedCents = allocatedIndexedCents + nonIndexedSplitCents;
+  const rawRemainingCents = receiptTotalCents - allocatedCents;
+  const remainingCents = Math.abs(rawRemainingCents) <= 1 ? 0 : rawRemainingCents;
+
+  return {
+    receipt_total_cents: receiptTotalCents,
+    tax_amount_cents: toCents(item?.receipt_analysis?.tax_amount ?? 0),
+    computed_total_cents: toCents(item?.receipt_analysis?.computed_total ?? 0),
+    sum_amount_cents: suggestions.reduce((sum, s) => sum + toCents(s?.amount), 0),
+    sum_line_total_cents: suggestions.reduce((sum, s) => sum + toCents(s?.line_total), 0),
+    accepted_amount_cents: acceptedAmountCents,
+    accepted_line_total_cents: acceptedLineTotalCents,
+    non_indexed_split_cents: nonIndexedSplitCents,
+    allocated_cents: allocatedCents,
+    remaining_cents: remainingCents,
+    delta_to_receipt_total_cents: remainingCents,
+    problematic_line_items: item?.receipt_analysis?.problematic_line_items || [],
+    rows
+  };
+}
+
+function logReceiptReviewDebug(item, source){
+  const breakdown = getReceiptReviewDebugBreakdown(item);
+  console.log("[receipt-review-debug]", source || "unknown", breakdown);
+  return breakdown;
+}
+
  async function acceptSuggestion(itemId, index){
 
   const item = data.find(d => d.id === itemId);
@@ -2471,10 +2556,12 @@ async function analyzeReceipt(item){
   // =============================
   // ✅ APPLY SPLIT
   // =============================
+  const canonicalAmount = canonicalSuggestionCents(suggestion) / 100;
+
   item.Splits.push({
     item_index: index,
     Category: suggestion.suggested_category || "Needs Review",
-    Amount: parseFloat(suggestion.amount || 0)
+    Amount: parseFloat(canonicalAmount.toFixed(2))
   });
 
   suggestion._accepted = true;
@@ -2517,6 +2604,7 @@ async function analyzeReceipt(item){
   updateTotals();
 
   renderReceiptSuggestions(item, item.receipt_analysis.items);
+  logReceiptReviewDebug(item, "accept_suggestion");
 }
 
 
@@ -2583,15 +2671,12 @@ function renderReceiptSuggestions(item, suggestions){
 
   receiptSuggestions = suggestions;
 
-  const total = parseFloat(item.Amount || 0);
-
-  let allocated = 0;
-  (item.Splits || []).forEach(s=>{
-    allocated += parseFloat(s.Amount || 0);
-  });
-
-  allocated = parseFloat(allocated.toFixed(2));
-  const remaining = parseFloat((total - allocated).toFixed(2));
+  const breakdown = getReceiptReviewDebugBreakdown(item);
+  const total = breakdown.receipt_total_cents / 100;
+  const allocated = breakdown.allocated_cents / 100;
+  const remaining = breakdown.remaining_cents / 100;
+  const allAccepted = suggestions.length > 0 && suggestions.every((_, i) => (item.Splits || []).some(sp => sp.item_index === i));
+  const showMismatchHint = allAccepted && breakdown.remaining_cents !== 0;
 
   modalTitle.innerText = "Review Receipt";
 
@@ -2635,6 +2720,7 @@ function renderReceiptSuggestions(item, suggestions){
         <div class="splitMetric">Allocated<strong>$${allocated.toFixed(2)}</strong></div>
         <div class="splitMetric remaining ${Math.abs(remaining) < 0.01 ? "done" : remaining < 0 ? "nearDone" : ""}">Remaining<strong>$${remaining.toFixed(2)}</strong></div>
       </div>
+      ${showMismatchHint ? `<div class="small" style="padding:6px 4px 0; color:#8a5a00;">Remaining $${Math.abs(remaining).toFixed(2)} likely due to unparsed discount/tax/rounding — review receipt lines</div>` : ""}
     </div>
   `;
 
@@ -2838,6 +2924,11 @@ function updateRemainingUI(){
   requestAnimationFrame(() => {
     const el = document.getElementById("remainingBar");
     if(!el) return;
+    if(document.getElementById("suggestion_0")){
+      renderReceiptSuggestions(item, item.receipt_analysis?.items || receiptSuggestions || []);
+      logReceiptReviewDebug(item, "update_remaining_ui");
+      return;
+    }
     el.outerHTML = renderSplitTotals(item);
     updateSplitProgressState();
   });
@@ -3698,7 +3789,7 @@ function applyAISuggestion(category){
       item.Splits.push({
         item_index: index,
         Category: category,
-        Amount: parseFloat(suggestion.amount || 0)
+        Amount: parseFloat((canonicalSuggestionCents(suggestion) / 100).toFixed(2))
       });
     }
 
@@ -3713,6 +3804,7 @@ function applyAISuggestion(category){
     updateRemainingUI();
     updateSplitSummaryUI();
     updateTotals();
+    logReceiptReviewDebug(item, "change_category_ai_accept");
 
     aiContext = null;
     return;
@@ -3773,7 +3865,7 @@ function selectCategory(category){
       item.Splits.push({
         item_index: index,
         Category: category,
-        Amount: parseFloat(suggestion.amount || 0)
+        Amount: parseFloat((canonicalSuggestionCents(suggestion) / 100).toFixed(2))
       });
     }
 
@@ -3786,6 +3878,7 @@ function selectCategory(category){
     updateRemainingUI();
     updateSplitSummaryUI();
     updateTotals();
+    logReceiptReviewDebug(item, "change_category_manual");
 
     aiContext = null;
     return;
