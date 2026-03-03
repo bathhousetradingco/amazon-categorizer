@@ -90,7 +90,9 @@ export async function enrichLineItems(params: {
     lookupsUsed: 0,
   };
   const result: EnrichedReceiptItem[] = items.map((item) => {
-    const displayName = extractNameWithoutProductNumber(item.rawName) ?? item.name;
+    const baseName = extractNameWithoutProductNumber(item.rawName) ?? item.name;
+    const parsedName = extractProductName(baseName) ?? baseName;
+    const displayName = normalizeProductName(parsedName) || parsedName;
     const reasons = collectReviewReasons(item, displayName);
     return {
       ...item,
@@ -116,6 +118,11 @@ export async function enrichLineItems(params: {
   const skuByIndex = new Map<number, string>();
   result.forEach((item, index) => {
     const extracted = extractProductNumber(item);
+    if (!isValidProductNumber(extracted.normalized)) {
+      extracted.raw = null;
+      extracted.normalized = null;
+      extracted.compact = null;
+    }
     item.item_number_raw = extracted.raw;
     item.normalized_item_number = extracted.normalized;
     console.log({
@@ -141,8 +148,9 @@ export async function enrichLineItems(params: {
     skuMap.set(sku, bucket);
 
     if (!skuHints.has(sku)) {
+      const parsedRawName = extractProductName(item.rawName) ?? item.rawName;
       skuHints.set(sku, {
-        rawName: item.rawName,
+        rawName: normalizeProductName(parsedRawName) || parsedRawName,
         normalizedName: item.name,
         storeHint: detectStoreHint(item.rawName, item.name),
         extractedProductNumber: extracted.raw,
@@ -503,23 +511,42 @@ async function enrichWithSerpAPI(
   trace: SerpLineItemTrace,
 ): Promise<SerpEnrichmentResult | null> {
   const normalizedNumber = normalizeIdentifier(productNumber);
-  const compactNumber = compactIdentifier(productNumber);
-  if (!normalizedNumber) {
-    console.log("SERPAPI_SKIPPED", { reason: "invalid_product_number" });
+  const compactNumber = compactIdentifier(normalizedNumber);
+  const cleanName = normalizeProductName(extractProductName(ocrName));
+  let query: string | null = null;
+  let skipSerpApi = false;
+
+  if (normalizedNumber) {
+    query = normalizedNumber;
+  } else {
+    if (!cleanName || cleanName.length < 3) {
+      skipSerpApi = true;
+    }
+    if (cleanName && /\b(at|for)\b|\$|\d+\.\d+/i.test(cleanName)) {
+      skipSerpApi = true;
+    }
+    query = cleanName;
+  }
+
+  if (!query || skipSerpApi) {
+    console.log("SERPAPI_SKIPPED", {
+      reason: "SERP_SKIPPED_BAD_QUERY",
+      query_attempted: query,
+    });
     return null;
   }
 
-  if (cache.has(normalizedNumber)) return cache.get(normalizedNumber) ?? null;
+  const cacheKey = normalizedNumber ?? `name:${query}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey) ?? null;
 
-  const productTokens = tokenizeMeaningful(ocrName).slice(0, 4).join(" ");
-  const numberQueryToken = compactNumber && compactNumber !== normalizedNumber
-    ? `"${compactNumber}" OR "${normalizedNumber}"`
-    : `"${normalizedNumber}"`;
-  const queries = [
-    { query: `site:samsclub.com ${numberQueryToken} ${productTokens}`.trim(), strategy: "samsclub_site" as const },
-    { query: `${numberQueryToken} Sam's Club ${productTokens}`.trim(), strategy: "serpapi" as const },
-    { query: `${numberQueryToken} ${productTokens}`.trim(), strategy: "serpapi" as const },
-  ];
+  const productTokens = tokenizeMeaningful(cleanName).slice(0, 4).join(" ");
+  const queries = normalizedNumber
+    ? [
+      { query: normalizedNumber, strategy: "serpapi" as const },
+    ]
+    : [
+      { query: productTokens || query, strategy: "serpapi" as const },
+    ];
 
   let top: SerpMatch | null = null;
   let source: "samsclub_site" | "serpapi" = "serpapi";
@@ -562,19 +589,19 @@ async function enrichWithSerpAPI(
   }
 
   if (!top || bestScore < 4.2) {
-    cache.set(normalizedNumber, null);
+    cache.set(cacheKey, null);
     return null;
   }
 
   const confidence = scoreEnrichmentConfidence(top, normalizedNumber, storeHint, ocrName);
   const enrichment: SerpEnrichmentResult = {
-    enriched_name: cleanProductTitle(top.title || top.snippet || normalizedNumber),
+    enriched_name: cleanProductTitle(top.title || top.snippet || query),
     confidence,
     source,
     sourceUrl: top.link,
   };
 
-  cache.set(normalizedNumber, enrichment);
+  cache.set(cacheKey, enrichment);
   console.log("SERPAPI_LINE_ITEM_TRACE", {
     ...trace,
     value_sent_to_serpapi: null,
@@ -619,12 +646,12 @@ async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: 
 
 function scoreEnrichmentConfidence(
   match: SerpMatch,
-  normalizedNumber: string,
+  normalizedNumber: string | null,
   storeHint: string,
   ocrName: string,
 ): "high" | "medium" | "low" {
   const text = `${match.title} ${match.snippet ?? ""}`.toLowerCase();
-  const hasNumber = text.includes(normalizedNumber.toLowerCase());
+  const hasNumber = normalizedNumber ? text.includes(normalizedNumber.toLowerCase()) : false;
   const hasStore = text.includes(storeHint.toLowerCase().split(" ")[0]);
   const inSamsDomain = (match.link ?? "").toLowerCase().includes("samsclub.com");
   const unrelated = /manual|replacement|part|coupon|deal|review|youtube|ebay/i.test(text);
@@ -649,7 +676,7 @@ function selectLookupIdentifier(item: ParsedReceiptItem): ProductNumberExtractio
     .map((value) => String(value ?? "").trim())
     .filter((value) => value.length > 0)
     .map((value) => ({ raw: value, compact: compactIdentifier(value), normalized: normalizeIdentifier(value) }))
-    .filter((entry) => isLikelyProductCode(entry.compact));
+    .filter((entry) => isValidProductNumber(entry.normalized));
 
   const raw = directCandidates[0]?.raw ?? null;
 
@@ -661,10 +688,10 @@ function selectLookupIdentifier(item: ParsedReceiptItem): ProductNumberExtractio
     };
   }
 
-  const fallback = String(item.rawName ?? "").match(/[0-9A-Za-z-]{5,20}/g) ?? [];
+  const fallback = String(item.rawName ?? "").match(/\d{8,14}/g) ?? [];
   const seededRaw = fallback
     .map((value) => ({ raw: value, compact: compactIdentifier(value) }))
-    .filter((entry) => isLikelyProductCode(entry.compact))
+    .filter((entry) => isValidProductNumber(entry.compact))
     .sort((a, b) => b.compact.length - a.compact.length)[0]?.raw ?? null;
   return {
     raw: seededRaw,
@@ -688,12 +715,14 @@ function normalizeStoreForLookup(store: string | undefined): "sams_club" | "walm
 
 function normalizeIdentifier(input: string | null | undefined): string | null {
   if (!input) return null;
-  const cleaned = String(input).replace(/[^A-Za-z0-9]/g, "").trim();
-  if (!cleaned) return null;
+  const compact = compactIdentifier(input);
+  if (!compact) return null;
+  return isValidProductNumber(compact) ? compact : null;
+}
 
-  const numeric = cleaned.replace(/^0+/, "");
-  const normalized = numeric || cleaned;
-  return normalized.length >= 5 ? normalized : null;
+function isValidProductNumber(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /^[0-9]{8,14}$/.test(String(value));
 }
 
 async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>, openAiApiKey: string): Promise<string[]> {
@@ -753,14 +782,11 @@ function extractNameWithoutProductNumber(rawLine: string): string | null {
 }
 
 function extractProductNumberFromLine(rawLine: string): ProductNumberExtraction {
-  const tokens = String(rawLine ?? "").match(/[0-9A-Za-z-]{5,20}/g) ?? [];
+  const tokens = String(rawLine ?? "").match(/\d{8,14}/g) ?? [];
   const candidates = tokens
     .map((token) => ({ raw: token, compact: compactIdentifier(token), normalized: normalizeIdentifier(token) }))
-    .filter((entry) => isLikelyProductCode(entry.compact) && entry.normalized)
+    .filter((entry) => isValidProductNumber(entry.normalized))
     .sort((a, b) => {
-      const aNumericScore = /^\d{8,14}$/.test(a.compact ?? "") ? 2 : /^\d+$/.test(a.compact ?? "") ? 1 : 0;
-      const bNumericScore = /^\d{8,14}$/.test(b.compact ?? "") ? 2 : /^\d+$/.test(b.compact ?? "") ? 1 : 0;
-      if (aNumericScore !== bNumericScore) return bNumericScore - aNumericScore;
       return (b.compact?.length ?? 0) - (a.compact?.length ?? 0);
     });
 
@@ -772,7 +798,7 @@ function extractProductNumberFromLine(rawLine: string): ProductNumberExtraction 
 function validateSearchResult(
   match: SerpMatch,
   ocrName: string,
-  normalizedNumber: string,
+  normalizedNumber: string | null,
   compactNumber: string | null,
 ): { accepted: boolean; reason: string; score: number } {
   const fullText = `${match.title} ${match.snippet ?? ""}`.toLowerCase();
@@ -785,7 +811,7 @@ function validateSearchResult(
   const genericPage = /how to|review|top\s\d+|best\s|news|blog|article|category|homepage|home page|deals|coupons/.test(fullText);
   if (navNoise || genericPage) return { accepted: false, reason: navNoise ? "navigation_noise" : "generic_content", score: 0 };
 
-  const hasNormalizedNumber = compactText?.includes(normalizedNumber.toLowerCase()) ?? false;
+  const hasNormalizedNumber = normalizedNumber ? (compactText?.includes(normalizedNumber.toLowerCase()) ?? false) : false;
   const hasCompactNumber = compactNumber ? (compactText?.includes(compactNumber.toLowerCase()) ?? false) : false;
   const hasNumber = hasNormalizedNumber || hasCompactNumber;
   const keywordHit = /coffee|yogurt|oil|milk|chicken|beef|bread|water|detergent|paper|snack|organic|oz|pack|count|bottle|member'?s mark/i.test(fullText);
@@ -805,7 +831,7 @@ function validateSearchResult(
   if (/\d+\s?(oz|lb|ct|pack|pk)\b/i.test(fullText)) score += 0.7;
   if (/item\s?#?\s*\d+/.test(fullText)) score += 0.6;
 
-  if (!hasNumber) return { accepted: false, reason: "missing_product_number", score };
+  if (normalizedNumber && !hasNumber) return { accepted: false, reason: "missing_product_number", score };
   if (score >= 4.2) return { accepted: true, reason: isSamsDomain ? "high_confidence_samsclub_match" : "scored_match", score };
   return { accepted: false, reason: "insufficient_signal", score };
 }
@@ -838,13 +864,28 @@ function compactIdentifier(input: string | null | undefined): string | null {
 }
 
 function isLikelyProductCode(compact: string | null): boolean {
-  if (!compact) return false;
-  if (compact.length < 5 || compact.length > 18) return false;
-  const hasDigit = /\d/.test(compact);
-  const hasAlpha = /[a-z]/i.test(compact);
-  if (!hasDigit) return false;
-  if (hasAlpha && compact.length < 7) return false;
-  return true;
+  return isValidProductNumber(compact);
+}
+
+function extractProductName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+
+  return raw
+    .replace(/\b\d+\s*AT\s*\d+\s*FOR\s*\d+(\.\d+)?\b/gi, "")
+    .replace(/\b\d+\s*FOR\s*\d+(\.\d+)?\b/gi, "")
+    .replace(/\bB\s*\d+\s*AT\s*\d+\b/gi, "")
+    .replace(/\$\d+(\.\d+)?/g, "")
+    .replace(/\b\d+(\.\d+)?\b/g, "")
+    .trim() || null;
+}
+
+function normalizeProductName(name: string | null | undefined): string {
+  if (!name) return "";
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function cleanProductTitle(title: string): string {
