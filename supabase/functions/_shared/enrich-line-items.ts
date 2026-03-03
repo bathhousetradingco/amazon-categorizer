@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ParsedReceiptItem } from "./receipt.ts";
+import { fetchWithTimeout } from "./fetch.ts";
 
 export type EnrichedReceiptItem = ParsedReceiptItem & {
   enrichedName: string;
@@ -53,6 +54,9 @@ type ProductNumberExtraction = {
 
 const SEARCH_TIMEOUT_MS = 4500;
 const SERP_MAX_SKUS_PER_BATCH = 12;
+const EXTERNAL_FETCH_TIMEOUT_MS = 12000;
+const MAX_LOOKUPS = 15;
+const MAX_ENRICHMENT_MS = 25000;
 
 export async function enrichLineItems(params: {
   adminClient: ReturnType<typeof createClient>;
@@ -62,6 +66,13 @@ export async function enrichLineItems(params: {
   store?: "sams_club" | "walmart" | "generic";
 }): Promise<EnrichedReceiptItem[]> {
   const { adminClient, items, openAiApiKey, serpApiKey, store } = params;
+  const startedAt = Date.now();
+  const budget = {
+    startedAt,
+    maxMs: MAX_ENRICHMENT_MS,
+    maxLookups: MAX_LOOKUPS,
+    lookupsUsed: 0,
+  };
   const result: EnrichedReceiptItem[] = items.map((item) => {
     const displayName = extractNameWithoutProductNumber(item.rawName) ?? item.name;
     const reasons = collectReviewReasons(item, displayName);
@@ -149,6 +160,7 @@ export async function enrichLineItems(params: {
           missingSkus.slice(0, SERP_MAX_SKUS_PER_BATCH),
           serpApiKey,
           skuHints,
+          budget,
         );
 
         for (const row of lookedUp) {
@@ -167,7 +179,11 @@ export async function enrichLineItems(params: {
     .filter(({ item }) => item.enrichmentSource === "none" || item.enrichmentSource === "normalized");
 
   if (unresolved.length) {
-    const cleaned = await aiCleanupNames(
+    if (isBudgetExceeded(budget)) {
+      console.log({ step: "GLOBAL_TIMEOUT", phase: "ai_cleanup", elapsedMs: Date.now() - budget.startedAt });
+    }
+
+    const cleaned = isBudgetExceeded(budget) ? [] : await aiCleanupNames(
       unresolved.map(({ item }) => ({ name: item.enrichedName, sku: item.sku })),
       openAiApiKey,
     );
@@ -315,15 +331,34 @@ async function upsertCacheRow(adminClient: ReturnType<typeof createClient>, row:
   );
 }
 
+type EnrichmentBudget = {
+  startedAt: number;
+  maxMs: number;
+  maxLookups: number;
+  lookupsUsed: number;
+};
+
 async function lookupSkusViaSerpApi(
   skus: string[],
   serpApiKey: string,
   skuHints: Map<string, LookupHint>,
+  budget: EnrichmentBudget,
 ): Promise<ProductLookupRow[]> {
   const rows: ProductLookupRow[] = [];
   const serpCache = new Map<string, SerpEnrichmentResult | null>();
 
   for (const sku of skus) {
+    if (isBudgetExceeded(budget)) {
+      console.log({ step: "GLOBAL_TIMEOUT", phase: "serp_lookup", elapsedMs: Date.now() - budget.startedAt, lookupsUsed: budget.lookupsUsed });
+      break;
+    }
+
+    if (budget.lookupsUsed >= budget.maxLookups) {
+      console.log({ step: "LOOKUP_CAP_REACHED", lookupsUsed: budget.lookupsUsed, maxLookups: budget.maxLookups });
+      break;
+    }
+
+    budget.lookupsUsed += 1;
     const hint = skuHints.get(sku);
     const match = await enrichWithSerpAPI(
       sku,
@@ -331,6 +366,7 @@ async function lookupSkusViaSerpApi(
       hint?.storeHint ?? "bulk retail",
       serpApiKey,
       serpCache,
+      budget,
     );
 
     if (!match || match.confidence === "low") {
@@ -351,7 +387,7 @@ async function lookupSkusViaSerpApi(
   return rows;
 }
 
-async function searchGoogleResults(query: string, serpApiKey: string, strategy: "samsclub_site" | "serpapi"): Promise<SerpMatch[]> {
+async function searchGoogleResults(query: string, serpApiKey: string, strategy: "samsclub_site" | "serpapi", budget: EnrichmentBudget): Promise<SerpMatch[]> {
   const url = new URL("https://serpapi.com/search");
   url.searchParams.set("engine", "google");
   url.searchParams.set("location", "United States");
@@ -361,7 +397,7 @@ async function searchGoogleResults(query: string, serpApiKey: string, strategy: 
 
   console.log({ step: "SERPAPI_QUERY", strategy, query, url: url.toString() });
 
-  const { payload, status } = await fetchWithRetry(url, { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS });
+  const { payload, status } = await fetchWithRetry(url, { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS, name: "serpapi", budget });
   const organic = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
 
   const mapped = organic
@@ -390,6 +426,7 @@ async function enrichWithSerpAPI(
   storeHint: string,
   serpApiKey: string,
   cache: Map<string, SerpEnrichmentResult | null>,
+  budget: EnrichmentBudget,
 ): Promise<SerpEnrichmentResult | null> {
   const normalizedNumber = normalizeIdentifier(productNumber);
   if (!normalizedNumber) return null;
@@ -404,7 +441,7 @@ async function enrichWithSerpAPI(
   let top: SerpMatch | null = null;
   let source: "samsclub_site" | "serpapi" = "serpapi";
   for (const candidate of queries) {
-    const matches = await searchGoogleResults(candidate.query, serpApiKey, candidate.strategy);
+    const matches = await searchGoogleResults(candidate.query, serpApiKey, candidate.strategy, budget);
     const current = matches[0] ?? null;
     if (!current) {
       console.log({ step: "VALIDATION", strategy: candidate.strategy, accepted: false, reason: "no_results" });
@@ -437,16 +474,20 @@ async function enrichWithSerpAPI(
   return enrichment;
 }
 
-async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number }): Promise<{ payload: any | null; status: number | null }> {
+async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number; name: string; budget: EnrichmentBudget }): Promise<{ payload: any | null; status: number | null }> {
   let lastError: unknown = null;
   let lastStatus: number | null = null;
 
   for (let attempt = 1; attempt <= options.attempts; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+    if (isBudgetExceeded(options.budget)) {
+      console.log({ step: "GLOBAL_TIMEOUT", phase: "fetch_retry", elapsedMs: Date.now() - options.budget.startedAt, url: url.toString() });
+      break;
+    }
 
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      console.log({ step: "FETCH_START", name: options.name, url: url.toString(), ts: Date.now(), attempt });
+      const response = await fetchWithTimeout(url, {}, options.timeoutMs);
+      console.log({ step: "FETCH_END", name: options.name, status: response.status, ts: Date.now(), attempt });
       lastStatus = response.status;
       if (!response.ok) {
         lastError = new Error(`http_${response.status}`);
@@ -455,8 +496,7 @@ async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: 
       return { payload: await response.json(), status: response.status };
     } catch (error) {
       lastError = error;
-    } finally {
-      clearTimeout(timeout);
+      console.error("external_fetch_failed", { name: options.name, url: url.toString(), attempt, error: String(error) });
     }
   }
 
@@ -518,7 +558,12 @@ async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>
     `Input: ${JSON.stringify(items)}`,
   ].join("\n");
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const url = "https://api.openai.com/v1/responses";
+  console.log({ step: "FETCH_START", name: "openai", url, ts: Date.now() });
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${openAiApiKey}`,
@@ -529,7 +574,13 @@ async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>
       input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
       max_output_tokens: 600,
     }),
-  });
+  }, EXTERNAL_FETCH_TIMEOUT_MS);
+  } catch (error) {
+    console.error("ai_cleanup_openai_failed", { error: String(error) });
+    return [];
+  }
+
+  console.log({ step: "FETCH_END", name: "openai", status: response.status, ts: Date.now() });
 
   if (!response.ok) return [];
 
@@ -583,6 +634,11 @@ function validateSearchResult(
   if (!hasNumber) return { accepted: false, reason: "missing_product_number" };
   if (navNoise) return { accepted: false, reason: "navigation_noise" };
   return { accepted: false, reason: "insufficient_signal" };
+}
+
+
+function isBudgetExceeded(budget: EnrichmentBudget): boolean {
+  return Date.now() - budget.startedAt >= budget.maxMs;
 }
 
 function tokenizeMeaningful(text: string): string[] {
