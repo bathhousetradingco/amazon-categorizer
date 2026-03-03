@@ -65,9 +65,6 @@ Deno.serve(async (req) => {
     }
 
     const store = detectStoreType(parsed.store, parsed.merchant);
-    if (!SERPAPI_API_KEY) {
-      console.log("SERPAPI_KEY missing");
-    }
     const lineItems = parseReceiptItems(parsed.items, { store });
     if (!lineItems.length) {
       throw new HttpError(422, "No valid line items detected", {
@@ -389,7 +386,10 @@ async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>,
 
 function detectStoreType(...candidates: unknown[]): "sams_club" | "walmart" | "generic" {
   const combined = candidates.map((value) => String(value ?? "").toLowerCase()).join(" ");
-  if (combined.includes("sam") || combined.includes("sams club")) return "sams_club";
+  const compact = combined.replace(/[^a-z]/g, "");
+  if (compact.includes("samsclub") || combined.includes("sam's club") || combined.includes("sams club") || combined.includes("sam club")) {
+    return "sams_club";
+  }
   if (combined.includes("walmart")) return "walmart";
   return "generic";
 }
