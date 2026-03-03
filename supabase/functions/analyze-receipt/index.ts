@@ -41,10 +41,40 @@ Deno.serve(async (req) => {
     const body = await parseJsonBody(req);
 
     const filePath = normalizeIncomingFilePath(body.filePath);
+    const forceReanalyze = body.forceReanalyze === true;
 
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     await assertReceiptBelongsToUser(adminClient, user.id, filePath);
+
+    if (!forceReanalyze) {
+      const cached = await loadCachedReceiptAnalysis({
+        adminClient,
+        userId: user.id,
+        filePath,
+      });
+
+      if (cached) {
+        console.log("RECEIPT_ANALYSIS_CACHE_HIT", { user_id: user.id, file_path: filePath });
+        return jsonResponse({
+          success: true,
+          data: {
+            ...cached.analysis,
+            user_state: cached.userState,
+          },
+          meta: {
+            user_id: user.id,
+            source: "stored",
+            cached: true,
+            last_analyzed_at: cached.lastAnalyzedAt,
+          },
+        });
+      }
+
+      console.log("RECEIPT_ANALYSIS_CACHE_MISS", { user_id: user.id, file_path: filePath });
+    } else {
+      console.log("RECEIPT_ANALYSIS_FORCE_REANALYZE", { user_id: user.id, file_path: filePath });
+    }
 
     const categories = await loadExistingCategories({
       adminClient,
@@ -102,8 +132,7 @@ Deno.serve(async (req) => {
       .filter(({ item }) => item.totalMismatch || item.needsReview)
       .map(({ index }) => index);
 
-    console.log("ANALYZE_RECEIPT_END", { ts: Date.now() });
-    return jsonResponse({
+    const responsePayload = {
       success: true,
       data: {
         line_items: reconciledLineItems.map((item, index) => {
@@ -145,13 +174,28 @@ Deno.serve(async (req) => {
         problematic_line_items: problematicLineItems,
         file_path: filePath,
         store,
+        user_state: {},
       },
       meta: {
         user_id: user.id,
         line_item_count: lineItems.length,
         receipt_needs_review: totalMismatch || problematicLineItems.length > 0,
+        source: "fresh",
+        cached: false,
       },
+    };
+
+    await persistReceiptAnalysis({
+      adminClient,
+      userId: user.id,
+      filePath,
+      analysis: responsePayload.data,
+      clearUserState: true,
     });
+
+    console.log("RECEIPT_ANALYSIS_STORED", { user_id: user.id, file_path: filePath });
+    console.log("ANALYZE_RECEIPT_END", { ts: Date.now() });
+    return jsonResponse(responsePayload);
   } catch (error: unknown) {
     const httpError = toHttpError(error);
     console.error("analyze-receipt error", {
@@ -189,6 +233,62 @@ async function requireAuthenticatedUser(req: Request) {
   }
 
   return userData.user;
+}
+
+async function loadCachedReceiptAnalysis(params: {
+  adminClient: ReturnType<typeof createClient>;
+  userId: string;
+  filePath: string;
+}): Promise<{ analysis: Record<string, unknown>; userState: Record<string, unknown>; lastAnalyzedAt: string | null } | null> {
+  const { data, error } = await params.adminClient
+    .from("receipt_analyses")
+    .select("analysis_data, user_state, last_analyzed_at")
+    .eq("user_id", params.userId)
+    .eq("file_path", params.filePath)
+    .maybeSingle();
+
+  if (error) {
+    throw new HttpError(500, "Failed to load cached receipt analysis", { db_error: error.message });
+  }
+
+  if (!data || typeof data.analysis_data !== "object" || !data.analysis_data) return null;
+
+  const userState = (typeof data.user_state === "object" && data.user_state)
+    ? data.user_state as Record<string, unknown>
+    : {};
+
+  return {
+    analysis: data.analysis_data as Record<string, unknown>,
+    userState,
+    lastAnalyzedAt: typeof data.last_analyzed_at === "string" ? data.last_analyzed_at : null,
+  };
+}
+
+async function persistReceiptAnalysis(params: {
+  adminClient: ReturnType<typeof createClient>;
+  userId: string;
+  filePath: string;
+  analysis: Record<string, unknown>;
+  clearUserState: boolean;
+}): Promise<void> {
+  const payload: Record<string, unknown> = {
+    user_id: params.userId,
+    file_path: params.filePath,
+    analysis_data: params.analysis,
+    last_analyzed_at: new Date().toISOString(),
+  };
+
+  if (params.clearUserState) {
+    payload.user_state = {};
+  }
+
+  const { error } = await params.adminClient
+    .from("receipt_analyses")
+    .upsert(payload, { onConflict: "user_id,file_path" });
+
+  if (error) {
+    throw new HttpError(500, "Failed to persist receipt analysis", { db_error: error.message });
+  }
 }
 
 async function assertReceiptBelongsToUser(
