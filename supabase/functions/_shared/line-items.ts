@@ -103,9 +103,10 @@ export function normalizeLineItemName(rawName: string): string {
 
 export function extractSKU(rawName: string, code: string | null): string | null {
   const candidates = [code ?? "", rawName]
-    .flatMap((value) => value.match(/\b\d{6,14}\b/g) ?? [])
+    .flatMap((value) => value.match(/\b\d{5,14}\b/g) ?? [])
     .map((value) => value.replace(/^0+/, ""))
-    .filter((value) => value.length >= 5 && value.length <= 14);
+    .filter((value) => value.length >= 5 && value.length <= 14)
+    .sort((a, b) => b.length - a.length);
 
   return candidates[0] ?? null;
 }
@@ -115,6 +116,23 @@ export function extractSkuCandidate(rawName: string, code: string | null): strin
 }
 
 export function parseQuantityAndPrice(line: string, amount: number): QuantityAndPrice {
+  const inferredUnitPrice = extractUnitPriceHint(line);
+  if (inferredUnitPrice && Number.isFinite(amount) && amount > inferredUnitPrice) {
+    const inferredQty = inferBulkQuantity(amount, inferredUnitPrice);
+    if (inferredQty > 1) {
+      const expectedTotal = toMoney(inferredQty * inferredUnitPrice);
+      return {
+        quantity: inferredQty,
+        unitPrice: inferredUnitPrice,
+        total: toMoney(amount),
+        totalFromLine: toMoney(amount),
+        expectedTotal,
+        hasTotalMismatch: Math.abs(toMoney(amount) - expectedTotal) > 0.05,
+        source: "inferred_bulk",
+      };
+    }
+  }
+
   const atPattern = line.match(/\b(\d{1,4})\s*(?:@|AT)\s*(\d{1,4})?\s*(?:FOR)?\s*\$?(\d+(?:\.\d{1,2})?)\b/i);
   if (atPattern) {
     const quantity = Number(atPattern[1]);
@@ -183,6 +201,19 @@ export function parseQuantityAndPrice(line: string, amount: number): QuantityAnd
     hasTotalMismatch: false,
     source: "default",
   };
+}
+
+function extractUnitPriceHint(line: string): number | null {
+  const normalized = line.replace(/\s+/g, " ");
+  const matches = Array.from(normalized.matchAll(/(?:unit|ea|each|u\/p|@)\s*\$?(\d+(?:\.\d{1,2})?)/gi));
+  if (!matches.length) return null;
+
+  const candidates = matches
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value) && value > 0 && value <= 10000);
+
+  if (!candidates.length) return null;
+  return toMoney(candidates[0]);
 }
 
 function inferBulkQuantity(total: number, candidateUnitPrice: number): number {
