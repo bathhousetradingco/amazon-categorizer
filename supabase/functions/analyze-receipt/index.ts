@@ -11,6 +11,7 @@ import {
 import { fetchWithTimeout } from "../_shared/fetch.ts";
 import {
   buildOcrInput,
+  requestTabscannerExtraction,
   extractJsonFromModelResponse,
   normalizeIncomingFilePath,
   parseCurrencyToNumber,
@@ -25,6 +26,7 @@ const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
+const TABSCANNER_API_KEY = Deno.env.get("TABSCANNER_API_KEY") ?? undefined;
 const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API_KEY") ?? undefined;
 
 const CATEGORY_BLOCKLIST = new Set(["other", "general", "unknown", "needs review"]);
@@ -54,7 +56,12 @@ Deno.serve(async (req) => {
     const receiptAsset = await prepareReceiptAsset(filePath, blob);
 
     console.log({ step: "RECEIPT_PARSE_START", ts: Date.now() });
-    const extractionPayload = await requestReceiptExtraction(receiptAsset);
+    const tabscannerData = await requestTabscannerExtraction({
+      asset: receiptAsset,
+      apiKey: TABSCANNER_API_KEY,
+      timeoutMs: EXTERNAL_FETCH_TIMEOUT_MS,
+    });
+    const extractionPayload = await requestReceiptExtraction(receiptAsset, tabscannerData);
     const parsed = extractJsonFromModelResponse(extractionPayload);
     console.log({ step: "RECEIPT_PARSE_END", ts: Date.now(), parsed: Boolean(parsed) });
 
@@ -64,8 +71,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    const store = detectStoreType(parsed.store, parsed.merchant);
-    const lineItems = parseReceiptItems(parsed.items, { store });
+    const store = detectStoreType(parsed.store, parsed.merchant, tabscannerData?.store, tabscannerData?.merchant);
+    const lineItems = parseReceiptItems(mergeReceiptItems(parsed.items, tabscannerData?.items), { store });
     if (!lineItems.length) {
       throw new HttpError(422, "No valid line items detected", {
         item_count_from_model: Array.isArray(parsed.items) ? parsed.items.length : 0,
@@ -80,7 +87,7 @@ Deno.serve(async (req) => {
       store,
     });
 
-    const receiptTotal = parseCurrencyToNumber(parsed.total);
+    const receiptTotal = parseCurrencyToNumber(firstFiniteNumber(tabscannerData?.total, parsed.total));
     const reconciledLineItems = reconcileLineItemsWithReceiptTotal(enrichedLineItems, receiptTotal);
 
     const categorySuggestions = await Promise.all(
@@ -131,7 +138,7 @@ Deno.serve(async (req) => {
             original_description: item.originalName ?? item.name,
           };
         }),
-        tax_amount: parseTax(parsed.tax),
+        tax_amount: parseTax(firstFiniteNumber(tabscannerData?.tax, parsed.tax)),
         receipt_total: Number.isFinite(receiptTotal) ? receiptTotal : null,
         computed_total: lineItemsTotal,
         totals_match: !totalMismatch,
@@ -384,6 +391,39 @@ async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>,
   return data;
 }
 
+
+function mergeReceiptItems(primaryItems: unknown, tabscannerItems: unknown): unknown[] {
+  const primary = Array.isArray(primaryItems) ? primaryItems : [];
+  const secondary = Array.isArray(tabscannerItems) ? tabscannerItems : [];
+  if (!secondary.length) return primary;
+
+  const secondaryByCode = new Map<string, any>();
+  for (const item of secondary as any[]) {
+    const code = String(item?.code ?? "").replace(/^0+/, "").trim();
+    if (code) secondaryByCode.set(code, item);
+  }
+
+  return primary.map((item: any) => {
+    const code = String(item?.code ?? "").replace(/^0+/, "").trim();
+    const match = code ? secondaryByCode.get(code) : null;
+    if (!match) return item;
+
+    return {
+      ...item,
+      amount: firstFiniteNumber(match.amount, item?.amount),
+      code: item?.code ?? match.code ?? null,
+      name: String(item?.name ?? "").trim() || match.name,
+    };
+  });
+}
+
+function firstFiniteNumber(...values: unknown[]): unknown {
+  for (const value of values) {
+    if (Number.isFinite(parseCurrencyToNumber(value))) return value;
+  }
+  return values[0] ?? null;
+}
+
 function detectStoreType(...candidates: unknown[]): "sams_club" | "walmart" | "generic" {
   const combined = candidates.map((value) => String(value ?? "").toLowerCase()).join(" ");
   const compact = combined.replace(/[^a-z]/g, "");
@@ -394,7 +434,10 @@ function detectStoreType(...candidates: unknown[]): "sams_club" | "walmart" | "g
   return "generic";
 }
 
-async function requestReceiptExtraction(asset: Awaited<ReturnType<typeof prepareReceiptAsset>>) {
+async function requestReceiptExtraction(
+  asset: Awaited<ReturnType<typeof prepareReceiptAsset>>,
+  tabscannerData: Awaited<ReturnType<typeof requestTabscannerExtraction>> = null,
+) {
   const url = "https://api.openai.com/v1/responses";
   console.log({ step: "FETCH_START", name: "openai", url, ts: Date.now() });
 
@@ -411,7 +454,7 @@ async function requestReceiptExtraction(asset: Awaited<ReturnType<typeof prepare
       input: [
         {
           role: "user",
-          content: buildOcrInput(asset),
+          content: buildOcrInput(asset, { tabscannerData }),
         },
       ],
       max_output_tokens: 1200,

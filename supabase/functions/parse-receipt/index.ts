@@ -10,6 +10,7 @@ import {
 } from "../_shared/http.ts";
 import {
   buildOcrInput,
+  requestTabscannerExtraction,
   extractJsonFromModelResponse,
   normalizeIncomingFilePath,
   parseReceiptItems,
@@ -24,6 +25,7 @@ const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
+const TABSCANNER_API_KEY = Deno.env.get("TABSCANNER_API_KEY") ?? undefined;
 const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API_KEY") ?? undefined;
 
 Deno.serve(async (req) => {
@@ -39,18 +41,26 @@ Deno.serve(async (req) => {
 
     const blob = await downloadReceiptBlob(adminClient, filePath);
     const asset = await prepareReceiptAsset(filePath, blob);
-    const extraction = await requestExtraction(asset);
+    const tabscannerData = await requestTabscannerExtraction({
+      asset,
+      apiKey: TABSCANNER_API_KEY,
+      timeoutMs: 12000,
+    });
+    const extraction = await requestExtraction(asset, tabscannerData);
     const parsed = extractJsonFromModelResponse(extraction);
 
     if (!parsed) {
       throw new HttpError(422, "OCR did not return parseable JSON");
     }
 
-    const store = detectStoreType(parsed.store, parsed.merchant);
+    const store = detectStoreType(parsed.store, parsed.merchant, tabscannerData?.store, tabscannerData?.merchant);
     if (!SERPAPI_API_KEY) {
       console.log("SERPAPI_KEY missing");
     }
-    const items = parseReceiptItems(parsed.items, { store });
+    const items = parseReceiptItems(
+      mergeReceiptItems(parsed.items, tabscannerData?.items),
+      { store },
+    );
     const enrichedItems = await enrichLineItems({
       adminClient,
       items,
@@ -63,8 +73,8 @@ Deno.serve(async (req) => {
       success: true,
       data: {
         items: enrichedItems,
-        tax: parseTax(parsed.tax),
-        receipt_total: parseCurrencyToNumber(parsed.total),
+        tax: parseTax(firstFiniteNumber(tabscannerData?.tax, parsed.tax)),
+        receipt_total: parseCurrencyToNumber(firstFiniteNumber(tabscannerData?.total, parsed.total)),
         store,
       },
       meta: {
@@ -134,7 +144,10 @@ async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>,
   return data;
 }
 
-async function requestExtraction(asset: Awaited<ReturnType<typeof prepareReceiptAsset>>) {
+async function requestExtraction(
+  asset: Awaited<ReturnType<typeof prepareReceiptAsset>>,
+  tabscannerData: Awaited<ReturnType<typeof requestTabscannerExtraction>> = null,
+) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -143,7 +156,7 @@ async function requestExtraction(asset: Awaited<ReturnType<typeof prepareReceipt
     },
     body: JSON.stringify({
       model: "gpt-4.1",
-      input: [{ role: "user", content: buildOcrInput(asset) }],
+      input: [{ role: "user", content: buildOcrInput(asset, { tabscannerData }) }],
       max_output_tokens: 1200,
     }),
   });
@@ -160,6 +173,40 @@ async function requestExtraction(asset: Awaited<ReturnType<typeof prepareReceipt
   return payload;
 }
 
+
+
+function mergeReceiptItems(primaryItems: unknown, tabscannerItems: unknown): unknown[] {
+  const primary = Array.isArray(primaryItems) ? primaryItems : [];
+  const secondary = Array.isArray(tabscannerItems) ? tabscannerItems : [];
+  if (!secondary.length) return primary;
+
+  const byCode = new Map<string, any>();
+  for (const item of secondary as any[]) {
+    const code = String(item?.code ?? "").replace(/^0+/, "").trim();
+    if (code) byCode.set(code, item);
+  }
+
+  return primary.map((item: any) => {
+    const code = String(item?.code ?? "").replace(/^0+/, "").trim();
+    const match = code ? byCode.get(code) : null;
+    if (!match) return item;
+
+    const mergedAmount = firstFiniteNumber(match.amount, item?.amount);
+    return {
+      ...item,
+      amount: Number.isFinite(parseCurrencyToNumber(mergedAmount)) ? mergedAmount : item?.amount,
+      code: item?.code ?? match.code ?? null,
+      name: String(item?.name ?? "").trim() || match.name,
+    };
+  });
+}
+
+function firstFiniteNumber(...values: unknown[]): unknown {
+  for (const value of values) {
+    if (Number.isFinite(parseCurrencyToNumber(value))) return value;
+  }
+  return values[0] ?? null;
+}
 
 function detectStoreType(...candidates: unknown[]): "sams_club" | "walmart" | "generic" {
   const combined = candidates.map((value) => String(value ?? "").toLowerCase()).join(" ");
