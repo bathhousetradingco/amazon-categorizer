@@ -8,6 +8,7 @@ import {
   parseJsonBody,
   toHttpError,
 } from "../_shared/http.ts";
+import { fetchWithTimeout } from "../_shared/fetch.ts";
 import {
   buildOcrInput,
   extractJsonFromModelResponse,
@@ -27,11 +28,13 @@ const OPENAI_API_KEY = getRequiredEnv("OPENAI_API_KEY");
 const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API_KEY") ?? undefined;
 
 const CATEGORY_BLOCKLIST = new Set(["other", "general", "unknown", "needs review"]);
+const EXTERNAL_FETCH_TIMEOUT_MS = 15000;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
+    console.log("ANALYZE_RECEIPT_START", { ts: Date.now() });
     const user = await requireAuthenticatedUser(req);
     const body = await parseJsonBody(req);
 
@@ -50,8 +53,10 @@ Deno.serve(async (req) => {
     const blob = await downloadReceiptBlob(adminClient, filePath);
     const receiptAsset = await prepareReceiptAsset(filePath, blob);
 
+    console.log({ step: "RECEIPT_PARSE_START", ts: Date.now() });
     const extractionPayload = await requestReceiptExtraction(receiptAsset);
     const parsed = extractJsonFromModelResponse(extractionPayload);
+    console.log({ step: "RECEIPT_PARSE_END", ts: Date.now(), parsed: Boolean(parsed) });
 
     if (!parsed) {
       throw new HttpError(422, "OCR did not return parseable JSON", {
@@ -93,6 +98,7 @@ Deno.serve(async (req) => {
       .filter(({ item }) => item.totalMismatch || item.needsReview)
       .map(({ index }) => index);
 
+    console.log("ANALYZE_RECEIPT_END", { ts: Date.now() });
     return jsonResponse({
       success: true,
       data: {
@@ -150,6 +156,7 @@ Deno.serve(async (req) => {
       details: httpError.details,
     });
 
+    console.log("ANALYZE_RECEIPT_END", { ts: Date.now(), success: false });
     return jsonResponse(
       {
         success: false,
@@ -322,7 +329,12 @@ async function suggestCategoriesByAi(
     `Allowed categories: ${JSON.stringify(categories)}`,
   ].join("\n");
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const url = "https://api.openai.com/v1/responses";
+  console.log({ step: "FETCH_START", name: "openai", url, ts: Date.now() });
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${openAiApiKey}`,
@@ -333,7 +345,13 @@ async function suggestCategoriesByAi(
       input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
       max_output_tokens: 300,
     }),
-  });
+  }, EXTERNAL_FETCH_TIMEOUT_MS);
+  } catch (error) {
+    console.error("suggest_categories_openai_failed", { error: String(error) });
+    return [];
+  }
+
+  console.log({ step: "FETCH_END", name: "openai", status: response.status, ts: Date.now() });
 
   if (!response.ok) return [];
 
@@ -377,7 +395,12 @@ function detectStoreType(...candidates: unknown[]): "sams_club" | "walmart" | "g
 }
 
 async function requestReceiptExtraction(asset: Awaited<ReturnType<typeof prepareReceiptAsset>>) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const url = "https://api.openai.com/v1/responses";
+  console.log({ step: "FETCH_START", name: "openai", url, ts: Date.now() });
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -393,7 +416,16 @@ async function requestReceiptExtraction(asset: Awaited<ReturnType<typeof prepare
       ],
       max_output_tokens: 1200,
     }),
-  });
+  }, EXTERNAL_FETCH_TIMEOUT_MS);
+  } catch (error) {
+    console.error("receipt_extraction_openai_failed", { error: String(error) });
+    throw new HttpError(504, "OpenAI OCR request timed out", {
+      file_mime_type: asset.mimeType,
+      file_extension: asset.extension,
+    });
+  }
+
+  console.log({ step: "FETCH_END", name: "openai", status: response.status, ts: Date.now() });
 
   const payload = await safeParseJsonResponse(response);
 
