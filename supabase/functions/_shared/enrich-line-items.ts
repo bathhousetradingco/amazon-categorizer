@@ -65,7 +65,8 @@ export async function enrichLineItems(params: {
   serpApiKey?: string;
   store?: "sams_club" | "walmart" | "generic";
 }): Promise<EnrichedReceiptItem[]> {
-  const { adminClient, items, openAiApiKey, serpApiKey, store } = params;
+  const { adminClient, items, openAiApiKey, serpApiKey } = params;
+  const store = normalizeStoreForLookup(params.store);
   const startedAt = Date.now();
   const budget = {
     startedAt,
@@ -99,7 +100,7 @@ export async function enrichLineItems(params: {
   const skuHints = new Map<string, LookupHint>();
   const skuByIndex = new Map<number, string>();
   result.forEach((item, index) => {
-    const extracted = extractProductNumberFromLine(item.rawName);
+    const extracted = extractProductNumber(item);
     item.item_number_raw = extracted.raw;
     item.normalized_item_number = extracted.normalized;
     console.log({
@@ -115,7 +116,7 @@ export async function enrichLineItems(params: {
       ocr_name: item.rawName,
     });
 
-    const sku = extracted.normalized ?? selectLookupIdentifier(item);
+    const sku = extracted.normalized;
     if (!sku) return;
     skuByIndex.set(index, sku);
     if (!item.sku) item.sku = sku;
@@ -160,6 +161,7 @@ export async function enrichLineItems(params: {
           missingSkus.slice(0, SERP_MAX_SKUS_PER_BATCH),
           serpApiKey,
           skuHints,
+          store,
           budget,
         );
 
@@ -191,7 +193,7 @@ export async function enrichLineItems(params: {
     cleaned.forEach((name, idx) => {
       const target = unresolved[idx];
       if (!target || !name) return;
-      console.log({ step: "AI_CLEANUP_FALLBACK", reason: "no acceptable serpapi match", index: target.index });
+      console.log({ step: "AI_CLEANUP_FALLBACK", reason: "no acceptable match from serp strategies", index: target.index });
       applyLookup(result[target.index], name, "ai_cleanup", null, null, "lookup:ai_cleanup");
     });
   }
@@ -264,7 +266,7 @@ function applyLookup(
 function shouldLookupViaSerp(
   item: EnrichedReceiptItem,
   productNumber: string | null,
-  store?: "sams_club" | "walmart" | "generic",
+  store: "sams_club" | "walmart" | "generic",
 ): boolean {
   if (!productNumber) return false;
   if (store === "sams_club") return true;
@@ -342,6 +344,7 @@ async function lookupSkusViaSerpApi(
   skus: string[],
   serpApiKey: string,
   skuHints: Map<string, LookupHint>,
+  store: "sams_club" | "walmart" | "generic",
   budget: EnrichmentBudget,
 ): Promise<ProductLookupRow[]> {
   const rows: ProductLookupRow[] = [];
@@ -369,7 +372,7 @@ async function lookupSkusViaSerpApi(
       budget,
     );
 
-    if (!match || match.confidence === "low") {
+    if (!match || (store !== "sams_club" && match.confidence === "low")) {
       console.log({ step: "NAME_APPLY", before: hint?.rawName ?? sku, after: hint?.rawName ?? sku, applied: false, reason: "no_product_match" });
       continue;
     }
@@ -530,14 +533,38 @@ function inferBrand(name: string): string | null {
 }
 
 
-function selectLookupIdentifier(item: ParsedReceiptItem): string | null {
-  const seeded = [item.sku ?? "", item.code ?? "", item.rawName]
-    .flatMap((value) => String(value ?? "").match(/\b[0-9A-Za-z]{5,18}\b/g) ?? [])
-    .map((token) => normalizeIdentifier(token))
-    .filter((token): token is string => Boolean(token))
-    .sort((a, b) => b.length - a.length);
+function selectLookupIdentifier(item: ParsedReceiptItem): ProductNumberExtraction {
+  const runtimeProductCode = (item as Record<string, unknown>).product_code;
+  const raw = [item.sku, item.code, runtimeProductCode]
+    .map((value) => String(value ?? "").trim())
+    .find((value) => value.length > 0) ?? null;
 
-  return seeded[0] ?? null;
+  if (raw) {
+    return {
+      raw,
+      normalized: normalizeIdentifier(raw),
+    };
+  }
+
+  const fallback = String(item.rawName ?? "").match(/\b[0-9A-Za-z]{5,18}\b/g) ?? [];
+  const seededRaw = fallback.sort((a, b) => b.length - a.length)[0] ?? null;
+  return {
+    raw: seededRaw,
+    normalized: normalizeIdentifier(seededRaw),
+  };
+}
+
+function extractProductNumber(item: ParsedReceiptItem): ProductNumberExtraction {
+  const fromLine = extractProductNumberFromLine(item.rawName);
+  if (fromLine.normalized) return fromLine;
+  return selectLookupIdentifier(item);
+}
+
+function normalizeStoreForLookup(store: string | undefined): "sams_club" | "walmart" | "generic" {
+  const compact = String(store ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  if (["samsclub", "sams", "sam", "samsclb"].includes(compact)) return "sams_club";
+  if (compact.includes("walmart")) return "walmart";
+  return "generic";
 }
 
 function normalizeIdentifier(input: string | null | undefined): string | null {
