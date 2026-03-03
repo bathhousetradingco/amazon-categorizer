@@ -31,6 +31,7 @@ const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API
 
 const CATEGORY_BLOCKLIST = new Set(["other", "general", "unknown", "needs review"]);
 const EXTERNAL_FETCH_TIMEOUT_MS = 15000;
+const ANALYSIS_PIPELINE_VERSION = 2;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -55,20 +56,29 @@ Deno.serve(async (req) => {
       });
 
       if (cached) {
-        console.log("RECEIPT_ANALYSIS_CACHE_HIT", { user_id: user.id, file_path: filePath });
-        return jsonResponse({
-          success: true,
-          data: {
-            ...cached.analysis,
-            user_state: cached.userState,
-          },
-          meta: {
+        const cacheDecision = shouldReuseCachedAnalysis(cached.analysis);
+        if (!cacheDecision.reuse) {
+          console.warn("RECEIPT_ANALYSIS_CACHE_BYPASS", {
             user_id: user.id,
-            source: "stored",
-            cached: true,
-            last_analyzed_at: cached.lastAnalyzedAt,
-          },
-        });
+            file_path: filePath,
+            reasons: cacheDecision.reasons,
+          });
+        } else {
+          console.log("RECEIPT_ANALYSIS_CACHE_HIT", { user_id: user.id, file_path: filePath });
+          return jsonResponse({
+            success: true,
+            data: {
+              ...cached.analysis,
+              user_state: cached.userState,
+            },
+            meta: {
+              user_id: user.id,
+              source: "stored",
+              cached: true,
+              last_analyzed_at: cached.lastAnalyzedAt,
+            },
+          });
+        }
       }
 
       console.log("RECEIPT_ANALYSIS_CACHE_MISS", { user_id: user.id, file_path: filePath });
@@ -175,6 +185,7 @@ Deno.serve(async (req) => {
         file_path: filePath,
         store,
         user_state: {},
+        pipeline_version: ANALYSIS_PIPELINE_VERSION,
       },
       meta: {
         user_id: user.id,
@@ -401,8 +412,64 @@ function normalizeStoredAnalysis(analysis: Record<string, unknown>): { analysis:
       problematic_line_items: Array.isArray((analysis as any).problematic_line_items)
         ? (analysis as any).problematic_line_items
         : [],
+      pipeline_version: Number((analysis as any).pipeline_version) || 1,
     },
   };
+}
+
+function shouldReuseCachedAnalysis(analysis: Record<string, unknown>): { reuse: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  const pipelineVersion = Number((analysis as any).pipeline_version) || 1;
+  if (pipelineVersion < ANALYSIS_PIPELINE_VERSION) {
+    reasons.push(`outdated_pipeline_version:${pipelineVersion}`);
+  }
+
+  const lineItems = Array.isArray((analysis as any).line_items)
+    ? (analysis as any).line_items as Array<Record<string, unknown>>
+    : [];
+
+  if (!lineItems.length) {
+    reasons.push("missing_line_items");
+    return { reuse: false, reasons };
+  }
+
+  const fallbackCount = lineItems.filter((item) => {
+    const source = String(item?.enrichment_source ?? "").toLowerCase();
+    return source === "ai_cleanup" || source === "none" || source === "normalized";
+  }).length;
+
+  const needsReviewCount = lineItems.filter((item) => Boolean(item?.needs_review)).length;
+  const genericNameCount = lineItems.filter((item) => isLikelyGenericName(String(item?.enriched_description ?? ""))).length;
+
+  if (fallbackCount / lineItems.length >= 0.45) {
+    reasons.push(`fallback_enrichment_ratio:${fallbackCount}/${lineItems.length}`);
+  }
+
+  if (needsReviewCount / lineItems.length >= 0.6) {
+    reasons.push(`needs_review_ratio:${needsReviewCount}/${lineItems.length}`);
+  }
+
+  if (genericNameCount / lineItems.length >= 0.5) {
+    reasons.push(`generic_name_ratio:${genericNameCount}/${lineItems.length}`);
+  }
+
+  return {
+    reuse: reasons.length === 0,
+    reasons,
+  };
+}
+
+function isLikelyGenericName(name: string): boolean {
+  const normalized = name.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!normalized) return true;
+  if (normalized.length < 8) return true;
+  const genericTokens = ["item", "product", "grocery", "assorted", "misc", "unknown", "general"];
+  if (genericTokens.some((token) => normalized === token || normalized.startsWith(`${token} `))) return true;
+
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length <= 1) return true;
+  const alphaWordCount = words.filter((word) => /[a-z]/.test(word)).length;
+  return alphaWordCount <= 1;
 }
 
 async function clearReceiptAnalysisCache(
