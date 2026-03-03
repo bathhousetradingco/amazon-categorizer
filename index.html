@@ -715,6 +715,14 @@ async function hydrateStoredReceiptAnalyses(){
     .in("file_path", filePaths);
 
   if(error){
+    if(isReceiptAnalysesUnavailableError(error)){
+      console.info("Receipt analyses table/functionality not available in this environment yet.", {
+        code: error.code,
+        message: error.message
+      });
+      return;
+    }
+
     console.warn("Unable to preload receipt analyses", error);
     return;
   }
@@ -901,12 +909,72 @@ async function persistReceiptAnalysisUserState(item){
   };
 
   const { response, result } = await invokeEdgeFunction("save-receipt-analysis-state", payload);
-  if(!response.ok){
-    console.warn("Failed to persist receipt analysis user state", result);
+  if(response.ok){
+    item.receipt_analysis.user_state = payload.user_state;
     return;
   }
 
+  console.warn("Failed to persist receipt analysis user state via edge function", {
+    status: response.status,
+    result
+  });
+
+  const fallbackSaved = await persistReceiptAnalysisUserStateFallback(item, payload.user_state);
+  if(!fallbackSaved) return;
+
   item.receipt_analysis.user_state = payload.user_state;
+}
+
+async function persistReceiptAnalysisUserStateFallback(item, userState){
+  try {
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+    if(userError || !user?.id){
+      console.warn("Unable to fallback persist receipt analysis user state (missing user)", userError || null);
+      return false;
+    }
+
+    const { error } = await supabaseClient
+      .from("receipt_analyses")
+      .update({ user_state: userState })
+      .eq("user_id", user.id)
+      .eq("file_path", item.receipt_url);
+
+    if(error){
+      if(isReceiptAnalysesUnavailableError(error)){
+        console.info("Skipping receipt user-state persistence because receipt_analyses is unavailable in this environment.", {
+          code: error.code,
+          message: error.message
+        });
+        return false;
+      }
+
+      console.warn("Fallback receipt analysis user-state persistence failed", error);
+      return false;
+    }
+
+    console.info("Persisted receipt user-state via direct table update fallback", {
+      file_path: item.receipt_url
+    });
+    return true;
+  } catch (error) {
+    console.warn("Fallback receipt analysis user-state persistence exception", error);
+    return false;
+  }
+}
+
+function isReceiptAnalysesUnavailableError(error){
+  if(!error || typeof error !== "object") return false;
+  const code = String(error.code || "").toUpperCase();
+  const message = String(error.message || "").toLowerCase();
+
+  return (
+    code === "PGRST205" ||
+    code === "42P01" ||
+    message.includes("receipt_analyses") && (
+      message.includes("could not find") ||
+      message.includes("relation") && message.includes("does not exist")
+    )
+  );
 }
 
 /* ================= SUPABASE ================= */
@@ -960,24 +1028,52 @@ async function getAuthHeaders() {
 async function invokeEdgeFunction(functionName, payload) {
   const headers = await getAuthHeaders();
 
-  let response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload)
-  });
+  let response;
+
+  try {
+    response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    console.warn(`Edge function ${functionName} network/CORS failure`, error);
+    return {
+      response: { ok: false, status: 0 },
+      result: {
+        error: {
+          code: "EDGE_FUNCTION_FETCH_FAILED",
+          message: "Unable to reach Supabase edge function (likely CORS, network, or undeployed function)."
+        }
+      }
+    };
+  }
 
   if (response.status === 401) {
     const { data: refreshed, error: refreshError } = await supabaseClient.auth.refreshSession();
 
     if (!refreshError && refreshed?.session?.access_token) {
-      response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
-        method: "POST",
-        headers: {
-          ...headers,
-          authorization: `Bearer ${refreshed.session.access_token}`
-        },
-        body: JSON.stringify(payload)
-      });
+      try {
+        response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+          method: "POST",
+          headers: {
+            ...headers,
+            authorization: `Bearer ${refreshed.session.access_token}`
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch (error) {
+        console.warn(`Edge function ${functionName} retry network/CORS failure`, error);
+        return {
+          response: { ok: false, status: 0 },
+          result: {
+            error: {
+              code: "EDGE_FUNCTION_FETCH_FAILED",
+              message: "Unable to reach Supabase edge function after token refresh."
+            }
+          }
+        };
+      }
     }
   }
 
