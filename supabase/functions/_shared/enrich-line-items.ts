@@ -18,6 +18,11 @@ type ProductLookupRow = {
   category: string | null;
 };
 
+type LookupHint = {
+  rawName: string;
+  normalizedName: string;
+};
+
 export async function enrichLineItems(params: {
   adminClient: ReturnType<typeof createClient>;
   items: ParsedReceiptItem[];
@@ -35,11 +40,19 @@ export async function enrichLineItems(params: {
   }));
 
   const skuMap = new Map<string, number[]>();
+  const skuHints = new Map<string, LookupHint>();
   result.forEach((item, index) => {
     if (!item.sku) return;
     const bucket = skuMap.get(item.sku) ?? [];
     bucket.push(index);
     skuMap.set(item.sku, bucket);
+
+    if (!skuHints.has(item.sku)) {
+      skuHints.set(item.sku, {
+        rawName: item.rawName,
+        normalizedName: item.name,
+      });
+    }
   });
 
   if (skuMap.size) {
@@ -53,7 +66,7 @@ export async function enrichLineItems(params: {
 
     const missingSkus = Array.from(skuMap.keys()).filter((sku) => !cached.has(sku));
     if (missingSkus.length && serpApiKey) {
-      const lookedUp = await lookupSkusViaSerpApi(missingSkus, serpApiKey);
+      const lookedUp = await lookupSkusViaSerpApi(missingSkus, serpApiKey, skuHints);
       for (const row of lookedUp) {
         await upsertCacheRow(adminClient, row);
         for (const index of skuMap.get(row.sku) ?? []) {
@@ -140,32 +153,67 @@ async function upsertCacheRow(adminClient: ReturnType<typeof createClient>, row:
   );
 }
 
-async function lookupSkusViaSerpApi(skus: string[], serpApiKey: string): Promise<ProductLookupRow[]> {
+async function lookupSkusViaSerpApi(
+  skus: string[],
+  serpApiKey: string,
+  skuHints: Map<string, LookupHint>,
+): Promise<ProductLookupRow[]> {
   const rows: ProductLookupRow[] = [];
 
   for (const sku of skus.slice(0, 8)) {
-    const url = new URL("https://serpapi.com/search.json");
-    url.searchParams.set("engine", "google_shopping");
-    url.searchParams.set("q", sku);
-    url.searchParams.set("api_key", serpApiKey);
+    const hint = skuHints.get(sku);
+    const queries = buildSerpQueries(sku, hint);
 
-    const response = await fetch(url);
-    if (!response.ok) continue;
+    for (const query of queries) {
+      const match = await searchShoppingResult(query, serpApiKey);
+      if (!match) continue;
 
-    const payload = await response.json();
-    const first = payload?.shopping_results?.[0];
-    if (!first?.title) continue;
-
-    rows.push({
-      sku,
-      clean_name: String(first.title).trim(),
-      source: "serpapi",
-      brand: first.brand ? String(first.brand) : null,
-      category: first.category ? String(first.category) : null,
-    });
+      rows.push({
+        sku,
+        clean_name: String(match.title).trim(),
+        source: "serpapi",
+        brand: match.brand ? String(match.brand) : null,
+        category: match.category ? String(match.category) : null,
+      });
+      break;
+    }
   }
 
   return rows;
+}
+
+async function searchShoppingResult(query: string, serpApiKey: string) {
+  const url = new URL("https://serpapi.com/search.json");
+  url.searchParams.set("engine", "google_shopping");
+  url.searchParams.set("q", query);
+  url.searchParams.set("api_key", serpApiKey);
+
+  const response = await fetch(url);
+  if (!response.ok) return null;
+
+  const payload = await response.json();
+  return payload?.shopping_results?.[0] ?? null;
+}
+
+function buildSerpQueries(sku: string, hint?: LookupHint): string[] {
+  const compactHint = [hint?.rawName ?? "", hint?.normalizedName ?? ""]
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const keywordHint = (compactHint.match(/[A-Za-z]{2,}/g) ?? [])
+    .slice(0, 4)
+    .join(" ");
+
+  const queries = [
+    `sams club item ${sku}`,
+    `samsclub ${sku}`,
+    sku,
+    keywordHint ? `${sku} ${keywordHint}` : "",
+    keywordHint ? `sams club item ${sku} ${keywordHint}` : "",
+  ].filter(Boolean);
+
+  return Array.from(new Set(queries));
 }
 
 async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>, openAiApiKey: string): Promise<string[]> {

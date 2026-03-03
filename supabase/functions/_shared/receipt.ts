@@ -243,7 +243,7 @@ function parseEntries(entries: unknown[]): ParsedReceiptItem[] {
         unitPrice: quantityAndPrice.unitPrice,
         total: quantityAndPrice.total,
         totalMismatch: quantityAndPrice.hasTotalMismatch,
-        qualityScore: quantity.score,
+        qualityScore: quality.score,
         qualityFlags,
       };
     })
