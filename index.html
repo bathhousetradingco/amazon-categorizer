@@ -684,9 +684,12 @@ async function loadTransactions() {
   Splits: r.splits || [],
 
   receipt_url: r.receipt_url,
+  receipt_analysis: null,
 
   Institution: r.institution_name || r.institution || ""
 }));
+
+  await hydrateStoredReceiptAnalyses();
 
   app.style.display = "block";
 
@@ -700,6 +703,82 @@ async function loadTransactions() {
   }
 }
 
+
+async function hydrateStoredReceiptAnalyses(){
+  const receiptItems = data.filter(item => item?.receipt_url);
+  if(!receiptItems.length) return;
+
+  const filePaths = [...new Set(receiptItems.map(item => item.receipt_url))];
+  const { data: analyses, error } = await supabaseClient
+    .from("receipt_analyses")
+    .select("file_path, analysis_data, user_state, last_analyzed_at")
+    .in("file_path", filePaths);
+
+  if(error){
+    console.warn("Unable to preload receipt analyses", error);
+    return;
+  }
+
+  const byPath = new Map((analyses || []).map(row => [row.file_path, row]));
+
+  receiptItems.forEach(item => {
+    const cached = byPath.get(item.receipt_url);
+    if(!cached?.analysis_data) return;
+
+    item.receipt_analysis = {
+      ...cached.analysis_data,
+      user_state: cached.user_state || {}
+    };
+
+    applyStoredReceiptState(item);
+
+    console.log("[receipt-analysis] loaded stored analysis", {
+      transaction_id: item.id,
+      file_path: item.receipt_url,
+      last_analyzed_at: cached.last_analyzed_at || null
+    });
+  });
+}
+
+function applyStoredReceiptState(item){
+  if(!item?.receipt_analysis) return;
+
+  const items = item.receipt_analysis.items || [];
+  const splits = item.Splits || [];
+
+  items.forEach((suggestion, index) => {
+    const existing = splits.find(sp => sp.item_index === index);
+    suggestion._accepted = !!existing;
+  });
+}
+
+async function persistReceiptAnalysisUserState(item){
+  if(!item?.receipt_url || !item?.receipt_analysis) return;
+
+  const payload = {
+    filePath: item.receipt_url,
+    user_state: {
+      accepted_item_indexes: (item.Splits || [])
+        .filter(split => Number.isInteger(split.item_index))
+        .map(split => split.item_index),
+      split_overrides: (item.Splits || [])
+        .filter(split => Number.isInteger(split.item_index))
+        .map(split => ({
+          item_index: split.item_index,
+          category: split.Category || null,
+          amount: Number(split.Amount || 0)
+        }))
+    }
+  };
+
+  const { response, result } = await invokeEdgeFunction("save-receipt-analysis-state", payload);
+  if(!response.ok){
+    console.warn("Failed to persist receipt analysis user state", result);
+    return;
+  }
+
+  item.receipt_analysis.user_state = payload.user_state;
+}
 
 /* ================= SUPABASE ================= */
 
@@ -1906,7 +1985,10 @@ async function openSplitModal(){
             <button class="touchButton" onclick="openManualSplitModal()" style="background:#1e3a8a;color:#fff;flex:1;">Add Split</button>
             ${item.receipt_url ? `<button class="touchButton" onclick="openSplitReceiptViewer()" style="background:#1565c0;color:#fff;flex:1;">View Receipt</button>` : ""}
           </div>
-          ${item.receipt_url ? `<button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:10px;">🤖 Analyze Receipt</button>` : `<div class="small" style="margin-bottom:8px;">No receipt attached. Use keypad-first split entry for fast mobile input.</div>`}
+          ${item.receipt_url ? `
+            <button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:8px;">${item.receipt_analysis?.items?.length ? "🔁 Load Saved Analysis" : "🤖 Analyze Receipt"}</button>
+            <button class="touchButton" onclick="analyzeReceipt(data[currentIndex], { forceReanalyze: true })" style="background:#6b7280;color:#fff;width:100%;margin-bottom:10px;">♻️ Re-analyze Receipt</button>
+          ` : `<div class="small" style="margin-bottom:8px;">No receipt attached. Use keypad-first split entry for fast mobile input.</div>`}
           <div class="small" style="padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--panel-alt);">Receipt hidden by default. Tap <strong>View Receipt</strong> to open it.</div>
         </div>
         <div id="splitItemsScroller" class="lineItemsScroller">${renderSplitItems(item)}</div>
@@ -2325,7 +2407,7 @@ function showAmountInput(x, y, remaining){
 
 let receiptSuggestions = [];
 let currentSuggestionIndex = 0;
-async function analyzeReceipt(item){
+async function analyzeReceipt(item, options = {}){
 
   const btn = document.getElementById("analyzeBtn");
 
@@ -2363,9 +2445,23 @@ async function analyzeReceipt(item){
       throw new Error("No valid session found. Please sign in again.");
     }
 
+    const forceReanalyze = options?.forceReanalyze === true;
+
+    if(!forceReanalyze && item?.receipt_analysis?.items?.length){
+      console.log("[receipt-analysis] skipping edge analyze; using in-memory stored result", {
+        transaction_id: item.id,
+        file_path: item.receipt_url
+      });
+      applyStoredReceiptState(item);
+      renderReceiptSuggestions(item, item.receipt_analysis.items);
+      logReceiptReviewDebug(item, "analysis_cache_hydrate");
+      return;
+    }
+
     const payload = {
       filePath: item.receipt_url,
-      categories: categories.map(c => c.name)
+      categories: categories.map(c => c.name),
+      forceReanalyze
     };
 
     console.log("📤 Sending to edge:", payload);
@@ -2399,8 +2495,16 @@ async function analyzeReceipt(item){
       tax_amount: taxAmount,
       receipt_total: resultPayload.receipt_total ?? item.Amount ?? 0,
       computed_total: resultPayload.computed_total ?? 0,
-      problematic_line_items: resultPayload.problematic_line_items || []
+      problematic_line_items: resultPayload.problematic_line_items || [],
+      user_state: resultPayload.user_state || {}
     };
+
+    if(forceReanalyze){
+      item.Splits = (item.Splits || []).filter(split => !Number.isInteger(split.item_index));
+      await persistReceiptInteractions(item);
+    }
+
+    applyStoredReceiptState(item);
 
     // ✅ Apply tax
     await ensureSalesTaxApplied(taxAmount);
@@ -2424,7 +2528,7 @@ async function analyzeReceipt(item){
     if(btn){
       btn.dataset.loading = "false";
       btn.disabled = false;
-      btn.innerText = "🤖 Analyze Receipt";
+      btn.innerText = item?.receipt_analysis?.items?.length ? "🔁 Load Saved Analysis" : "🤖 Analyze Receipt";
       btn.style.opacity = "1";
     }
 
@@ -2603,6 +2707,7 @@ function logReceiptReviewDebug(item, source){
   updateSplitSummaryUI();
   updateTotals();
 
+  await persistReceiptInteractions(item);
   renderReceiptSuggestions(item, item.receipt_analysis.items);
   logReceiptReviewDebug(item, "accept_suggestion");
 }
@@ -2990,13 +3095,25 @@ async function persistSplitItem(item){
   updateSplitProgressState();
 
   if(item.id){
-    const { error } = await Api.updateTransaction(item.id, { category: item.Splits?.length ? "SPLIT" : "", splits: item.Splits || [] });
-
-    if(error){
-      console.error("Split save error:", error);
-      alert("Error saving split.");
-    }
+    await persistReceiptInteractions(item);
   }
+}
+
+async function persistReceiptInteractions(item){
+  if(!item?.id) return;
+
+  const { error } = await Api.updateTransaction(item.id, {
+    category: item.Splits?.length ? "SPLIT" : "",
+    splits: item.Splits || []
+  });
+
+  if(error){
+    console.error("Receipt interaction save error:", error);
+    alert("Error saving receipt updates.");
+    return;
+  }
+
+  await persistReceiptAnalysisUserState(item);
 }
 
 async function applySplit(category, amount){
@@ -3770,7 +3887,7 @@ Confidence: <strong>${result.confidence}</strong>
   }
 }
 
-function applyAISuggestion(category){
+async function applyAISuggestion(category){
 
   // ✅ RECEIPT MODE
   if(aiContext && aiContext.type === "receipt"){
@@ -3799,6 +3916,7 @@ function applyAISuggestion(category){
     closeModal();
 
     // ✅ RETURN TO RECEIPT REVIEW
+    await persistReceiptInteractions(item);
     renderReceiptSuggestions(item, item.receipt_analysis.items);
 
     updateRemainingUI();
@@ -3846,7 +3964,7 @@ function changeCategory(itemId, index){
   openReceiptCategorySelector(index);
 }
 
-function selectCategory(category){
+async function selectCategory(category){
 
   // ✅ RECEIPT MODE (Change OR Accept)
   if(aiContext && aiContext.type === "receipt"){
@@ -3873,6 +3991,7 @@ function selectCategory(category){
 
     // ✅ DO NOT close full modal
     // ✅ Just re-render inside it
+    await persistReceiptInteractions(item);
     renderReceiptSuggestions(item, item.receipt_analysis.items);
 
     updateRemainingUI();
