@@ -309,13 +309,22 @@ async function persistReceiptAnalysis(params: {
 
 function isReceiptAnalysisCacheUnavailable(error: { code?: string; message?: string }): boolean {
   if (!error) return false;
-  if (error.code === "42P01" || error.code === "42703") return true;
+  if (
+    error.code === "42P01"
+    || error.code === "42703"
+    || error.code === "PGRST205"
+    || error.code === "PGRST204"
+  ) {
+    return true;
+  }
 
   const message = (error.message ?? "").toLowerCase();
   return message.includes("receipt_analyses") && (
     message.includes("does not exist")
     || message.includes("undefined table")
     || message.includes("column")
+    || message.includes("schema cache")
+    || message.includes("could not find")
   );
 }
 
