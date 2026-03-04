@@ -1759,16 +1759,25 @@ div.innerHTML = `
 }
 
 function generateCategoryButtons(){
+  return generateCategoryButtonsForAction("selectCategory");
+}
+
+function escapeForSingleQuote(value){
+  return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function generateCategoryButtonsForAction(actionName, actionArgs = []){
+  const serializedArgs = actionArgs.map((arg) => `'${escapeForSingleQuote(arg)}'`).join(", ");
   return `
     <div style="padding:10px; display:flex; flex-direction:column; gap:8px;">
       ${categories.map(c => `
         <div class="categoryPickerRow">
           <button class="category-btn ${c.class}"
             style="width:100%; text-align:left; padding:12px; border-radius:12px;"
-            onclick="selectCategory('${c.name.replace(/'/g,"\\'")}')">
+            onclick="${actionName}(${serializedArgs}${serializedArgs ? ", " : ""}'${escapeForSingleQuote(c.name)}')">
             ${c.name}
           </button>
-          <button class="touchButton categoryInfoInline" onclick="showCategoryInfo('${c.name.replace(/'/g, "\\'")}')">i</button>
+          <button class="touchButton categoryInfoInline" onclick="showCategoryInfo('${escapeForSingleQuote(c.name)}')">i</button>
         </div>
       `).join("")}
     </div>
@@ -1778,7 +1787,7 @@ function generateCategoryButtons(){
 function openCategoryModal(){
   aiContext = null;
   modalTitle.innerText = "Choose Category";
-  modalContent.innerHTML = generateCategoryButtons();
+  modalContent.innerHTML = generateCategoryButtonsForAction("selectCategory");
   openModal(100000);
 }
 
@@ -1880,6 +1889,7 @@ const SplitState = {
   receiptMathValidation: null,
   receiptItemDrafts: {},
   receiptItemEditorOpen: {},
+  selectedDetectedItem: null,
   receiptExpanded: false,
   keypad: {
     value: "",
@@ -2320,21 +2330,50 @@ function openDetectedReceiptItemsModal(){
   const subtotal = SplitState.detectedReceiptSubtotal;
   const tax = SplitState.detectedReceiptTax;
   const receiptTotal = SplitState.detectedReceiptTotal;
+
+  const getDetectedItemAmount = (itemNumber) => {
+    const parsed = parsedItemsByProduct.get(itemNumber);
+    if(parsed && Number.isFinite(parsed.total_price) && parsed.total_price > 0){
+      return parseFloat(parsed.total_price.toFixed(2));
+    }
+    const fallback = lineItemPrices[itemNumber];
+    return Number.isFinite(fallback) && fallback > 0
+      ? parseFloat(fallback.toFixed(2))
+      : null;
+  };
+
+  const getAssignedForItem = (itemNumber) => {
+    if(!item.Splits?.length) return 0;
+    return item.Splits.reduce((sum, split) => {
+      if(String(split?.SourceProductNumber || "") !== String(itemNumber)) return sum;
+      return sum + parseFloat(split?.Amount || 0);
+    }, 0);
+  };
+
   const listHtml = itemNumbers.length
     ? `<div style="display:grid;gap:8px;">${itemNumbers.map((num) => {
       const parsed = parsedItemsByProduct.get(num) || (Number.isFinite(lineItemPrices[num])
-        ? {
-          quantity: 1,
-          unit_price: lineItemPrices[num],
-          total_price: lineItemPrices[num]
-        }
+        ? { quantity: 1, unit_price: lineItemPrices[num], total_price: lineItemPrices[num] }
         : null);
+      const amount = getDetectedItemAmount(num);
+      const assigned = getAssignedForItem(num);
       const purchaseLine = parsed
         ? `${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}`
         : null;
-      return purchaseLine
-        ? `<div><code>${num}</code> ${purchaseLine}</div>`
-        : `<div><code>${num}</code></div>`;
+      return `
+        <div class="splitItemRow">
+          <div class="splitItemMeta">
+            <strong><code>${num}</code></strong>
+            <div class="small">${amount ? Utils.money(amount) : "No total price detected"}</div>
+          </div>
+          <div class="small">${purchaseLine || "Quantity/price details unavailable"}</div>
+          ${assigned > 0 ? `<div class="small" style="color:#2e7d32;">Assigned so far: ${Utils.money(assigned)}</div>` : ""}
+          <div class="splitItemActions">
+            <button class="touchButton" style="background:#1e3a8a;color:#fff;" onclick="openDetectedItemCategoryModal('${escapeForSingleQuote(num)}')" ${amount ? "" : "disabled"}>Choose Category</button>
+            <button class="touchButton" style="background:#000;color:#fff;" onclick="askAIForDetectedItem('${escapeForSingleQuote(num)}')">Ask AI</button>
+          </div>
+        </div>
+      `;
     }).join("")}</div>`
     : `<div class="small">No item numbers detected.</div>`;
   const totalsHtml = Number.isFinite(subtotal) || Number.isFinite(tax) || Number.isFinite(receiptTotal)
@@ -2361,6 +2400,55 @@ function openDetectedReceiptItemsModal(){
   `;
 
   openModal();
+}
+
+function openDetectedItemCategoryModal(itemNumber){
+  SplitState.selectedDetectedItem = itemNumber;
+  modalTitle.innerText = `Choose Category • ${itemNumber}`;
+  modalContent.innerHTML = generateCategoryButtonsForAction("applyDetectedItemCategory", [itemNumber]);
+  openModal();
+}
+
+async function applyDetectedItemCategory(itemNumber, category){
+  const normalized = String(itemNumber || "").trim();
+  if(!normalized){
+    alert("Missing detected item number.");
+    return;
+  }
+
+  const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
+  const fallback = SplitState.detectedLineItemPrices?.[normalized];
+  const amount = Number.isFinite(parsed?.total_price)
+    ? parsed.total_price
+    : (Number.isFinite(fallback) ? fallback : null);
+
+  if(!Number.isFinite(amount) || amount <= 0){
+    alert("No valid item total found for this line.");
+    openDetectedReceiptItemsModal();
+    return;
+  }
+
+  const success = await applySplit(category, parseFloat(amount.toFixed(2)), { sourceProductNumber: normalized });
+  if(success){
+    openDetectedReceiptItemsModal();
+  }
+}
+
+function askAIForDetectedItem(itemNumber){
+  const normalized = String(itemNumber || "").trim();
+  const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
+  const fallback = SplitState.detectedLineItemPrices?.[normalized];
+  const amount = Number.isFinite(parsed?.total_price)
+    ? parsed.total_price
+    : (Number.isFinite(fallback) ? fallback : null);
+
+  aiContext = {
+    type: "detected-receipt-item",
+    itemNumber: normalized,
+    amount: Number.isFinite(amount) ? parseFloat(amount.toFixed(2)) : null
+  };
+
+  askAI();
 }
 
 function openManualSplitModal(){
@@ -2847,7 +2935,7 @@ async function persistReceiptInteractions(item){
 
 }
 
-async function applySplit(category, amount){
+async function applySplit(category, amount, options = {}){
   const item = data[currentIndex];
   if (!item.Splits) item.Splits = [];
 
@@ -2865,7 +2953,11 @@ async function applySplit(category, amount){
     return false;
   }
 
-  item.Splits.push({ Category: category, Amount: amount });
+  item.Splits.push({
+    Category: category,
+    Amount: parseFloat(amount.toFixed(2)),
+    ...(options.sourceProductNumber ? { SourceProductNumber: options.sourceProductNumber } : {})
+  });
   item.Category = "SPLIT";
   SplitState.highlightedIndex = item.Splits.length - 1;
 
@@ -3489,14 +3581,16 @@ const syncRes = await fetch(
 }
 
 async function askAI(){
-
-  const item = data[currentIndex];
+  const contextPrompt = aiContext?.type === "detected-receipt-item"
+    ? `<div class="small" style="margin-bottom:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);">Line item <strong>${aiContext.itemNumber}</strong>${Number.isFinite(aiContext.amount) ? ` (${Utils.money(aiContext.amount)})` : ""}</div>`
+    : "";
 
   // STEP 1: Ask user for context FIRST
   modalTitle.innerText = "🤖 AI Categorization";
 
   modalContent.innerHTML = `
     <div style="padding:10px;">
+      ${contextPrompt}
 
       <div style="margin-bottom:10px;">
         <strong>What was this purchase for?</strong>
@@ -3616,6 +3710,24 @@ Confidence: <strong>${result.confidence}</strong>
 }
 
 async function applyAISuggestion(category){
+
+  if(aiContext?.type === "detected-receipt-item"){
+    const selectedItem = aiContext.itemNumber;
+    const amount = aiContext.amount;
+    aiContext = null;
+
+    if(!selectedItem || !Number.isFinite(amount) || amount <= 0){
+      alert("Missing detected item amount for AI assignment.");
+      openDetectedReceiptItemsModal();
+      return;
+    }
+
+    const success = await applySplit(category, amount, { sourceProductNumber: selectedItem });
+    if(success) openDetectedReceiptItemsModal();
+    return;
+  }
+
+  aiContext = null;
 
   // NORMAL FLOW
   const item = data[currentIndex];
