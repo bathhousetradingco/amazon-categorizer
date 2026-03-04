@@ -8,7 +8,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
-const ITEM_NUMBER_LINE_PATTERN = /^0\d{9}\b/;
+const ITEM_NUMBER_LINE_PATTERN = /^\d{9,12}\b/;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -148,7 +148,7 @@ async function extractReceiptData(signedUrl: string): Promise<{ fullText: string
     "Return strict JSON with keys: raw_text (string) and item_numbers (array of strings).",
     "Rules for item_numbers:",
     "- Include only likely product/item numbers from line items.",
-    "- Preserve leading zeroes.",
+    "- Include item numbers exactly as seen; normalization will happen downstream.",
     "- Exclude prices, totals, ZIP codes, dates, times, phone numbers, or transaction/reference ids.",
     "- Prefer numeric codes that are 9 to 12 digits.",
     "- If none are found, return an empty array.",
@@ -263,8 +263,9 @@ function extractItemNumbersFromLines(lines: string[]): string[] {
 function dedupeItemNumbers(values: unknown[]): string[] {
   const normalized = values
     .map((value) => String(value || "").replace(/\D/g, ""))
-    .filter((value) => /^0\d{9}$/.test(value))
-    .map((value) => value.slice(1));
+    .filter((value) => /^\d{9,12}$/.test(value))
+    .map((value) => value.replace(/^0+/, ""))
+    .filter(Boolean);
 
   return [...new Set(normalized)];
 }
