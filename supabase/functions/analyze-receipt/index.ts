@@ -10,6 +10,14 @@ const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
 const ITEM_NUMBER_LINE_PATTERN = /^\d{9,12}\b/;
 const ITEM_NUMBER_WITH_TEXT_PATTERN = /^(\d{9,12})\b.*[A-Za-z]/;
+const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT\s+1\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
+
+type ParsedReceiptItem = {
+  product_number: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -45,6 +53,7 @@ Deno.serve(async (req) => {
       ...lineItemNumbers,
       ...modelItemNumbers,
     ]);
+    const parsedItems = extractParsedReceiptItems(lines, itemNumbers);
 
     const matchingLines = lines.filter((line) => isLikelyLineItem(line));
 
@@ -54,6 +63,7 @@ Deno.serve(async (req) => {
       total_lines_detected: lines.length,
       lines_matching_item_number_pattern: matchingLines,
       item_numbers_found: itemNumbers,
+      parsed_items: parsedItems,
       model_item_numbers: extraction.modelItemNumbers,
       filtered_model_item_numbers: modelItemNumbers,
     };
@@ -61,6 +71,7 @@ Deno.serve(async (req) => {
     return jsonResponse({
       success: true,
       item_numbers: itemNumbers,
+      parsed_items: parsedItems,
       debug,
     });
   } catch (error) {
@@ -279,4 +290,43 @@ function dedupeItemNumbers(values: unknown[]): string[] {
     .filter(Boolean);
 
   return [...new Set(normalized)];
+}
+
+function extractParsedReceiptItems(lines: string[], itemNumbers: string[]): ParsedReceiptItem[] {
+  const parsedItems: ParsedReceiptItem[] = [];
+  const anchors = new Set(itemNumbers);
+
+  for (let i = 0; i < lines.length - 1; i++) {
+    const line = String(lines[i] || "").trim();
+    const number = line.match(ITEM_NUMBER_LINE_PATTERN)?.[0];
+    if (!number) continue;
+
+    const normalizedProductNumber = normalizeProductNumber(number);
+    if (!normalizedProductNumber || !anchors.has(normalizedProductNumber)) continue;
+
+    const nextLine = String(lines[i + 1] || "").trim();
+    const purchaseMatch = nextLine.match(PURCHASE_INFO_PATTERN);
+    if (!purchaseMatch) continue;
+
+    const quantity = Number.parseInt(purchaseMatch[1], 10);
+    const unitPrice = Number.parseFloat(purchaseMatch[2]);
+    const totalPrice = Number.parseFloat(purchaseMatch[3]);
+    if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice) || !Number.isFinite(totalPrice)) continue;
+
+    const parsedItem: ParsedReceiptItem = {
+      product_number: normalizedProductNumber,
+      quantity,
+      unit_price: unitPrice,
+      total_price: totalPrice,
+    };
+
+    console.log("Parsed Item:", parsedItem);
+    parsedItems.push(parsedItem);
+  }
+
+  return parsedItems;
+}
+
+function normalizeProductNumber(value: string): string {
+  return String(value || "").replace(/\D/g, "").replace(/^0+/, "");
 }
