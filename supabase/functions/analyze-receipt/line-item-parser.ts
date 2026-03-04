@@ -17,9 +17,15 @@ export function normalizeProductNumber(value: string): string {
 export function dedupeItemNumbers(values: unknown[]): string[] {
   const normalized = values
     .map((value) => String(value || "").replace(/\D/g, ""))
-    .filter((value) => /^\d{9,12}$/.test(value))
-    .map((value) => normalizeProductNumber(value))
-    .filter(Boolean);
+    .map((rawDigits) => ({
+      rawDigits,
+      normalized: normalizeProductNumber(rawDigits),
+    }))
+    .filter(({ rawDigits, normalized }) => (
+      Boolean(normalized)
+      && (/^\d{9,12}$/.test(rawDigits) || /^\d{5,12}$/.test(normalized))
+    ))
+    .map(({ normalized }) => normalized);
 
   return [...new Set(normalized)];
 }
@@ -30,8 +36,17 @@ export function extractItemNumbersFromLineItems(lines: string[]): string[] {
   for (const line of lines) {
     if (!isLikelyLineItem(line)) continue;
 
-    const number = extractLineItemNumber(line);
-    if (number) found.push(number);
+    const rawMatch = extractLineItemNumber(line);
+    if (!rawMatch) continue;
+
+    const normalizedItemNumber = normalizeProductNumber(rawMatch);
+    const addedToDetectedItems = Boolean(normalizedItemNumber);
+
+    console.log("RAW MATCH:", rawMatch);
+    console.log("NORMALIZED ITEM NUMBER:", normalizedItemNumber);
+    console.log("ADDED TO DETECTED ITEMS:", addedToDetectedItems);
+
+    if (addedToDetectedItems) found.push(rawMatch);
   }
 
   return dedupeItemNumbers(found);

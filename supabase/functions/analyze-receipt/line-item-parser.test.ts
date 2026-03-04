@@ -22,6 +22,14 @@ Deno.test("extractItemNumbersFromLineItems keeps only likely line-item numbers a
   assertEquals(extractItemNumbersFromLineItems(lines), ["744575", "1234567"]);
 });
 
+
+Deno.test("dedupeItemNumbers keeps already-normalized values after leading-zero stripping", () => {
+  assertEquals(
+    dedupeItemNumbers(["0000744575", "744575", "0000744575", "abc"]),
+    ["744575"],
+  );
+});
+
 Deno.test("dedupeItemNumbers strips leading zeros and deduplicates", () => {
   assertEquals(dedupeItemNumbers(["0000744575", "744575", "0000744575"]), ["744575"]);
 });
