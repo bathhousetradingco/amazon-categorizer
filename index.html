@@ -2136,7 +2136,7 @@ async function analyzeSplitReceipt(){
         .filter((entry) => entry.product_number)
       : [];
     const parsedLineItemPrices = matchingLines.reduce((acc, line) => {
-      const rawNumber = String(line || "").match(/(?:^|\D)(\d{9,12})(?=\D|$)/)?.[1] || "";
+      const rawNumber = String(line || "").match(/(?:^|\D)(\d{5,12})(?=\D|$)/)?.[1] || "";
       const normalizedNumber = rawNumber.replace(/\D/g, "").replace(/^0+/, "");
       const price = parseLineItemPrice(line);
       if(normalizedNumber && Number.isFinite(price) && !Object.prototype.hasOwnProperty.call(acc, normalizedNumber)){
@@ -2233,31 +2233,31 @@ function openDetectedReceiptItemsModal(){
   if(!item) return;
 
   const itemNumbers = SplitState.detectedItemNumbers || [];
-  const parsedItemsByProduct = new Map(
-    (SplitState.detectedParsedItems || []).map((entry) => [entry.product_number, entry])
-  );
+  const parsedItems = SplitState.detectedParsedItems || [];
   const lineItemPrices = SplitState.detectedLineItemPrices || {};
+  const subtotal = SplitState.detectedReceiptSubtotal;
   const tax = SplitState.detectedReceiptTax;
   const receiptTotal = SplitState.detectedReceiptTotal;
-  const listHtml = itemNumbers.length
-    ? `<div style="display:grid;gap:8px;">${itemNumbers.map((num) => {
-      const parsed = parsedItemsByProduct.get(num) || (Number.isFinite(lineItemPrices[num])
-        ? {
-          quantity: 1,
-          unit_price: lineItemPrices[num],
-          total_price: lineItemPrices[num]
-        }
-        : null);
-      const purchaseLine = parsed
-        ? `${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}`
-        : null;
-      return purchaseLine
-        ? `<div><code>${num}</code> ${purchaseLine}</div>`
-        : `<div><code>${num}</code></div>`;
+  const listHtml = parsedItems.length
+    ? `<div style="display:grid;gap:8px;">${parsedItems.map((entry) => {
+      const purchaseLine = `${entry.quantity} @ ${Utils.money(entry.unit_price)} = ${Utils.money(entry.total_price)}`;
+      return `<div><code>${entry.product_number}</code> ${purchaseLine}</div>`;
     }).join("")}</div>`
-    : `<div class="small">No item numbers detected.</div>`;
-  const totalsHtml = Number.isFinite(tax) || Number.isFinite(receiptTotal)
+    : itemNumbers.length
+      ? `<div style="display:grid;gap:8px;">${itemNumbers.map((num) => {
+        const fallbackPrice = lineItemPrices[num];
+        const purchaseLine = Number.isFinite(fallbackPrice)
+          ? `1 @ ${Utils.money(fallbackPrice)} = ${Utils.money(fallbackPrice)}`
+          : null;
+
+        return purchaseLine
+          ? `<div><code>${num}</code> ${purchaseLine}</div>`
+          : `<div><code>${num}</code></div>`;
+      }).join("")}</div>`
+      : `<div class="small">No item numbers detected.</div>`;
+  const totalsHtml = Number.isFinite(subtotal) || Number.isFinite(tax) || Number.isFinite(receiptTotal)
     ? `<div class="small" style="display:grid;gap:4px;padding-top:4px;">
+        ${Number.isFinite(subtotal) ? `<div><strong>Subtotal =</strong> ${subtotal.toFixed(2)}</div>` : ""}
         ${Number.isFinite(tax) ? `<div><strong>Tax =</strong> ${tax.toFixed(2)}</div>` : ""}
         ${Number.isFinite(receiptTotal) ? `<div><strong>Total Receipt =</strong> ${receiptTotal.toFixed(2)}</div>` : ""}
       </div>`

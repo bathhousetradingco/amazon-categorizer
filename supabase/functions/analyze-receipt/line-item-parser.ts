@@ -1,5 +1,5 @@
-export const ITEM_NUMBER_LINE_PATTERN = /(?:^|\D)(\d{9,12})(?=\D|$)/;
-export const ITEM_NUMBER_WITH_TEXT_PATTERN = /\d{9,12}.*[A-Za-z]|[A-Za-z].*\d{9,12}/;
+export const ITEM_NUMBER_LINE_PATTERN = /(?:^|\D)(\d{5,12})(?=\D|$)/;
+export const ITEM_NUMBER_WITH_TEXT_PATTERN = /\d{5,12}.*[A-Za-z]|[A-Za-z].*\d{5,12}/;
 
 export function isLikelyLineItem(line: string): boolean {
   return ITEM_NUMBER_WITH_TEXT_PATTERN.test(line);
