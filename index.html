@@ -1872,7 +1872,9 @@ const SplitState = {
   detectedParsedItems: [],
   detectedLineItemPrices: {},
   detectedReceiptTax: null,
+  detectedReceiptSubtotal: null,
   detectedReceiptTotal: null,
+  receiptMathValidation: null,
   receiptItemDrafts: {},
   receiptItemEditorOpen: {},
   receiptExpanded: false,
@@ -1896,32 +1898,125 @@ function parseLineItemPrice(line){
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toCents(value){
+  const amount = Number(value);
+  if(!Number.isFinite(amount)) return null;
+  return Math.round(amount * 100);
+}
+
+function centsToAmount(cents){
+  return Number.isFinite(cents) ? cents / 100 : null;
+}
+
+function parseTrailingCurrencyToCents(line){
+  const text = String(line || "").trim();
+  if(!text) return null;
+
+  const match = text.match(/(\d+\.\d{2})\s*[A-Z]?\s*$/i);
+  if(!match) return null;
+
+  const cents = toCents(Number(match[1]));
+  return Number.isFinite(cents) ? cents : null;
+}
+
 function parseReceiptTotals(rawReceiptText){
-  const totals = { tax: null, receiptTotal: null };
+  const totals = { tax: null, subtotal: null, receiptTotal: null };
   const lines = String(rawReceiptText || "")
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
 
-  let taxSum = 0;
+  let taxSumCents = 0;
   let foundTax = false;
 
   lines.forEach((line) => {
-    const amounts = line.match(/\d+\.\d{2}/g) || [];
-    if(!amounts.length) return;
+    const trailingAmountCents = parseTrailingCurrencyToCents(line);
 
-    if(/\bTAX\b/i.test(line)){
-      taxSum += amounts.reduce((sum, amount) => sum + Number(amount), 0);
+    if(/\bSUB\s*TOTAL\b/i.test(line) && Number.isFinite(trailingAmountCents)){
+      totals.subtotal = centsToAmount(trailingAmountCents);
+    }
+
+    if(/\bTAX\b/i.test(line) && Number.isFinite(trailingAmountCents)){
+      taxSumCents += trailingAmountCents;
       foundTax = true;
     }
 
-    if(/\bTOTAL\b/i.test(line) && !/\bSUB\s*TOTAL\b/i.test(line)){
-      totals.receiptTotal = Number(amounts[amounts.length - 1]);
+    if(/\bTOTAL\b/i.test(line) && !/\bSUB\s*TOTAL\b/i.test(line) && Number.isFinite(trailingAmountCents)){
+      totals.receiptTotal = centsToAmount(trailingAmountCents);
     }
   });
 
-  totals.tax = foundTax ? taxSum : null;
+  totals.tax = foundTax ? centsToAmount(taxSumCents) : null;
   return totals;
+}
+
+function validateReceiptMath(parsedItems, receiptTotals){
+  const lineItemDiagnostics = [];
+  let computedSubtotalCents = 0;
+
+  (parsedItems || []).forEach((entry, index) => {
+    const quantity = Number(entry?.quantity || 0);
+    const unitPriceCents = toCents(entry?.unit_price);
+    const parsedLineTotalCents = toCents(entry?.total_price);
+
+    if(!Number.isFinite(quantity) || !Number.isFinite(unitPriceCents) || !Number.isFinite(parsedLineTotalCents)){
+      lineItemDiagnostics.push({
+        index,
+        product_number: entry?.product_number || "unknown",
+        status: "invalid",
+        reason: "non-finite value",
+        quantity,
+        unit_price: entry?.unit_price,
+        line_total: entry?.total_price
+      });
+      return;
+    }
+
+    const expectedLineTotalCents = Math.round(quantity * unitPriceCents);
+    const differenceCents = parsedLineTotalCents - expectedLineTotalCents;
+
+    lineItemDiagnostics.push({
+      index,
+      product_number: entry?.product_number || "unknown",
+      status: differenceCents === 0 ? "ok" : "mismatch",
+      quantity,
+      unit_price: centsToAmount(unitPriceCents),
+      detected_line_total: centsToAmount(parsedLineTotalCents),
+      expected_line_total: centsToAmount(expectedLineTotalCents),
+      difference: centsToAmount(differenceCents)
+    });
+
+    computedSubtotalCents += parsedLineTotalCents;
+  });
+
+  const parsedSubtotalCents = toCents(receiptTotals?.subtotal);
+  const parsedTaxCents = toCents(receiptTotals?.tax);
+  const parsedReceiptTotalCents = toCents(receiptTotals?.receiptTotal);
+  const expectedTotalCents = Number.isFinite(parsedTaxCents)
+    ? computedSubtotalCents + parsedTaxCents
+    : null;
+
+  const summary = {
+    computedSubtotalCents,
+    parsedSubtotalCents,
+    parsedTaxCents,
+    expectedTotalCents,
+    parsedReceiptTotalCents,
+    subtotalDifferenceCents: Number.isFinite(parsedSubtotalCents)
+      ? computedSubtotalCents - parsedSubtotalCents
+      : null,
+    totalDifferenceCents: Number.isFinite(expectedTotalCents) && Number.isFinite(parsedReceiptTotalCents)
+      ? parsedReceiptTotalCents - expectedTotalCents
+      : null
+  };
+
+  return {
+    lineItemDiagnostics,
+    summary,
+    hasDiscrepancy: lineItemDiagnostics.some((entry) => entry.status === "mismatch" || entry.status === "invalid")
+      || (Number.isFinite(summary.subtotalDifferenceCents) && summary.subtotalDifferenceCents !== 0)
+      || (Number.isFinite(summary.totalDifferenceCents) && summary.totalDifferenceCents !== 0)
+  };
 }
 
 function calculateSplitStats(item){
@@ -2050,6 +2145,7 @@ async function analyzeSplitReceipt(){
       return acc;
     }, {});
     const receiptTotals = parseReceiptTotals(rawReceiptText);
+    const receiptMathValidation = validateReceiptMath(parsedItems, receiptTotals);
 
     console.group("RAW RECEIPT TEXT");
     console.log(rawReceiptText);
@@ -2060,6 +2156,55 @@ async function analyzeSplitReceipt(){
     console.log("ITEM NUMBERS FOUND:", itemNumbers);
     console.log("PARSED PURCHASE LINES:", parsedItems);
     console.log("Detected Item Numbers:", itemNumbers);
+
+    console.group("RECEIPT MATH DIAGNOSTICS");
+    console.log("Parsed Line Totals:", (parsedItems || []).map((entry) => ({
+      product_number: entry.product_number,
+      quantity: entry.quantity,
+      unit_price: entry.unit_price,
+      line_total: entry.total_price
+    })));
+    console.log("Computed Subtotal:", centsToAmount(receiptMathValidation.summary.computedSubtotalCents)?.toFixed(2));
+    console.log("Parsed Subtotal:", Number.isFinite(receiptMathValidation.summary.parsedSubtotalCents)
+      ? centsToAmount(receiptMathValidation.summary.parsedSubtotalCents)?.toFixed(2)
+      : "N/A");
+    console.log("Parsed Tax:", Number.isFinite(receiptMathValidation.summary.parsedTaxCents)
+      ? centsToAmount(receiptMathValidation.summary.parsedTaxCents)?.toFixed(2)
+      : "N/A");
+    console.log("Expected Total:", Number.isFinite(receiptMathValidation.summary.expectedTotalCents)
+      ? centsToAmount(receiptMathValidation.summary.expectedTotalCents)?.toFixed(2)
+      : "N/A");
+    console.log("Receipt Total:", Number.isFinite(receiptMathValidation.summary.parsedReceiptTotalCents)
+      ? centsToAmount(receiptMathValidation.summary.parsedReceiptTotalCents)?.toFixed(2)
+      : "N/A");
+    console.log("Difference:", Number.isFinite(receiptMathValidation.summary.totalDifferenceCents)
+      ? centsToAmount(receiptMathValidation.summary.totalDifferenceCents)?.toFixed(2)
+      : "N/A");
+
+    receiptMathValidation.lineItemDiagnostics
+      .filter((entry) => entry.status !== "ok")
+      .forEach((entry) => {
+        console.warn("Line item math mismatch detected", entry);
+      });
+
+    if(Number.isFinite(receiptMathValidation.summary.subtotalDifferenceCents)
+      && receiptMathValidation.summary.subtotalDifferenceCents !== 0){
+      console.warn("Subtotal mismatch detected", {
+        computed_subtotal: centsToAmount(receiptMathValidation.summary.computedSubtotalCents),
+        parsed_subtotal: centsToAmount(receiptMathValidation.summary.parsedSubtotalCents),
+        difference: centsToAmount(receiptMathValidation.summary.subtotalDifferenceCents)
+      });
+    }
+
+    if(Number.isFinite(receiptMathValidation.summary.totalDifferenceCents)
+      && receiptMathValidation.summary.totalDifferenceCents !== 0){
+      console.warn("Grand total mismatch detected", {
+        expected_total: centsToAmount(receiptMathValidation.summary.expectedTotalCents),
+        parsed_total: centsToAmount(receiptMathValidation.summary.parsedReceiptTotalCents),
+        difference: centsToAmount(receiptMathValidation.summary.totalDifferenceCents)
+      });
+    }
+    console.groupEnd();
 
     if(!response?.ok || !result?.success){
       console.warn("analyze-receipt failed", { status: response?.status, result });
@@ -2072,7 +2217,9 @@ async function analyzeSplitReceipt(){
     SplitState.detectedParsedItems = parsedItems;
     SplitState.detectedLineItemPrices = parsedLineItemPrices;
     SplitState.detectedReceiptTax = receiptTotals.tax;
+    SplitState.detectedReceiptSubtotal = receiptTotals.subtotal;
     SplitState.detectedReceiptTotal = receiptTotals.receiptTotal;
+    SplitState.receiptMathValidation = receiptMathValidation;
     openDetectedReceiptItemsModal();
   } catch (error) {
     console.error("Receipt analysis error:", error);
