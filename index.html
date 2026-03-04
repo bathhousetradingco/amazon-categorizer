@@ -1870,6 +1870,9 @@ const SplitState = {
   highlightedIndex: null,
   detectedItemNumbers: [],
   detectedParsedItems: [],
+  detectedLineItemPrices: {},
+  detectedReceiptTax: null,
+  detectedReceiptTotal: null,
   receiptItemDrafts: {},
   receiptItemEditorOpen: {},
   receiptExpanded: false,
@@ -1881,6 +1884,45 @@ const SplitState = {
     onCancel: null
   }
 };
+
+function parseLineItemPrice(line){
+  const text = String(line || "").trim();
+  if(!text) return null;
+
+  const matches = text.match(/\d+\.\d{2}/g);
+  if(!matches || !matches.length) return null;
+
+  const parsed = Number(matches[matches.length - 1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseReceiptTotals(rawReceiptText){
+  const totals = { tax: null, receiptTotal: null };
+  const lines = String(rawReceiptText || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let taxSum = 0;
+  let foundTax = false;
+
+  lines.forEach((line) => {
+    const amounts = line.match(/\d+\.\d{2}/g) || [];
+    if(!amounts.length) return;
+
+    if(/\bTAX\b/i.test(line)){
+      taxSum += amounts.reduce((sum, amount) => sum + Number(amount), 0);
+      foundTax = true;
+    }
+
+    if(/\bTOTAL\b/i.test(line) && !/\bSUB\s*TOTAL\b/i.test(line)){
+      totals.receiptTotal = Number(amounts[amounts.length - 1]);
+    }
+  });
+
+  totals.tax = foundTax ? taxSum : null;
+  return totals;
+}
 
 function calculateSplitStats(item){
   const allocated = (item.Splits || []).reduce((sum, s) => sum + Math.round(parseFloat(s.Amount || 0) * 100), 0) / 100;
@@ -1998,6 +2040,16 @@ async function analyzeSplitReceipt(){
         }))
         .filter((entry) => entry.product_number)
       : [];
+    const parsedLineItemPrices = matchingLines.reduce((acc, line) => {
+      const rawNumber = String(line || "").match(/(?:^|\D)(\d{9,12})(?=\D|$)/)?.[1] || "";
+      const normalizedNumber = rawNumber.replace(/\D/g, "").replace(/^0+/, "");
+      const price = parseLineItemPrice(line);
+      if(normalizedNumber && Number.isFinite(price) && !Object.prototype.hasOwnProperty.call(acc, normalizedNumber)){
+        acc[normalizedNumber] = price;
+      }
+      return acc;
+    }, {});
+    const receiptTotals = parseReceiptTotals(rawReceiptText);
 
     console.group("RAW RECEIPT TEXT");
     console.log(rawReceiptText);
@@ -2018,6 +2070,9 @@ async function analyzeSplitReceipt(){
 
     SplitState.detectedItemNumbers = itemNumbers;
     SplitState.detectedParsedItems = parsedItems;
+    SplitState.detectedLineItemPrices = parsedLineItemPrices;
+    SplitState.detectedReceiptTax = receiptTotals.tax;
+    SplitState.detectedReceiptTotal = receiptTotals.receiptTotal;
     openDetectedReceiptItemsModal();
   } catch (error) {
     console.error("Receipt analysis error:", error);
@@ -2034,15 +2089,32 @@ function openDetectedReceiptItemsModal(){
   const parsedItemsByProduct = new Map(
     (SplitState.detectedParsedItems || []).map((entry) => [entry.product_number, entry])
   );
+  const lineItemPrices = SplitState.detectedLineItemPrices || {};
+  const tax = SplitState.detectedReceiptTax;
+  const receiptTotal = SplitState.detectedReceiptTotal;
   const listHtml = itemNumbers.length
     ? `<div style="display:grid;gap:8px;">${itemNumbers.map((num) => {
-      const parsed = parsedItemsByProduct.get(num);
+      const parsed = parsedItemsByProduct.get(num) || (Number.isFinite(lineItemPrices[num])
+        ? {
+          quantity: 1,
+          unit_price: lineItemPrices[num],
+          total_price: lineItemPrices[num]
+        }
+        : null);
       const purchaseLine = parsed
-        ? `<span class="small" style="margin-left:8px;color:#4b5563;">${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}</span>`
-        : "";
-      return `<div style="display:flex;align-items:baseline;flex-wrap:wrap;"><code>${num}</code>${purchaseLine}</div>`;
+        ? `${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}`
+        : null;
+      return purchaseLine
+        ? `<div><code>${num}</code> ${purchaseLine}</div>`
+        : `<div><code>${num}</code></div>`;
     }).join("")}</div>`
     : `<div class="small">No item numbers detected.</div>`;
+  const totalsHtml = Number.isFinite(tax) || Number.isFinite(receiptTotal)
+    ? `<div class="small" style="display:grid;gap:4px;padding-top:4px;">
+        ${Number.isFinite(tax) ? `<div><strong>Tax =</strong> ${tax.toFixed(2)}</div>` : ""}
+        ${Number.isFinite(receiptTotal) ? `<div><strong>Total Receipt =</strong> ${receiptTotal.toFixed(2)}</div>` : ""}
+      </div>`
+    : "";
 
   modalTitle.innerText = "Detected Items";
   modalContent.innerHTML = `
@@ -2050,6 +2122,7 @@ function openDetectedReceiptItemsModal(){
       <div class="lineItemsScroller" style="display:grid;gap:10px;">
         <h3 style="margin:0;">Detected Items:</h3>
         ${listHtml}
+        ${totalsHtml}
       </div>
       <div class="splitFooterSticky" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">
         <button class="touchButton" onclick="openSplitModal()" style="background:#6b7280;color:#fff;">Back</button>
