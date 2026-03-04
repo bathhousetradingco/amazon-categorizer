@@ -47,6 +47,7 @@ type SerpMatch = {
   title: string;
   snippet: string | null;
   link: string | null;
+  query: string;
 };
 
 type SerpSearchResult = {
@@ -205,7 +206,7 @@ export async function enrichLineItems(params: {
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => item.enrichmentSource === "none" || item.enrichmentSource === "normalized");
 
-  if (unresolved.length && store !== "sams_club") {
+  if (unresolved.length) {
     if (isBudgetExceeded(budget)) {
       console.log({ step: "GLOBAL_TIMEOUT", phase: "ai_cleanup", elapsedMs: Date.now() - budget.startedAt });
     }
@@ -221,8 +222,6 @@ export async function enrichLineItems(params: {
       console.log({ step: "AI_CLEANUP_FALLBACK", reason: "no acceptable match from serp strategies", index: target.index });
       applyLookup(result[target.index], name, "ai_cleanup", null, null, "lookup:ai_cleanup");
     });
-  } else if (unresolved.length && store === "sams_club") {
-    console.log({ step: "ENRICHMENT_SKIPPED", reason: "sams_club_mode_disables_ai_cleanup", unresolvedCount: unresolved.length });
   }
 
   result.forEach((item) => {
@@ -481,6 +480,7 @@ async function searchGoogleResults(query: string, serpApiKey: string, strategy: 
       title: String(entry?.title ?? "").trim(),
       snippet: entry?.snippet ? String(entry.snippet).trim() : null,
       link: entry?.link ? String(entry.link) : null,
+      query,
     }))
     .filter((entry: SerpMatch) => entry.title.length >= 4);
 
@@ -525,49 +525,62 @@ async function enrichWithSerpAPI(
     return null;
   }
 
-  const query = `site:samsclub.com ${normalizedItemNumber}`;
-
   const cacheKey = normalizedItemNumber;
   if (cache.has(cacheKey)) return cache.get(cacheKey) ?? null;
 
-  console.log("SERPAPI_REQUEST", {
-    item_number_raw: rawItemNumber,
-    item_number_normalized: normalizedItemNumber,
-    q: query,
-  });
-  console.log("SERPAPI_LINE_ITEM_TRACE", {
-    ...trace,
-    value_sent_to_serpapi: query,
-    serpapi_response_title: null,
-    serpapi_raw_response: null,
-    final_product_title_used: null,
-    strategy: "samsclub_site",
-    phase: "request",
-  });
+  const queries = buildSamsSearchQueries(rawItemNumber, normalizedItemNumber);
+  const candidates: SerpMatch[] = [];
 
-  const { matches, rawResponse } = await searchGoogleResults(query, serpApiKey, "samsclub_site", budget);
-  console.log("SERPAPI_LINE_ITEM_TRACE", {
-    ...trace,
-    value_sent_to_serpapi: query,
-    serpapi_response_title: matches[0]?.title ?? null,
-    serpapi_raw_response: trimSerpRawResponse(rawResponse),
-    final_product_title_used: null,
-    strategy: "samsclub_site",
-    phase: "response",
-  });
+  for (const query of queries) {
+    console.log("SERPAPI_REQUEST", {
+      item_number_raw: rawItemNumber,
+      item_number_normalized: normalizedItemNumber,
+      q: query,
+    });
+    console.log("SERPAPI_LINE_ITEM_TRACE", {
+      ...trace,
+      value_sent_to_serpapi: query,
+      serpapi_response_title: null,
+      serpapi_raw_response: null,
+      final_product_title_used: null,
+      strategy: "samsclub_site",
+      phase: "request",
+    });
+
+    const { matches, rawResponse } = await searchGoogleResults(query, serpApiKey, "samsclub_site", budget);
+    console.log("SERPAPI_LINE_ITEM_TRACE", {
+      ...trace,
+      value_sent_to_serpapi: query,
+      serpapi_response_title: matches[0]?.title ?? null,
+      serpapi_raw_response: trimSerpRawResponse(rawResponse),
+      final_product_title_used: null,
+      strategy: "samsclub_site",
+      phase: "response",
+    });
+
+    candidates.push(...matches);
+    if (matches.some((match) => validateSamsUrlSearchResult(match, normalizedItemNumber, rawItemNumber).accepted)) {
+      break;
+    }
+  }
 
   let top: SerpMatch | null = null;
-  for (const current of matches) {
+  let topScore = -1;
+  for (const current of candidates) {
     const validation = validateSamsUrlSearchResult(current, normalizedItemNumber, rawItemNumber);
     console.log("SERPAPI_CANDIDATE", {
       title: current.title,
       link: current.link,
       accepted: validation.accepted,
       reason: validation.reason,
+      query: current.query,
     });
 
-    if (validation.accepted && !top) {
+    if (!validation.accepted) continue;
+    const candidateScore = scoreSamsCandidate(current, normalizedItemNumber, rawItemNumber, ocrName, storeHint);
+    if (candidateScore > topScore) {
       top = current;
+      topScore = candidateScore;
     }
   }
 
@@ -578,7 +591,7 @@ async function enrichWithSerpAPI(
 
   const confidence = scoreEnrichmentConfidence(top, normalizedItemNumber, storeHint, ocrName);
   const enrichment: SerpEnrichmentResult = {
-    enriched_name: cleanProductTitle(top.title || top.snippet || query),
+    enriched_name: cleanProductTitle(top.title || top.snippet || ocrName),
     confidence,
     source: "samsclub_site",
     sourceUrl: top.link,
@@ -596,10 +609,48 @@ async function enrichWithSerpAPI(
     serpapi_response_title: top.title ?? null,
     serpapi_raw_response: null,
     final_product_title_used: enrichment.enriched_name,
+    query_used: top.query,
     strategy: "samsclub_site",
     phase: "selected_enrichment",
   });
   return enrichment;
+}
+
+function buildSamsSearchQueries(rawItemNumber: string | null, normalizedItemNumber: string): string[] {
+  const variants = Array.from(new Set([
+    rawItemNumber,
+    normalizedItemNumber,
+    normalizedItemNumber.padStart(10, "0"),
+    normalizedItemNumber.padStart(11, "0"),
+  ].filter((value): value is string => Boolean(value))));
+
+  const queries: string[] = [];
+  for (const candidate of variants) {
+    queries.push(`site:samsclub.com ${candidate}`);
+    queries.push(`site:samsclub.com "${candidate}"`);
+  }
+
+  return Array.from(new Set(queries));
+}
+
+function scoreSamsCandidate(
+  match: SerpMatch,
+  normalizedItemNumber: string,
+  rawItemNumber: string | null,
+  ocrName: string,
+  storeHint: string,
+): number {
+  let score = 0;
+  const validation = validateSamsUrlSearchResult(match, normalizedItemNumber, rawItemNumber);
+  if (!validation.accepted) return score;
+
+  score += 4;
+  const title = `${match.title} ${match.snippet ?? ""}`;
+  if (hasSemanticTokenOverlap(ocrName, title)) score += 3;
+  if (titleContainsReadableProductName(match.title)) score += 2;
+  if ((match.link ?? "").toLowerCase().includes("/p/")) score += 1;
+  if (scoreEnrichmentConfidence(match, normalizedItemNumber, storeHint, ocrName) === "high") score += 2;
+  return score;
 }
 
 async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number; name: string; budget: EnrichmentBudget }): Promise<{ payload: any | null; status: number | null }> {
@@ -818,9 +869,23 @@ function isLikelySamsProductUrl(url: string): boolean {
 
 function urlContainsItemNumber(url: string, normalized: string, raw: string | null): boolean {
   const lowered = url.toLowerCase();
-  const normalizedToken = normalized.toLowerCase();
-  const rawToken = String(raw ?? "").trim().toLowerCase();
-  return lowered.includes(normalizedToken) || (rawToken ? lowered.includes(rawToken) : false);
+  const variants = buildItemNumberVariants(normalized, raw);
+  return variants.some((token) => lowered.includes(token));
+}
+
+function buildItemNumberVariants(normalized: string, raw: string | null): string[] {
+  const normalizedDigits = String(normalized ?? "").replace(/\D/g, "");
+  const rawDigits = String(raw ?? "").replace(/\D/g, "");
+  const candidates = [
+    normalizedDigits,
+    rawDigits,
+    normalizedDigits.padStart(10, "0"),
+    normalizedDigits.padStart(11, "0"),
+  ];
+
+  return Array.from(new Set(candidates
+    .map((token) => token.toLowerCase())
+    .filter((token) => token.length >= 8)));
 }
 
 function isAcceptableSamsProductTitle(title: string | null): boolean {
@@ -844,7 +909,17 @@ function isAcceptableSamsProductTitle(title: string | null): boolean {
     "login",
   ];
 
-  return !blockedTokens.some((token) => lowered.includes(token));
+  if (blockedTokens.some((token) => lowered.includes(token))) return false;
+  if (!titleContainsReadableProductName(normalizedTitle)) return false;
+  return true;
+}
+
+function titleContainsReadableProductName(title: string): boolean {
+  const normalized = title.replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  if (/^"?\d{8,14}"?(\s*\(\d+\+\))?$/.test(normalized)) return false;
+  const alphaTokens = normalized.split(/[^a-zA-Z]+/).filter((token) => token.length >= 3);
+  return alphaTokens.length >= 2;
 }
 
 function normalizeSamsItemNumber(input: string | null | undefined): string | null {
