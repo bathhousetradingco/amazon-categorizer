@@ -1868,6 +1868,7 @@ const SplitState = {
   manualAmount: 0,
   manualCategory: null,
   highlightedIndex: null,
+  detectedReceiptItems: [],
   receiptExpanded: false,
   keypad: {
     value: "",
@@ -1936,6 +1937,7 @@ async function openSplitModal(){
         <div class="receiptCard">
           <div class="receiptControls">
             <button class="touchButton" onclick="openManualSplitModal()" style="background:#1e3a8a;color:#fff;flex:1;">Add Split</button>
+            ${item.receipt_url ? `<button class="touchButton" onclick="analyzeSplitReceipt()" style="background:#6a1b9a;color:#fff;flex:1;">Analyze Receipt</button>` : ""}
             ${item.receipt_url ? `<button class="touchButton" onclick="openSplitReceiptViewer()" style="background:#1565c0;color:#fff;flex:1;">View Receipt</button>` : ""}
           </div>
           ${item.receipt_url ? `` : `<div class="small" style="margin-bottom:8px;">No receipt attached. Use keypad-first split entry for fast mobile input.</div>`}
@@ -1952,6 +1954,71 @@ async function openSplitModal(){
   `;
 
   updateSplitProgressState();
+  openModal();
+}
+
+async function analyzeSplitReceipt(){
+  const item = data[currentIndex];
+  if(!item?.id || !item?.receipt_url){
+    alert("No receipt attached.");
+    return;
+  }
+
+  try {
+    modalTitle.innerText = "Analyzing Receipt";
+    modalContent.innerHTML = `<div class="small" style="padding:14px;">Extracting receipt items…</div>`;
+    openModal();
+
+    const { response, result } = await invokeEdgeFunction("analyze-receipt", {
+      transaction_id: item.id
+    });
+
+    if(!response?.ok || !result?.success){
+      alert(result?.message || result?.error?.message || "No receipt items detected");
+      openSplitModal();
+      return;
+    }
+
+    SplitState.detectedReceiptItems = Array.isArray(result.items) ? result.items : [];
+
+    if(!SplitState.detectedReceiptItems.length){
+      alert("No receipt items detected");
+      openSplitModal();
+      return;
+    }
+
+    openDetectedReceiptItemsModal();
+  } catch (error) {
+    console.error("Receipt analysis error:", error);
+    alert("No receipt items detected");
+    openSplitModal();
+  }
+}
+
+function openDetectedReceiptItemsModal(){
+  const item = data[currentIndex];
+  if(!item) return;
+
+  const items = SplitState.detectedReceiptItems || [];
+  const listHtml = items.map((name, index) => `<li>${index + 1}. ${name}</li>`).join("");
+
+  modalTitle.innerText = "Detected Receipt Items";
+  modalContent.innerHTML = `
+    <div class="splitModalLayout" style="padding:8px;">
+      <div class="lineItemsScroller" style="display:grid;gap:10px;">
+        <h3 style="margin:0;">Detected Receipt Items</h3>
+        ${items.length
+          ? `<ul style="margin:0;padding-left:20px;display:grid;gap:8px;">${listHtml}</ul>`
+          : `<div class="small">No receipt items detected.</div>`
+        }
+      </div>
+      <div class="splitFooterSticky" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">
+        <button class="touchButton" onclick="openSplitModal()" style="background:#6b7280;color:#fff;">Back</button>
+        <button class="touchButton" onclick="openReceiptViewerModal(data[currentIndex], 'openDetectedReceiptItemsModal()', 'Receipt Preview')" style="background:#1565c0;color:#fff;">Show Receipt</button>
+      </div>
+    </div>
+  `;
+
   openModal();
 }
 
