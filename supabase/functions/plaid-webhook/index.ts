@@ -50,11 +50,11 @@ Deno.serve(async (req) => {
     /* ================= GET ACCOUNT ================= */
     const { data: account, error } = await supabase
       .from("plaid_accounts")
-      .select("access_token, cursor")
+      .select("user_id, access_token, cursor")
       .eq("item_id", item_id)
       .maybeSingle();
 
-    if (error || !account?.access_token) {
+    if (error || !account?.access_token || !account?.user_id) {
       console.log("❌ No account found for item:", item_id);
       return new Response("ok", { headers: corsHeaders });
     }
@@ -70,6 +70,7 @@ Deno.serve(async (req) => {
         access_token: account.access_token,
         cursor: account.cursor,
         item_id,
+        user_id: account.user_id,
         supabase,
       });
     }
@@ -98,6 +99,7 @@ async function syncTransactions({
   access_token,
   cursor,
   item_id,
+  user_id,
   supabase,
 }: any) {
   try {
@@ -133,8 +135,10 @@ async function syncTransactions({
 
       /* ================= UPSERT (added + modified) ================= */
       const upserts = [...(data.added || []), ...(data.modified || [])].map((t: any) => ({
+        user_id,
         plaid_transaction_id: t.transaction_id,
         item_id,
+        account_id: t.account_id,
         name: t.name,
         amount: t.amount,
         date: t.date,

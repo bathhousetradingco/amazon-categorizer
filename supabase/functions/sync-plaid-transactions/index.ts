@@ -158,11 +158,12 @@ Deno.serve(async (req) => {
             user_id: account.user_id,
             plaid_transaction_id: t.transaction_id,
             item_id: account.item_id,
+            account_id: t.account_id,
             date: t.date,
             amount: t.amount,
             name: t.name,
             merchant_name: t.merchant_name,
-            pending: false,
+            pending: t.pending,
             category: ""
           };
 

@@ -21,6 +21,3 @@ verify_jwt = false
 
 [functions.sync-plaid-transactions]
 verify_jwt = false
-
-[functions.sync-transactions]
-verify_jwt = false
