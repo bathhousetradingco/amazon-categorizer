@@ -32,7 +32,6 @@ jobs:
           supabase functions deploy ask-ai --project-ref xbayklklcdohewvnbglq
           supabase functions deploy create-link-token --project-ref xbayklklcdohewvnbglq
           supabase functions deploy exchange-token --project-ref xbayklklcdohewvnbglq
-          supabase functions deploy parse-receipt --project-ref xbayklklcdohewvnbglq
           supabase functions deploy plaid-webhook --project-ref xbayklklcdohewvnbglq
           supabase functions deploy sync-plaid-transactions --project-ref xbayklklcdohewvnbglq
           supabase functions deploy sync-transactions --project-ref xbayklklcdohewvnbglq
