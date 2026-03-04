@@ -2,14 +2,13 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchWithTimeout } from "../_shared/fetch.ts";
 import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from "../_shared/http.ts";
+import { dedupeItemNumbers, extractItemNumbersFromLineItems, extractLineItemNumber, isLikelyLineItem, normalizeProductNumber } from "./line-item-parser.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
-const ITEM_NUMBER_LINE_PATTERN = /(?:^|\D)(\d{9,12})(?=\D|$)/;
-const ITEM_NUMBER_WITH_TEXT_PATTERN = /\d{9,12}.*[A-Za-z]|[A-Za-z].*\d{9,12}/;
 const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT\s+1\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
 const INST_SV_LINE_PATTERN = /^INST\s+SV\b/i;
 const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*$/;
@@ -262,42 +261,10 @@ function tryParseJson(value: string): Record<string, unknown> | null {
   }
 }
 
-function isLikelyLineItem(line: string): boolean {
-  return ITEM_NUMBER_WITH_TEXT_PATTERN.test(line);
-}
-
-function extractLineItemNumber(line: string): string {
-  const match = String(line || "").match(ITEM_NUMBER_LINE_PATTERN);
-  return match?.[1] || "";
-}
-
-function extractItemNumbersFromLineItems(lines: string[]): string[] {
-  const found: string[] = [];
-
-  for (const line of lines) {
-    if (!isLikelyLineItem(line)) continue;
-
-    const number = extractLineItemNumber(line);
-    if (number) found.push(number);
-  }
-
-  return dedupeItemNumbers(found);
-}
-
 function filterModelItemNumbers(values: string[], lines: string[]): string[] {
   const likelyItemNumbers = new Set(extractItemNumbersFromLineItems(lines));
 
   return dedupeItemNumbers(values).filter((value) => likelyItemNumbers.has(value));
-}
-
-function dedupeItemNumbers(values: unknown[]): string[] {
-  const normalized = values
-    .map((value) => String(value || "").replace(/\D/g, ""))
-    .filter((value) => /^\d{9,12}$/.test(value))
-    .map((value) => normalizeProductNumber(value))
-    .filter(Boolean);
-
-  return [...new Set(normalized)];
 }
 
 function extractParsedReceiptItems(lines: string[], itemNumbers: string[]): ParsedReceiptItem[] {
@@ -341,10 +308,6 @@ function extractParsedReceiptItems(lines: string[], itemNumbers: string[]): Pars
   }
 
   return parsedItems;
-}
-
-function normalizeProductNumber(value: string): string {
-  return String(value || "").replace(/\D/g, "").replace(/^0+/, "");
 }
 
 function parseInstantSavingsAmount(line: string): number {
