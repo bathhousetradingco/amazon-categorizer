@@ -77,10 +77,14 @@ Deno.serve(async (req) => {
     console.log(extraction.fullText || "");
     console.groupEnd();
 
-    const receiptLines = String(extraction.fullText || "")
+    const textLines = String(extraction.fullText || "")
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
+
+    const receiptLines = textLines.some((line) => isTabscannerParserError(line))
+      ? extraction.lines
+      : textLines;
 
     console.group("RECEIPT LINES");
     receiptLines.forEach((line, i) => {
@@ -652,6 +656,10 @@ function collectPayloadCandidates(payload: any): any[] {
 }
 
 function isTabscannerParserError(payload: any): boolean {
+  if (typeof payload === "string") {
+    return /error[_\s-]*form[_\s-]*parser|errorformparser|form[_\s-]*parser/i.test(payload);
+  }
+
   const messageCandidates = [
     payload?.error,
     payload?.message,
@@ -664,7 +672,14 @@ function isTabscannerParserError(payload: any): boolean {
     .map((value) => String(value).trim())
     .filter(Boolean);
 
-  return messageCandidates.some((value) => /error\s*form\s*parser|errorformparser|form\s*parser/i.test(value));
+  const deepMessage = findFirstDeepString(payload, ["error", "message", "detail", "status"]);
+  if (deepMessage) {
+    messageCandidates.push(deepMessage);
+  }
+
+  return messageCandidates.some((value) =>
+    /error[_\s-]*form[_\s-]*parser|errorformparser|form[_\s-]*parser/i.test(value)
+  );
 }
 
 function findFirstDeepString(root: any, keys: string[]): string | null {
