@@ -1131,7 +1131,10 @@ const categoryAliases = {
   "NO CATEGORY": "Needs Review",
 
   // Merchant rename
-  "Merchant Processing Fees": "Commissions & Merchant Fees"
+  "Merchant Processing Fees": "Commissions & Merchant Fees",
+
+  // Legacy auto-tax split bucket
+  "Line Items": "Sales Tax Paid"
 
 };
 /* ================= SEARCH ================= */
@@ -2085,7 +2088,7 @@ function syncDetectedTaxSplit(item, taxAmount){
   }
 
   item.Splits.push({
-    Category: "Line Items",
+    Category: "Sales Tax Paid",
     Amount: normalizedTaxAmount,
     AutoDetectedTax: true
   });
