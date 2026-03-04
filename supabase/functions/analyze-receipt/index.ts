@@ -23,7 +23,13 @@ const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const TABSCANNER_API_KEY = Deno.env.get("TABSCANNER_API_KEY") ?? undefined;
 const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API_KEY") ?? undefined;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? undefined;
-const PIPELINE_VERSION = 4;
+const PIPELINE_VERSION = 5;
+
+type AnalyzeRequest = {
+  filePath: string;
+  categories: string[];
+  forceReanalyze: boolean;
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -31,57 +37,98 @@ Deno.serve(async (req) => {
   try {
     const user = await requireAuthenticatedUser(req);
     const body = await parseJsonBody(req);
-    const requestedFilePath = String(body.filePath ?? "");
+    const parsedRequest = parseAnalyzeRequest(body);
+    const requestedFilePath = parsedRequest.filePath;
     const filePath = normalizeIncomingFilePath(requestedFilePath);
-    const forceReanalyze = body.forceReanalyze === true;
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    console.log("PIPELINE_STAGE_0_REQUEST", {
+      user_id: user.id,
+      requested_file_path: requestedFilePath,
+      normalized_file_path: filePath,
+      force_reanalyze: parsedRequest.forceReanalyze,
+      category_count: parsedRequest.categories.length,
+    });
 
     await assertReceiptBelongsToUser(adminClient, user.id, requestedFilePath, filePath);
 
-    if (!forceReanalyze) {
+    if (!parsedRequest.forceReanalyze) {
       const cached = await readCachedAnalysis(adminClient, user.id, filePath);
       if (cached) {
         console.log("PIPELINE_STAGE_CACHE_HIT", { user_id: user.id, file_path: filePath });
-        return jsonResponse({ success: true, data: cached, meta: { source: "stored", pipeline_version: PIPELINE_VERSION } });
+        return jsonResponse(toStableSuccess(cached, "stored"));
       }
     }
 
-    const categories = await loadCategories(adminClient, user.id, body.categories);
+    const categories = await loadCategories(adminClient, user.id, parsedRequest.categories);
     const blob = await downloadReceiptBlob(adminClient, filePath);
     const mimeType = blob.type || "application/octet-stream";
     const filename = `receipt.${filePath.split(".").pop() || "jpg"}`;
 
-    console.log("PIPELINE_STAGE_1_OCR_START", { user_id: user.id, file_path: filePath });
-    const ingested = await requestTabscannerIngestion({ blob, filename, mimeType, apiKey: TABSCANNER_API_KEY });
-    console.log("PIPELINE_STAGE_1_OCR_DONE", { lines: ingested.raw_text_lines.length });
+    console.log("PIPELINE_STAGE_1_IMAGE_PATH_RECEIVED", {
+      user_id: user.id,
+      file_path: filePath,
+      mime_type: mimeType,
+      byte_size: blob.size,
+    });
 
-    console.log("PIPELINE_STAGE_2_OPENAI_PARSE_START", { user_id: user.id, file_path: filePath });
+    let ingested;
+    try {
+      console.log("PIPELINE_STAGE_2_TABSCANNER_OCR_REQUEST", { user_id: user.id, file_path: filePath });
+      ingested = await requestTabscannerIngestion({
+        blob,
+        filename,
+        mimeType,
+        apiKey: TABSCANNER_API_KEY,
+      });
+      console.log("PIPELINE_STAGE_3_TABSCANNER_OCR_RESPONSE", {
+        user_id: user.id,
+        file_path: filePath,
+        raw_text_line_count: ingested.raw_text_lines.length,
+      });
+    } catch (error: unknown) {
+      const ocrError = toHttpError(error);
+      if (ocrError.status === 422) {
+        console.warn("PIPELINE_STAGE_3_TABSCANNER_OCR_NO_TEXT", {
+          user_id: user.id,
+          file_path: filePath,
+          details: ocrError.details ?? null,
+        });
+        return jsonResponse(toStableFailure("No text detected in receipt image"));
+      }
+      throw ocrError;
+    }
+
+    console.log("PIPELINE_STAGE_4_PARSED_RECEIPT_TEXT", {
+      user_id: user.id,
+      file_path: filePath,
+      text_preview: ingested.raw_text.slice(0, 300),
+      text_length: ingested.raw_text.length,
+    });
+
     const parsedItems = await parseReceiptWithOpenAI({
       ocrText: ingested.raw_text,
       apiKey: OPENAI_API_KEY,
     });
-    if (!parsedItems.length) {
-      return jsonResponse({
-        success: true,
-        data: { message: "Receipt analysis pipeline initializing", line_items: [] },
-        meta: { source: "initializing", pipeline_version: PIPELINE_VERSION },
-      });
-    }
-    console.log("PIPELINE_STAGE_2_OPENAI_PARSE_DONE", { parsed_items: parsedItems.length });
+    console.log("PIPELINE_STAGE_5_EXTRACTED_LINE_ITEMS", {
+      user_id: user.id,
+      file_path: filePath,
+      line_item_count: parsedItems.length,
+    });
 
-    console.log("PIPELINE_STAGE_3_NAME_RESOLUTION_START", { user_id: user.id, file_path: filePath });
+    if (!parsedItems.length) {
+      return jsonResponse(toStableFailure("No line items extracted from receipt text", ingested.raw_text));
+    }
+
     const withNames = await resolveProductNames({ items: parsedItems, serpApiKey: SERPAPI_API_KEY, openAiKey: OPENAI_API_KEY });
     const withCategories = applyCategorySuggestions(withNames, categories);
-    console.log("PIPELINE_STAGE_3_NAME_RESOLUTION_DONE", { resolved_items: withCategories.length });
 
-    console.log("PIPELINE_STAGE_4_VALIDATION_START", { user_id: user.id, file_path: filePath });
     const validation = validateReceiptMath({
       items: withCategories,
       subtotalHint: ingested.subtotal_hint,
       taxHint: ingested.tax_hint,
       totalHint: ingested.total_hint,
     });
-    console.log("PIPELINE_STAGE_4_VALIDATION_DONE", validation);
 
     const lineItems = withCategories.map((item) => ({
       product_number: item.product_number,
@@ -123,13 +170,22 @@ Deno.serve(async (req) => {
       user_state: {},
     };
 
-    await persistAnalysis(adminClient, user.id, filePath, analysis);
-
-    return jsonResponse({
-      success: true,
-      data: analysis,
-      meta: { source: "fresh", pipeline_version: PIPELINE_VERSION },
+    const persisted = await persistAnalysis(adminClient, user.id, filePath, analysis);
+    console.log("PIPELINE_STAGE_6_DATABASE_INSERT", {
+      user_id: user.id,
+      file_path: filePath,
+      persisted,
     });
+
+    const stable = toStableSuccess(analysis, "fresh");
+    console.log("PIPELINE_STAGE_7_FINAL_RESPONSE", {
+      user_id: user.id,
+      file_path: filePath,
+      success: stable.success,
+      item_count: stable.items.length,
+    });
+
+    return jsonResponse(stable);
   } catch (error: unknown) {
     const httpError = toHttpError(error);
     console.error("PIPELINE_ERROR", {
@@ -140,14 +196,73 @@ Deno.serve(async (req) => {
 
     return jsonResponse({
       success: false,
-      error: {
-        code: `ANALYZE_RECEIPT_${httpError.status}`,
-        message: httpError.message,
-        details: httpError.details ?? null,
-      },
+      items: [],
+      rawText: "",
+      error: httpError.message,
+      details: httpError.details ?? null,
     }, httpError.status);
   }
 });
+
+function parseAnalyzeRequest(body: Record<string, unknown>): AnalyzeRequest {
+  const filePath = String(body.filePath ?? "").trim();
+  if (!filePath) {
+    throw new HttpError(400, "Missing required field: filePath", {
+      expected_schema: {
+        filePath: "string",
+        categories: "string[]",
+        forceReanalyze: "boolean",
+      },
+    });
+  }
+
+  let categories: string[] = [];
+  if (typeof body.categories === "undefined") {
+    categories = [];
+  } else if (!Array.isArray(body.categories)) {
+    throw new HttpError(400, "Invalid field: categories must be an array of strings");
+  } else {
+    const invalid = body.categories.find((value) => typeof value !== "string");
+    if (typeof invalid !== "undefined") {
+      throw new HttpError(400, "Invalid field: categories must contain only strings");
+    }
+    categories = body.categories.map((value) => String(value).trim()).filter(Boolean);
+  }
+
+  if (typeof body.forceReanalyze !== "undefined" && typeof body.forceReanalyze !== "boolean") {
+    throw new HttpError(400, "Invalid field: forceReanalyze must be a boolean");
+  }
+
+  return {
+    filePath,
+    categories,
+    forceReanalyze: body.forceReanalyze === true,
+  };
+}
+
+function toStableSuccess(analysis: Record<string, unknown>, source: "stored" | "fresh") {
+  const itemsRaw = analysis.items ?? analysis.line_items;
+  const items = Array.isArray(itemsRaw) ? itemsRaw : [];
+  const rawText = String((analysis.raw_ocr as Record<string, unknown> | undefined)?.raw_text ?? "");
+
+  return {
+    success: true,
+    items,
+    rawText,
+    error: null,
+    data: analysis,
+    meta: { source, pipeline_version: PIPELINE_VERSION },
+  };
+}
+
+function toStableFailure(message: string, rawText = "") {
+  return {
+    success: false,
+    items: [],
+    rawText,
+    error: message,
+  };
+}
 
 async function requireAuthenticatedUser(req: Request) {
   const authorization = req.headers.get("Authorization");
@@ -218,7 +333,7 @@ async function persistAnalysis(
   userId: string,
   filePath: string,
   analysis: Record<string, unknown>,
-) {
+): Promise<boolean> {
   const { error } = await adminClient.from("receipt_analyses").upsert({
     user_id: userId,
     file_path: filePath,
@@ -230,6 +345,8 @@ async function persistAnalysis(
   if (error && String(error.code) !== "42P01") {
     throw new HttpError(500, "Unable to persist receipt analysis", { db_error: error.message });
   }
+
+  return !error;
 }
 
 async function downloadReceiptBlob(adminClient: ReturnType<typeof createClient>, filePath: string): Promise<Blob> {
