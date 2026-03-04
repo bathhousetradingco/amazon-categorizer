@@ -8,8 +8,8 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
-const ITEM_NUMBER_LINE_PATTERN = /^\d{9,12}\b/;
-const ITEM_NUMBER_WITH_TEXT_PATTERN = /^(\d{9,12})\b.*[A-Za-z]/;
+const ITEM_NUMBER_LINE_PATTERN = /(?:^|\D)(\d{9,12})(?=\D|$)/;
+const ITEM_NUMBER_WITH_TEXT_PATTERN = /\d{9,12}.*[A-Za-z]|[A-Za-z].*\d{9,12}/;
 const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT\s+1\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
 const INST_SV_LINE_PATTERN = /^INST\s+SV\b/i;
 const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*$/;
@@ -266,13 +266,18 @@ function isLikelyLineItem(line: string): boolean {
   return ITEM_NUMBER_WITH_TEXT_PATTERN.test(line);
 }
 
+function extractLineItemNumber(line: string): string {
+  const match = String(line || "").match(ITEM_NUMBER_LINE_PATTERN);
+  return match?.[1] || "";
+}
+
 function extractItemNumbersFromLineItems(lines: string[]): string[] {
   const found: string[] = [];
 
   for (const line of lines) {
     if (!isLikelyLineItem(line)) continue;
 
-    const number = line.match(ITEM_NUMBER_LINE_PATTERN)?.[0];
+    const number = extractLineItemNumber(line);
     if (number) found.push(number);
   }
 
@@ -301,7 +306,7 @@ function extractParsedReceiptItems(lines: string[], itemNumbers: string[]): Pars
 
   for (let i = 0; i < lines.length - 1; i++) {
     const line = String(lines[i] || "").trim();
-    const number = line.match(ITEM_NUMBER_LINE_PATTERN)?.[0];
+    const number = extractLineItemNumber(line);
     if (!number) continue;
 
     const normalizedProductNumber = normalizeProductNumber(number);
