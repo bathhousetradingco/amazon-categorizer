@@ -268,19 +268,62 @@ function normalizeTabscannerPayload(payload: unknown): IngestedReceipt {
   const nodes = collectCandidateNodes([payload]);
 
   const structuredBlocks = nodes
-    .flatMap((node) => [node.blocks, node.textBlocks, node.ocrBlocks])
+    .flatMap((node) => [
+      node.blocks,
+      node.textBlocks,
+      node.ocrBlocks,
+      node.lines,
+      node.raw_lines,
+      node.ocr_lines,
+      node.textLines,
+      node.rawTextLines,
+      node.documentLines,
+      node.items,
+      node.lineItems,
+      node.products,
+      node.entries,
+      node.receiptItems,
+    ])
     .flatMap((value) => Array.isArray(value) ? value : [])
     .filter((entry) => entry && typeof entry === "object") as Record<string, unknown>[];
 
   const joinedLines = nodes
-    .flatMap((node) => [node.text, node.rawText, node.fullText, node.ocrText, node.documentText])
+    .flatMap((node) => [
+      node.text,
+      node.rawText,
+      node.fullText,
+      node.ocrText,
+      node.documentText,
+      node.raw_text,
+      node.extractedText,
+      node.recognizedText,
+      node.content,
+      node.receipt_text,
+      node.description,
+    ])
     .find((value) => typeof value === "string" && value.trim()) as string | undefined;
 
-  const rawTextLines = joinedLines
+  const rawTextLinesFromText = joinedLines
     ? joinedLines.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-    : structuredBlocks
-      .map((block) => String(block.text ?? block.rawText ?? block.value ?? "").trim())
-      .filter(Boolean);
+    : [];
+
+  const rawTextLinesFromBlocks = structuredBlocks
+    .flatMap((block) => [
+      block.text,
+      block.rawText,
+      block.value,
+      block.line,
+      block.description,
+      block.name,
+      block.label,
+      block.item,
+    ])
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+
+  const rawTextLines = rawTextLinesFromText.length
+    ? rawTextLinesFromText
+    : (rawTextLinesFromBlocks.length ? rawTextLinesFromBlocks : extractLinesFromItemCandidates(nodes));
 
   return {
     store: firstString(...nodes.map((node) => node.store ?? node.storeName ?? node.merchant)),
@@ -293,6 +336,26 @@ function normalizeTabscannerPayload(payload: unknown): IngestedReceipt {
     raw_text_lines: rawTextLines,
     structured_blocks: structuredBlocks,
   };
+}
+
+function extractLinesFromItemCandidates(nodes: Record<string, unknown>[]): string[] {
+  const itemCandidates = nodes
+    .flatMap((node) => [node.items, node.lineItems, node.products, node.entries, node.receiptItems])
+    .flatMap((value) => Array.isArray(value) ? value : [])
+    .filter((entry) => entry && typeof entry === "object") as Record<string, unknown>[];
+
+  return itemCandidates
+    .map((item) => {
+      const text = String(item.text ?? item.rawText ?? item.description ?? item.name ?? item.label ?? "").trim();
+      const amountRaw = item.total ?? item.amount ?? item.price ?? item.lineTotal;
+      const amount = Number(String(amountRaw ?? "").replace(/[^\d.-]/g, ""));
+
+      if (text && Number.isFinite(amount)) return `${text} ${amount.toFixed(2)}`;
+      if (text) return text;
+      if (Number.isFinite(amount)) return amount.toFixed(2);
+      return "";
+    })
+    .filter(Boolean);
 }
 
 function collectCandidateNodes(seeds: unknown[]): Record<string, unknown>[] {
