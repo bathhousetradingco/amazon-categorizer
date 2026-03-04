@@ -10,6 +10,7 @@ type ParsedReceiptLine = {
   receiptText: string | null;
   quantity: number | null;
   unitPrice: number | null;
+  totalPrice: number | null;
 };
 
 type ReceiptItem = {
@@ -98,8 +99,8 @@ Deno.serve(async (req) => {
       .map((line) => ({
         itemNumber: line.cleanedItemNumber || undefined,
         name: String(line.receiptText || "").trim() || "Unknown item",
-        price: null,
-        qty: 1,
+        price: line.totalPrice ?? line.unitPrice ?? null,
+        qty: line.quantity && line.quantity > 0 ? line.quantity : 1,
       }));
 
     debug.raw_receipt_text = extraction.fullText;
@@ -781,29 +782,40 @@ function parseReceiptLineItems(sourceLines: string[], fullText: string): ParsedR
 function parseSamsClubStateMachine(lines: string[]): ParsedReceiptLine[] {
   const parsed: ParsedReceiptLine[] = [];
   let pending: ParsedReceiptLine | null = null;
+  const detectedItemNumbers: string[] = [];
+  const parsedQuantities: number[] = [];
+  const parsedPrices: Array<{ unitPrice: number | null; totalPrice: number | null }> = [];
+
+  const flushPending = () => {
+    if (!pending) return;
+    parsed.push(pending);
+    console.log("Parsed receipt item:", pending);
+    pending = null;
+  };
+
+  const itemHeaderPattern = /^(\d{9,10})(?:\s+|$)(.*)$/;
+  const pricingPattern = /(^\d+\s+AT\s+\d+\s+FOR\s+\d+[\.,]\d{2}(?:\s+\d+[\.,]\d{2})?)|(^\d+\s*[xX@]\s*\$?\d+[\.,]\d{2}(?:\s+\$?\d+[\.,]\d{2})?)/i;
+
+  console.log("Sam's parser item header regex:", itemHeaderPattern);
+  console.log("Sam's parser pricing regex:", pricingPattern);
 
   for (const lineRaw of lines) {
     const line = String(lineRaw || "").replace(/\s+/g, " ").trim();
     if (!line || isNonItemLine(line)) continue;
 
-    const match = line.match(/^\d{8,12}/);
-    console.group("ITEM NUMBER DETECTION");
-    console.log("Line:", line);
-    console.log("Match:", match);
-    console.groupEnd();
+    const headerMatch = line.match(itemHeaderPattern);
+    const qtyPrice = parseQuantityAndPriceLine(line);
 
-    if (match) {
-      if (pending) {
-        parsed.push(pending);
-        console.log("Parsed receipt item:", pending);
-      }
+    if (headerMatch) {
+      flushPending();
 
-      const rawItemNumber = match[0];
+      const rawItemNumber = headerMatch[1];
       const cleanedItemNumber = rawItemNumber.replace(/^0+/, "") || "0";
-      const receiptText = cleanupNameText(line.slice(rawItemNumber.length));
+      const receiptText = cleanupNameText(headerMatch[2] || "");
 
       console.log("Raw item number:", rawItemNumber);
       console.log("Cleaned item number:", cleanedItemNumber);
+      detectedItemNumbers.push(rawItemNumber);
 
       pending = {
         raw: line,
@@ -812,44 +824,65 @@ function parseSamsClubStateMachine(lines: string[]): ParsedReceiptLine[] {
         receiptText,
         quantity: null,
         unitPrice: null,
+        totalPrice: null,
       };
       continue;
     }
 
     if (!pending) continue;
-    const qtyPrice = parseQuantityAndPriceLine(line);
     if (qtyPrice) {
       pending.quantity = qtyPrice.quantity;
       pending.unitPrice = qtyPrice.unitPrice;
+      pending.totalPrice = qtyPrice.totalPrice;
       pending.raw = `${pending.raw} || ${line}`;
-      parsed.push(pending);
-      console.log("Parsed receipt item:", pending);
-      pending = null;
+      if (typeof qtyPrice.quantity === "number") parsedQuantities.push(qtyPrice.quantity);
+      parsedPrices.push({ unitPrice: qtyPrice.unitPrice, totalPrice: qtyPrice.totalPrice });
+      flushPending();
+      continue;
+    }
+
+    if (pricingPattern.test(line)) {
+      pending.raw = `${pending.raw} || ${line}`;
     }
   }
 
-  if (pending) {
-    parsed.push(pending);
-    console.log("Parsed receipt item:", pending);
-  }
+  flushPending();
+
+  console.log("Detected item numbers:", detectedItemNumbers);
+  console.log("Parsed quantities:", parsedQuantities);
+  console.log("Parsed prices:", parsedPrices);
 
   return parsed;
 }
 
-function parseQuantityAndPriceLine(line: string): { quantity: number | null; unitPrice: number | null } | null {
-  const qtyMatch = line.match(/^(\d+)\s+AT\s+\d+\s+FOR\s+(\d+[\.,]\d{2})/i);
+function parseQuantityAndPriceLine(line: string): { quantity: number | null; unitPrice: number | null; totalPrice: number | null } | null {
+  const qtyMatch = line.match(/^(\d+)\s+AT\s+\d+\s+FOR\s+(\d+[\.,]\d{2})(?:\s+(\d+[\.,]\d{2}))?/i);
   if (qtyMatch) {
+    const quantity = Number(qtyMatch[1]);
+    const unitPrice = Number(qtyMatch[2].replace(",", "."));
+    const totalPrice = qtyMatch[3]
+      ? Number(qtyMatch[3].replace(",", "."))
+      : Number((quantity * unitPrice).toFixed(2));
+
     return {
-      quantity: Number(qtyMatch[1]),
-      unitPrice: Number(qtyMatch[2].replace(",", ".")),
+      quantity,
+      unitPrice,
+      totalPrice,
     };
   }
 
-  const compactMatch = line.match(/^(\d+)\s*[xX@]\s*\$?(\d+[\.,]\d{2})/);
+  const compactMatch = line.match(/^(\d+)\s*[xX@]\s*\$?(\d+[\.,]\d{2})(?:\s+\$?(\d+[\.,]\d{2}))?/);
   if (compactMatch) {
+    const quantity = Number(compactMatch[1]);
+    const unitPrice = Number(compactMatch[2].replace(",", "."));
+    const totalPrice = compactMatch[3]
+      ? Number(compactMatch[3].replace(",", "."))
+      : Number((quantity * unitPrice).toFixed(2));
+
     return {
-      quantity: Number(compactMatch[1]),
-      unitPrice: Number(compactMatch[2].replace(",", ".")),
+      quantity,
+      unitPrice,
+      totalPrice,
     };
   }
 
@@ -875,6 +908,7 @@ function parseSingleLine(line: string): ParsedReceiptLine | null {
       receiptText,
       quantity: null,
       unitPrice: null,
+      totalPrice: null,
     };
   }
 
@@ -894,6 +928,7 @@ function parseSingleLine(line: string): ParsedReceiptLine | null {
     receiptText,
     quantity: null,
     unitPrice: null,
+    totalPrice: null,
   };
 }
 
