@@ -8,6 +8,8 @@ type ParsedReceiptLine = {
   rawItemNumber: string | null;
   cleanedItemNumber: string | null;
   receiptText: string | null;
+  quantity: number | null;
+  unitPrice: number | null;
 };
 
 type ReceiptItem = {
@@ -86,6 +88,7 @@ Deno.serve(async (req) => {
 
     const parsedLines = parseReceiptLineItems(extraction.lines, extraction.fullText);
     debug.parsed_line_count = parsedLines.length;
+    debug.parsed_lines_preview = parsedLines.slice(0, 12);
 
     const productNameCandidates = await resolveReceiptProductNames(serviceClient, parsedLines);
     const fallbackItems = dedupeAndNormalizeNames(productNameCandidates).map((name) => ({
@@ -94,7 +97,11 @@ Deno.serve(async (req) => {
       qty: 1,
     }));
 
-    const baseItems = openAiParsedItems.items.length ? openAiParsedItems.items : fallbackItems;
+    const parserItems = buildReceiptItemsFromParsedLines(parsedLines);
+    const baseItems = parserItems.length
+      ? parserItems
+      : (openAiParsedItems.items.length ? openAiParsedItems.items : fallbackItems);
+    debug.base_item_source = parserItems.length ? "state_machine_parser" : (openAiParsedItems.items.length ? "openai" : "fallback_names");
     const itemResolution = await applyResolvedNamesToItems(serviceClient, baseItems, parsedLines);
     const items = itemResolution.items;
     debug.item_resolution = itemResolution.debug;
@@ -284,6 +291,10 @@ async function extractReceiptTextAndLines(signedUrl: string): Promise<{ fullText
 
   const fullText = extractRawTextFromTabscanner(json);
   const lines = extractCandidateLinesFromTabscanner(json, fullText);
+
+  console.group("RAW OCR TEXT");
+  console.log(fullText);
+  console.groupEnd();
 
   console.log("tabscanner response", {
     status: response.status,
@@ -736,15 +747,106 @@ function findFirstDeepArray(root: any, keys: string[]): any[] {
 }
 
 function parseReceiptLineItems(sourceLines: string[], fullText: string): ParsedReceiptLine[] {
+  const fallbackLines = String(fullText || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const lines = sourceLines.length
     ? sourceLines
     : String(fullText || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 
-  const parsed = lines
+  const preferredLines = fallbackLines.length > lines.length ? fallbackLines : lines;
+
+  console.group("PARSED LINES");
+  preferredLines.forEach((line, index) => {
+    console.log(index, line);
+  });
+  console.groupEnd();
+
+  const parsed = parseSamsClubStateMachine(preferredLines);
+  if (parsed.length) {
+    return parsed;
+  }
+
+  return preferredLines
     .map((line) => parseSingleLine(line))
     .filter((line): line is ParsedReceiptLine => Boolean(line));
+}
+
+function parseSamsClubStateMachine(lines: string[]): ParsedReceiptLine[] {
+  const parsed: ParsedReceiptLine[] = [];
+  let pending: ParsedReceiptLine | null = null;
+
+  for (const lineRaw of lines) {
+    const line = String(lineRaw || "").replace(/\s+/g, " ").trim();
+    if (!line || isNonItemLine(line)) continue;
+
+    const skuPrefixMatch = line.match(/^(\d{8,12})\s+/);
+    if (skuPrefixMatch) {
+      if (pending) {
+        parsed.push(pending);
+        console.group("PARSED ITEM OBJECT");
+        console.log(pending);
+        console.groupEnd();
+      }
+
+      const rawItemNumber = skuPrefixMatch[1];
+      const cleanedItemNumber = normalizeProductNumber(rawItemNumber);
+      const receiptText = cleanupNameText(line.slice(skuPrefixMatch[0].length));
+
+      console.log("Raw item number:", rawItemNumber);
+      console.log("Cleaned item number:", cleanedItemNumber);
+
+      pending = {
+        raw: line,
+        rawItemNumber,
+        cleanedItemNumber,
+        receiptText,
+        quantity: null,
+        unitPrice: null,
+      };
+      continue;
+    }
+
+    if (!pending) continue;
+    const qtyPrice = parseQuantityAndPriceLine(line);
+    if (qtyPrice) {
+      pending.quantity = qtyPrice.quantity;
+      pending.unitPrice = qtyPrice.unitPrice;
+      pending.raw = `${pending.raw} || ${line}`;
+      parsed.push(pending);
+      console.group("PARSED ITEM OBJECT");
+      console.log(pending);
+      console.groupEnd();
+      pending = null;
+    }
+  }
+
+  if (pending) {
+    parsed.push(pending);
+    console.group("PARSED ITEM OBJECT");
+    console.log(pending);
+    console.groupEnd();
+  }
 
   return parsed;
+}
+
+function parseQuantityAndPriceLine(line: string): { quantity: number | null; unitPrice: number | null } | null {
+  const qtyMatch = line.match(/^(\d+)\s+AT\s+\d+\s+FOR\s+(\d+[\.,]\d{2})/i);
+  if (qtyMatch) {
+    return {
+      quantity: Number(qtyMatch[1]),
+      unitPrice: Number(qtyMatch[2].replace(",", ".")),
+    };
+  }
+
+  const compactMatch = line.match(/^(\d+)\s*[xX@]\s*\$?(\d+[\.,]\d{2})/);
+  if (compactMatch) {
+    return {
+      quantity: Number(compactMatch[1]),
+      unitPrice: Number(compactMatch[2].replace(",", ".")),
+    };
+  }
+
+  return null;
 }
 
 function parseSingleLine(line: string): ParsedReceiptLine | null {
@@ -781,7 +883,20 @@ function parseSingleLine(line: string): ParsedReceiptLine | null {
     rawItemNumber: null,
     cleanedItemNumber: null,
     receiptText,
+    quantity: null,
+    unitPrice: null,
   };
+}
+
+function buildReceiptItemsFromParsedLines(lines: ParsedReceiptLine[]): ReceiptItem[] {
+  return lines
+    .filter((line) => Boolean(line.cleanedItemNumber) && Boolean(line.receiptText))
+    .map((line) => ({
+      itemNumber: line.cleanedItemNumber || undefined,
+      name: String(line.receiptText || "").trim(),
+      price: typeof line.unitPrice === "number" && Number.isFinite(line.unitPrice) ? line.unitPrice : null,
+      qty: typeof line.quantity === "number" && line.quantity > 0 ? line.quantity : 1,
+    }));
 }
 
 function isNonItemLine(line: string): boolean {
@@ -950,7 +1065,7 @@ async function applyResolvedNamesToItems(
 
   for (const item of items) {
     const matchedLine = findBestParsedLineForItem(item, lineQueue);
-    const rawItemNumber = matchedLine?.rawItemNumber || matchedLine?.cleanedItemNumber || item.itemNumber || "";
+    const rawItemNumber = item.itemNumber || matchedLine?.rawItemNumber || matchedLine?.cleanedItemNumber || "";
     const cleanedItemNumber = rawItemNumber ? normalizeProductNumber(rawItemNumber) : "";
     const originalName = String(matchedLine?.receiptText || item.name || "").trim();
 
@@ -963,6 +1078,12 @@ async function applyResolvedNamesToItems(
       serpQuery = resolution.serpQuery;
       serpResponse = resolution.serpResponse;
       resolvedName = resolution.resolvedName || originalName;
+
+      console.group("SERPAPI LOOKUP");
+      console.log("Item number:", cleanedItemNumber);
+      console.log("Query:", serpQuery);
+      console.log("Response:", serpResponse);
+      console.groupEnd();
     }
 
     resolvedItems.push({
@@ -985,6 +1106,15 @@ async function applyResolvedNamesToItems(
 }
 
 function findBestParsedLineForItem(item: ReceiptItem, parsedLines: ParsedReceiptLine[]): ParsedReceiptLine | null {
+  const itemNumber = normalizeProductNumber(item.itemNumber || "");
+  if (itemNumber) {
+    const byNumberIndex = parsedLines.findIndex((line) => normalizeProductNumber(line.rawItemNumber || line.cleanedItemNumber || "") === itemNumber);
+    if (byNumberIndex >= 0) {
+      const [line] = parsedLines.splice(byNumberIndex, 1);
+      return line;
+    }
+  }
+
   const itemName = normalizeNameForMatch(item.name || "");
   const bestIndex = parsedLines.findIndex((line) => {
     if (!line.rawItemNumber) return false;
