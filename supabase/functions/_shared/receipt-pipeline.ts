@@ -77,12 +77,17 @@ export async function requestTabscannerIngestion(params: {
   }, timeoutMs);
 
   const submitPayload = await safeParseJsonResponse(submit);
+  console.log("TABSCANNER_SUBMIT_RESPONSE", {
+    endpoint: `${endpoint}/api/2/process`,
+    status: submit.status,
+    payload: sanitizeForLog(submitPayload),
+  });
   if (!submit.ok) {
     throw new HttpError(502, "TabScanner submit failed", { status: submit.status, payload: submitPayload });
   }
 
   let payload = submitPayload;
-  const token = String(submitPayload?.token ?? submitPayload?.id ?? submitPayload?.uuid ?? "").trim();
+  const token = extractTabscannerToken(submitPayload);
 
   for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
     const normalized = normalizeTabscannerPayload(payload);
@@ -95,6 +100,12 @@ export async function requestTabscannerIngestion(params: {
       headers: { apikey: apiKey },
     }, timeoutMs);
     payload = await safeParseJsonResponse(poll);
+    console.log("TABSCANNER_POLL_RESPONSE", {
+      endpoint: `${endpoint}/api/2/result/${token}`,
+      attempt: attempt + 1,
+      status: poll.status,
+      payload: sanitizeForLog(payload),
+    });
   }
 
   const normalized = normalizeTabscannerPayload(payload);
@@ -102,6 +113,7 @@ export async function requestTabscannerIngestion(params: {
     throw new HttpError(422, "TabScanner returned no parsable receipt text", {
       has_token: Boolean(token),
       max_poll_attempts: maxPollAttempts,
+      tabscanner_payload: sanitizeForLog(payload),
     });
   }
 
@@ -321,9 +333,13 @@ function normalizeTabscannerPayload(payload: unknown): IngestedReceipt {
     .map((value) => String(value ?? "").trim())
     .filter(Boolean);
 
+  const rawTextLinesFromStringArrays = extractStringArrays(nodes);
+
   const rawTextLines = rawTextLinesFromText.length
     ? rawTextLinesFromText
-    : (rawTextLinesFromBlocks.length ? rawTextLinesFromBlocks : extractLinesFromItemCandidates(nodes));
+    : (rawTextLinesFromBlocks.length
+      ? rawTextLinesFromBlocks
+      : (rawTextLinesFromStringArrays.length ? rawTextLinesFromStringArrays : extractLinesFromItemCandidates(nodes)));
 
   return {
     store: firstString(...nodes.map((node) => node.store ?? node.storeName ?? node.merchant)),
@@ -500,6 +516,66 @@ function suggestCategory(name: string, categories: string[]): string | null {
   }).sort((a, b) => b.score - a.score || a.category.localeCompare(b.category));
 
   return scored[0]?.score ? scored[0].category : null;
+}
+
+
+
+function extractTabscannerToken(payload: unknown): string {
+  const source = (payload && typeof payload === "object") ? payload as Record<string, unknown> : {};
+  const candidates = [
+    source.token,
+    source.id,
+    source.uuid,
+    source.job_id,
+    source.jobId,
+    source.request_id,
+    source.requestId,
+    (source.data as Record<string, unknown> | undefined)?.token,
+    (source.data as Record<string, unknown> | undefined)?.id,
+    (source.result as Record<string, unknown> | undefined)?.token,
+    (source.result as Record<string, unknown> | undefined)?.id,
+  ];
+
+  for (const candidate of candidates) {
+    const value = String(candidate ?? "").trim();
+    if (value) return value;
+  }
+
+  return "";
+}
+
+function extractStringArrays(nodes: Record<string, unknown>[]): string[] {
+  const lines: string[] = [];
+
+  for (const node of nodes) {
+    for (const [key, value] of Object.entries(node)) {
+      if (!Array.isArray(value)) continue;
+      if (!/text|line|ocr|content|description/i.test(key)) continue;
+
+      for (const entry of value) {
+        if (typeof entry === "string" && entry.trim()) {
+          lines.push(entry.trim());
+        }
+      }
+    }
+  }
+
+  return lines;
+}
+
+function sanitizeForLog(payload: unknown): unknown {
+  try {
+    const serialized = JSON.stringify(payload);
+    if (!serialized) return payload;
+    if (serialized.length <= 4000) return JSON.parse(serialized);
+    return {
+      truncated: true,
+      preview: serialized.slice(0, 4000),
+      total_length: serialized.length,
+    };
+  } catch {
+    return payload;
+  }
 }
 
 async function safeParseJsonResponse(response: Response): Promise<any> {

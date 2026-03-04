@@ -2730,11 +2730,16 @@ async function analyzeReceipt(item, options = {}){
       throw new Error(String(errMsg));
     }
 
+    if(result?.success === false){
+      const reason = result?.error || "No text detected in receipt image";
+      throw new Error(String(reason));
+    }
+
     console.log("✅ Parsed result:", result);
 
     // ✅ Normalize expected structure
     const resultPayload = result?.data || result;
-    const lineItemsRaw = resultPayload.line_items || resultPayload.items || [];
+    const lineItemsRaw = resultPayload.line_items || resultPayload.items || result?.items || [];
     const lineItems = Array.isArray(lineItemsRaw) ? lineItemsRaw : [];
 
     if(!Array.isArray(lineItemsRaw)){
@@ -2744,6 +2749,7 @@ async function analyzeReceipt(item, options = {}){
       });
     }
     const taxAmount = resultPayload.tax_amount ?? resultPayload.tax ?? 0;
+    const rawText = resultPayload?.raw_ocr?.raw_text || result?.rawText || "";
 
     // 🚫 Prevent empty results
     if(lineItems.length === 0){
@@ -2766,7 +2772,8 @@ async function analyzeReceipt(item, options = {}){
       receipt_total: resultPayload.receipt_total ?? item.Amount ?? 0,
       computed_total: resultPayload.computed_total ?? 0,
       problematic_line_items: resultPayload.problematic_line_items || [],
-      user_state: resultPayload.user_state || {}
+      user_state: resultPayload.user_state || {},
+      raw_text: rawText
     };
 
     if(forceReanalyze){
