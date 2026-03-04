@@ -80,7 +80,7 @@ async function requireUser(req: Request) {
 }
 
 async function getUserReceiptPath(
-  serviceClient: ReturnType<typeof createClient>,
+  serviceClient: any,
   transactionId: string,
   userId: string,
 ): Promise<string> {
@@ -98,7 +98,7 @@ async function getUserReceiptPath(
 }
 
 async function createReceiptSignedUrl(
-  serviceClient: ReturnType<typeof createClient>,
+  serviceClient: any,
   receiptPath: string,
 ): Promise<string> {
   const { data, error } = await serviceClient.storage.from("receipts").createSignedUrl(receiptPath, 180);
@@ -292,7 +292,7 @@ function cleanupNameText(name: string): string {
 }
 
 async function resolveReceiptProductNames(
-  serviceClient: ReturnType<typeof createClient>,
+  serviceClient: any,
   lines: ParsedReceiptLine[],
 ): Promise<string[]> {
   const names: string[] = [];
@@ -322,7 +322,7 @@ async function resolveReceiptProductNames(
 }
 
 async function readProductLookupCache(
-  serviceClient: ReturnType<typeof createClient>,
+  serviceClient: any,
   normalizedSku: string,
 ): Promise<string | null> {
   const { data, error }: { data: { clean_name?: string | null } | null; error: any } = await serviceClient
@@ -341,7 +341,7 @@ async function readProductLookupCache(
 }
 
 async function upsertProductLookupCache(
-  serviceClient: ReturnType<typeof createClient>,
+  serviceClient: any,
   normalizedSku: string,
   cleanName: string,
 ): Promise<void> {
