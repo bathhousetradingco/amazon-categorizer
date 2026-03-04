@@ -67,12 +67,16 @@ export async function requestTabscannerIngestion(params: {
   mimeType: string;
   apiKey?: string;
   timeoutMs?: number;
+  maxPollAttempts?: number;
+  pollIntervalMs?: number;
 }): Promise<IngestedReceipt> {
   const apiKey = params.apiKey?.trim();
   if (!apiKey) throw new HttpError(500, "TABSCANNER_API_KEY is required");
 
   const endpoint = Deno.env.get("TABSCANNER_API_URL") ?? "https://api.tabscanner.com";
   const timeoutMs = params.timeoutMs ?? 15000;
+  const maxPollAttempts = params.maxPollAttempts ?? Number(Deno.env.get("TABSCANNER_MAX_POLL_ATTEMPTS") ?? 20);
+  const pollIntervalMs = params.pollIntervalMs ?? Number(Deno.env.get("TABSCANNER_POLL_INTERVAL_MS") ?? 1200);
   const form = new FormData();
   form.append("file", new File([params.blob], params.filename, { type: params.mimeType }));
 
@@ -89,25 +93,55 @@ export async function requestTabscannerIngestion(params: {
 
   let payload = submitPayload;
   const token = String(submitPayload?.token ?? submitPayload?.id ?? submitPayload?.uuid ?? "").trim();
+  let lastStatus = extractTabscannerStatus(payload);
 
-  for (let attempt = 0; attempt < 7; attempt++) {
+  for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
     const normalized = normalizeTabscannerIngestionPayload(payload);
     if (normalized.raw_text_lines.length || normalized.structured_items.length) return normalized;
-    if (!token) break;
-    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    const shouldPollAgain = token && (!lastStatus || lastStatus === "processing");
+    if (!shouldPollAgain) break;
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     const poll = await fetchWithTimeout(`${endpoint}/api/2/result/${token}`, {
       method: "GET",
       headers: { apikey: apiKey },
     }, timeoutMs);
     payload = await safeParseJsonResponse(poll);
+    lastStatus = extractTabscannerStatus(payload);
     if (!poll.ok) continue;
   }
 
   const normalized = normalizeTabscannerIngestionPayload(payload);
   if (!normalized.raw_text_lines.length && !normalized.structured_items.length) {
-    throw new HttpError(422, "TabScanner returned no parsable receipt text");
+    throw new HttpError(422, "TabScanner returned no parsable receipt text", {
+      status: lastStatus,
+      has_token: Boolean(token),
+      max_poll_attempts: maxPollAttempts,
+    });
   }
   return normalized;
+}
+
+function extractTabscannerStatus(payload: unknown): "processing" | "done" | null {
+  if (!payload || typeof payload !== "object") return null;
+
+  const nodes = collectCandidateNodes([payload]);
+  for (const node of nodes) {
+    const explicitStatus = String(node.status ?? node.state ?? node.processingStatus ?? "").trim().toLowerCase();
+    if (["pending", "processing", "running", "queued", "in_progress"].includes(explicitStatus)) return "processing";
+    if (["done", "finished", "completed", "success", "ok"].includes(explicitStatus)) return "done";
+
+    const doneFlag = node.done;
+    if (doneFlag === true) return "done";
+    if (doneFlag === false) return "processing";
+
+    const readyFlag = node.ready;
+    if (readyFlag === true) return "done";
+    if (readyFlag === false) return "processing";
+  }
+
+  return null;
 }
 
 function normalizeTabscannerIngestionPayload(payload: any): IngestedReceipt {
