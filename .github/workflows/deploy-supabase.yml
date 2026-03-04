@@ -12,8 +12,20 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # Install Deno so Codex / CI can validate edge functions
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: v1.x
+
+      # Install Supabase CLI
       - uses: supabase/setup-cli@v1
 
+      # Validate all edge functions before deploy
+      - name: Validate Edge Functions
+        run: deno check supabase/functions/**/*.ts
+
+      # Deploy each function
       - run: |
           # JWT behavior is controlled in supabase/config.toml.
           supabase functions deploy analyze-receipt --project-ref xbayklklcdohewvnbglq
