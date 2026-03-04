@@ -6,9 +6,9 @@ import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const TABSCANNER_API_KEY = Deno.env.get("TABSCANNER_API_KEY") || "";
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
-const ITEM_NUMBER_PATTERN = /^\s*(0\d{8,9})\b/;
+const ITEM_NUMBER_LINE_PATTERN = /(?:^|\b)(0\d{8,11}|\d{9,12})(?:\b|$)/g;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -31,27 +31,28 @@ Deno.serve(async (req) => {
       : await getUserReceiptPath(serviceClient, transactionId, user.id);
 
     const signedUrl = await createReceiptSignedUrl(serviceClient, receiptPath);
-    const extraction = await extractReceiptText(signedUrl);
+    const extraction = await extractReceiptData(signedUrl);
 
     const lines = String(extraction.fullText || "")
       .split("\n")
-      .map((line) => line.trimEnd());
+      .map((line) => line.trimEnd())
+      .filter((line) => line.trim().length > 0);
 
-    const matchingLines: string[] = [];
-    const itemNumbers: string[] = [];
+    const regexItemNumbers = extractItemNumbersFromLines(lines);
+    const itemNumbers = dedupeItemNumbers([
+      ...regexItemNumbers,
+      ...extraction.modelItemNumbers,
+    ]);
 
-    for (const line of lines) {
-      const match = line.match(ITEM_NUMBER_PATTERN);
-      if (!match) continue;
-      matchingLines.push(line);
-      itemNumbers.push(match[1]);
-    }
+    const matchingLines = lines.filter((line) => hasItemNumber(line));
 
     const debug = {
+      provider: extraction.provider,
       raw_receipt_text: extraction.fullText,
-      total_lines_detected: lines.filter((line) => line.trim().length > 0).length,
+      total_lines_detected: lines.length,
       lines_matching_item_number_pattern: matchingLines,
       item_numbers_found: itemNumbers,
+      model_item_numbers: extraction.modelItemNumbers,
     };
 
     return jsonResponse({
@@ -137,24 +138,38 @@ async function createReceiptSignedUrl(
   return data.signedUrl;
 }
 
-async function extractReceiptText(signedUrl: string): Promise<{ fullText: string }> {
-  if (!TABSCANNER_API_KEY) {
-    throw new HttpError(500, "TABSCANNER_API_KEY is not configured");
+async function extractReceiptData(signedUrl: string): Promise<{ fullText: string; modelItemNumbers: string[]; provider: string }> {
+  if (!OPENAI_API_KEY) {
+    throw new HttpError(500, "OPENAI_API_KEY is not configured");
   }
 
-  const payload = {
-    document: { image_url: signedUrl },
-    output: ["raw_text", "items"],
-  };
+  const prompt = [
+    "You are extracting product/item numbers from a purchase receipt image.",
+    "Return strict JSON with keys: raw_text (string) and item_numbers (array of strings).",
+    "Rules for item_numbers:",
+    "- Include only likely product/item numbers from line items.",
+    "- Preserve leading zeroes.",
+    "- Exclude prices, totals, ZIP codes, dates, times, phone numbers, or transaction/reference ids.",
+    "- Prefer numeric codes that are 9 to 12 digits.",
+    "- If none are found, return an empty array.",
+  ].join("\n");
 
-  const response = await fetchWithTimeout("https://api.tabscanner.com/api/2/process", {
+  const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
-      "X-Api-Key": TABSCANNER_API_KEY,
-      "apikey": TABSCANNER_API_KEY,
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      model: "gpt-4.1-mini",
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: prompt },
+          { type: "input_image", image_url: signedUrl },
+        ],
+      }],
+    }),
   }, 45000);
 
   const json = await safeJson(response);
@@ -165,8 +180,18 @@ async function extractReceiptText(signedUrl: string): Promise<{ fullText: string
     });
   }
 
-  const text = extractRawText(json);
-  return { fullText: text };
+  const responseText = extractResponseText(json);
+  const parsed = parseJsonPayload(responseText);
+  const rawText = typeof parsed?.raw_text === "string" && parsed.raw_text.trim()
+    ? parsed.raw_text
+    : responseText;
+  const modelItemNumbers = dedupeItemNumbers(Array.isArray(parsed?.item_numbers) ? parsed.item_numbers : []);
+
+  return {
+    fullText: rawText,
+    modelItemNumbers,
+    provider: "openai:gpt-4.1-mini",
+  };
 }
 
 async function safeJson(response: Response) {
@@ -177,125 +202,71 @@ async function safeJson(response: Response) {
   }
 }
 
-function extractRawText(payload: any): string {
-  const payloadCandidates = collectPayloadCandidates(payload);
-  const directCandidates = [
-    ...payloadCandidates.flatMap((candidate) => [
-      candidate?.result?.raw_text,
-      candidate?.result?.text,
-      candidate?.result?.ocr_text,
-      candidate?.result?.full_text,
-      candidate?.result?.ocr?.text,
-      candidate?.result?.ocr?.raw_text,
-      candidate?.result?.document?.raw_text,
-      candidate?.result?.document?.text,
-      candidate?.raw_text,
-      candidate?.text,
-      candidate?.ocr_text,
-      candidate?.full_text,
-      candidate?.ocr?.text,
-      candidate?.ocr?.raw_text,
-      candidate?.data?.raw_text,
-      candidate?.data?.text,
-      candidate?.document?.text,
-    ]),
-  ];
+function extractResponseText(payload: any): string {
+  if (!payload || typeof payload !== "object") return "";
 
-  for (const candidate of directCandidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate;
-    }
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text;
   }
 
-  const discoveredText = findFirstDeepString(payloadCandidates, [
-    "raw_text",
-    "ocr_text",
-    "full_text",
-    "recognized_text",
-    "plain_text",
-    "text",
-  ]);
-  if (discoveredText) return discoveredText;
-
-  const itemBasedLines = payloadCandidates.flatMap((candidate) =>
-    normalizeCandidateItems(candidate).map((entry) => extractItemText(entry)).filter(Boolean),
-  );
-
-  return itemBasedLines.join("\n");
-}
-
-function collectPayloadCandidates(payload: any): any[] {
-  const candidates = [
-    payload,
-    payload?.result,
-    payload?.data,
-    payload?.response,
-  ].filter(Boolean);
-
-  const task = payload?.task || payload?.result?.task || payload?.data?.task;
-  if (task) {
-    candidates.push(task);
-    candidates.push(task?.result);
-    candidates.push(task?.data);
-  }
-
-  const tasks = [payload?.tasks, payload?.result?.tasks, payload?.data?.tasks]
-    .filter((value) => Array.isArray(value))
-    .flat();
-  for (const entry of tasks) {
-    candidates.push(entry, entry?.result, entry?.data);
-  }
-
-  return candidates;
-}
-
-function findFirstDeepString(nodes: any[], keys: string[]): string | null {
-  const queue = [...nodes];
-
-  while (queue.length) {
-    const current = queue.shift();
-    if (!current || typeof current !== "object") continue;
-
-    for (const key of keys) {
-      const value = (current as Record<string, unknown>)[key];
-      if (typeof value === "string" && value.trim()) {
-        return value;
-      }
-    }
-
-    for (const value of Object.values(current)) {
-      if (value && typeof value === "object") {
-        queue.push(value);
+  const outputBlocks = Array.isArray(payload.output) ? payload.output : [];
+  for (const block of outputBlocks) {
+    const content = Array.isArray(block?.content) ? block.content : [];
+    for (const part of content) {
+      if (typeof part?.text === "string" && part.text.trim()) {
+        return part.text;
       }
     }
   }
 
-  return null;
+  return "";
 }
 
-function normalizeCandidateItems(candidate: any): any[] {
-  const buckets = [
-    candidate?.result?.items,
-    candidate?.items,
-    candidate?.result?.line_items,
-    candidate?.line_items,
-    candidate?.result?.receipt?.items,
-    candidate?.receipt?.items,
-  ];
+function parseJsonPayload(text: string): Record<string, unknown> | null {
+  const candidate = String(text || "").trim();
+  if (!candidate) return null;
 
-  return buckets.filter((bucket) => Array.isArray(bucket)).flat();
+  const direct = tryParseJson(candidate);
+  if (direct) return direct;
+
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+
+  return tryParseJson(candidate.slice(start, end + 1));
 }
 
-function extractItemText(item: any): string {
-  const textParts = [
-    item?.raw_text,
-    item?.text,
-    item?.name,
-    item?.description,
-    item?.item,
-  ]
-    .map((value) => (typeof value === "string" ? value.trim() : ""))
-    .filter(Boolean);
+function tryParseJson(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
-  return textParts.join(" ").trim();
+function hasItemNumber(line: string): boolean {
+  ITEM_NUMBER_LINE_PATTERN.lastIndex = 0;
+  return ITEM_NUMBER_LINE_PATTERN.test(line);
+}
+
+function extractItemNumbersFromLines(lines: string[]): string[] {
+  const found: string[] = [];
+
+  for (const line of lines) {
+    const numbers = line.match(ITEM_NUMBER_LINE_PATTERN) || [];
+    for (const number of numbers) {
+      found.push(number);
+    }
+  }
+
+  return dedupeItemNumbers(found);
+}
+
+function dedupeItemNumbers(values: unknown[]): string[] {
+  const normalized = values
+    .map((value) => String(value || "").replace(/\D/g, ""))
+    .filter((value) => value.length >= 9 && value.length <= 12);
+
+  return [...new Set(normalized)];
 }
