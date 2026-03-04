@@ -1543,10 +1543,9 @@ showCard(); // 🔥 THIS refreshes the UI
 alert("Receipt saved successfully.");
 }
 
-async function viewReceipt(){
+async function openReceiptViewerModal(item, backAction = "", title = "Receipt Preview"){
 
-const item = data[currentIndex];
-if(!item.id) return;
+if(!item?.id) return;
 
 if(!item.receipt_url){
   alert("No receipt attached.");
@@ -1564,21 +1563,35 @@ if(error){
   return;
 }
 
-modalTitle.innerText = "Receipt Preview";
+modalTitle.innerText = title;
 
 const url = signedData.signedUrl;
 const isPDF = url.toLowerCase().includes(".pdf");
+const footerButtons = [
+  `<button class="touchButton" style="background:#111827;color:white;" onclick='openReceiptFullscreen(${JSON.stringify(url)})'>Expand Fullscreen</button>`
+];
+
+if(backAction){
+  footerButtons.unshift(`<button class="touchButton" style="background:#1565c0;color:#fff;" onclick="${backAction}">Back</button>`);
+}
 
 modalContent.innerHTML = `
   <div style="height:100%;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:10px;">
     <div class="receiptViewport" style="max-height:100%;">
       ${isPDF ? `<iframe src="${url}" title="Receipt PDF"></iframe>` : `<img src="${url}" alt="Receipt image">`}
     </div>
-    <button class="touchButton" style="background:#111827;color:white;" onclick="openReceiptFullscreen('${url}')">Expand Fullscreen</button>
+    <div style="display:grid;grid-template-columns:repeat(${footerButtons.length},minmax(0,1fr));gap:8px;">
+      ${footerButtons.join("")}
+    </div>
   </div>
 `;
 
 openModal();
+}
+
+async function viewReceipt(){
+  const item = data[currentIndex];
+  await openReceiptViewerModal(item);
 }
 
 async function removeReceipt(){
