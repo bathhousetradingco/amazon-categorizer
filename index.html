@@ -1979,16 +1979,33 @@ async function analyzeSplitReceipt(){
 
     const { response, result } = await invokeEdgeFunction("analyze-receipt", payload);
 
+    console.group("RAW RECEIPT TEXT");
+    console.log(result?.debug?.raw_receipt_text || "");
+    console.groupEnd();
+
+    const receiptLines = Array.isArray(result?.debug?.receipt_lines)
+      ? result.debug.receipt_lines
+      : String(result?.debug?.raw_receipt_text || "").split("\n");
+
+    console.group("RECEIPT LINES");
+    receiptLines.forEach((line, i) => {
+      console.log(i, line);
+    });
+    console.groupEnd();
+
     const receiptItemDebug = Array.isArray(result?.debug?.item_resolution) ? result.debug.item_resolution : [];
     receiptItemDebug.forEach((entry) => {
-      console.group("Receipt Item Debug");
-      console.log("Original receipt text:", entry?.originalReceiptText ?? null);
+      console.group("ITEM NUMBER DETECTION");
+      console.log("Line:", entry?.originalReceiptText ?? null);
+      console.log("Match:", entry?.rawItemNumber ? [entry.rawItemNumber] : null);
+      console.groupEnd();
       console.log("Raw item number:", entry?.rawItemNumber ?? null);
       console.log("Cleaned item number:", entry?.cleanedItemNumber ?? null);
-      console.log("SERPAPI query:", entry?.serpQuery ?? null);
-      console.log("SERPAPI response:", entry?.serpResponse ?? null);
-      console.log("Resolved product name:", entry?.resolvedName ?? null);
-      console.groupEnd();
+      console.log("Parsed receipt item:", {
+        rawItemNumber: entry?.rawItemNumber ?? null,
+        cleanedItemNumber: entry?.cleanedItemNumber ?? null,
+        receiptText: entry?.originalReceiptText ?? ""
+      });
     });
 
     if(!response?.ok || !result?.success){
@@ -2001,39 +2018,11 @@ ${result.reason}` : "";
       return;
     }
 
-    const normalizedItems = Array.isArray(result?.items)
-      ? result.items.map((entry, index) => {
-          if(typeof entry === "string"){
-            return {
-              index,
-              receiptText: entry,
-              rawItemNumber: null,
-              cleanedItemNumber: null,
-              resolvedName: entry,
-              verified: false
-            };
-          }
-
-          const resolvedName = String(entry?.name || "").trim();
-          const receiptDebug = receiptItemDebug[index] || {};
-
-          return {
-            index,
-            receiptText: String(receiptDebug?.originalReceiptText || resolvedName || "").trim(),
-            rawItemNumber: receiptDebug?.rawItemNumber || null,
-            cleanedItemNumber: entry?.itemNumber || receiptDebug?.cleanedItemNumber || null,
-            resolvedName,
-            verified: false
-          };
-        }).filter((entry) => entry.resolvedName)
-      : [];
-
-    SplitState.detectedReceiptItems = normalizedItems;
-    console.group("UI RECEIPT ITEMS");
-    console.log(SplitState.detectedReceiptItems);
-    console.groupEnd();
-    SplitState.receiptItemDrafts = {};
-    SplitState.receiptItemEditorOpen = {};
+    SplitState.detectedReceiptItems = (Array.isArray(result?.items) ? result.items : []).map((entry, index) => ({
+      index,
+      receiptText: String(entry?.name || "").trim(),
+      cleanedItemNumber: entry?.itemNumber || null,
+    }));
 
     if(!SplitState.detectedReceiptItems.length){
       alert("No receipt items detected");
@@ -2049,104 +2038,17 @@ ${result.reason}` : "";
   }
 }
 
-async function confirmDetectedItem(index, isCorrect){
-  const entry = SplitState.detectedReceiptItems?.[index];
-  if(!entry) return;
-
-  let finalName = entry.resolvedName;
-  if(!isCorrect){
-    const edited = String(SplitState.receiptItemDrafts?.[index] || "").trim();
-    if(!edited){
-      alert("Please enter a corrected product name before saving.");
-      return;
-    }
-    finalName = edited;
-  }
-
-  if(!entry.cleanedItemNumber){
-    console.warn("User confirmation result:", {
-      index,
-      confirmation: isCorrect ? "YES" : "NO",
-      item_number: null,
-      product_name: finalName,
-      stored: false,
-      reason: "missing cleaned item number"
-    });
-    entry.verified = true;
-    entry.resolvedName = finalName;
-    openDetectedReceiptItemsModal();
-    return;
-  }
-
-  const payload = {
-    item_number: String(entry.cleanedItemNumber),
-    product_name: finalName,
-    verified_by_user: true
-  };
-
-  const { error } = await supabaseClient.from("product_lookup").upsert(payload, {
-    onConflict: "item_number"
-  });
-
-  if(error){
-    console.error("Failed to store product verification", error);
-    alert("Unable to store product verification.");
-    return;
-  }
-
-  entry.verified = true;
-  entry.resolvedName = finalName;
-
-  console.log("User confirmation result:", {
-    index,
-    confirmation: isCorrect ? "YES" : "NO",
-    item_number: payload.item_number,
-    product_name: payload.product_name,
-    stored: true
-  });
-
-  openDetectedReceiptItemsModal();
-}
-
-function updateReceiptNameDraft(index, value){
-  SplitState.receiptItemDrafts[index] = value;
-}
-
-function openReceiptNameEditor(index){
-  SplitState.receiptItemEditorOpen[index] = true;
-  openDetectedReceiptItemsModal();
-}
-
 function openDetectedReceiptItemsModal(){
   const item = data[currentIndex];
   if(!item) return;
 
   const items = SplitState.detectedReceiptItems || [];
-  const listHtml = items.map((entry, index) => {
-    const safeName = entry?.resolvedName || "Unknown product";
-    const showEditor = Boolean(SplitState.receiptItemEditorOpen?.[index]);
-    const currentDraft = SplitState.receiptItemDrafts?.[index] ?? safeName;
-
-    return `
-      <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:#fff;display:grid;gap:8px;">
-        <div><strong>${index + 1}. ${safeName}</strong></div>
-        <div class="small">Receipt text: ${entry?.receiptText || "N/A"}</div>
-        <div class="small">Item number: ${entry?.cleanedItemNumber || "Not detected"}</div>
-        ${entry?.verified ? `<div class="small" style="color:#2e7d32;font-weight:700;">Verified and saved.</div>` : `
-          <div class="small" style="font-weight:700;">Correct Name?</div>
-          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">
-            <button class="touchButton" onclick="confirmDetectedItem(${index}, true)" style="background:#2e7d32;color:#fff;">YES</button>
-            <button class="touchButton" onclick="openReceiptNameEditor(${index})" style="background:#c62828;color:#fff;">NO</button>
-          </div>
-          <div id="editNameWrap-${index}" style="display:${showEditor ? "grid" : "none"};gap:6px;">
-            <label class="small" for="editNameInput-${index}">Edit Name:</label>
-            <input id="editNameInput-${index}" value="${String(currentDraft).replace(/"/g, '&quot;')}" oninput="updateReceiptNameDraft(${index}, this.value)">
-            <button class="touchButton" onclick="confirmDetectedItem(${index}, false)" style="background:#1e3a8a;color:#fff;">Save Corrected Name</button>
-          </div>
-        `}
-      </div>
-    `;
-  }).join("");
+  const listHtml = items.map((entry, index) => `
+    <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:#fff;display:grid;gap:8px;">
+      <div><strong>${index + 1}. ${entry?.receiptText || "Unknown item"}</strong></div>
+      <div class="small">Item number: ${entry?.cleanedItemNumber || "Not detected"}</div>
+    </div>
+  `).join("");
 
   modalTitle.innerText = "Detected Receipt Items";
   modalContent.innerHTML = `
