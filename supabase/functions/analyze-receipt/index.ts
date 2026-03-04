@@ -139,12 +139,17 @@ async function extractReceiptTextAndLines(signedUrl: string): Promise<{ fullText
 }
 
 function extractRawTextFromTabscanner(payload: any): string {
+  const payloadCandidates = collectPayloadCandidates(payload);
   const candidates = [
-    payload?.result?.raw_text,
-    payload?.result?.text,
-    payload?.raw_text,
-    payload?.text,
-    payload?.data?.text,
+    ...payloadCandidates.flatMap((candidate) => [
+      candidate?.result?.raw_text,
+      candidate?.result?.text,
+      candidate?.raw_text,
+      candidate?.text,
+      candidate?.data?.text,
+      candidate?.result?.document?.text,
+      candidate?.document?.text,
+    ]),
   ].filter(Boolean);
 
   if (candidates.length) return String(candidates[0]);
@@ -156,13 +161,19 @@ function extractRawTextFromTabscanner(payload: any): string {
     if (Array.isArray(node)) node.forEach(scan);
     if (typeof node === "object") Object.values(node).forEach(scan);
   };
-  scan(payload?.result?.items || payload?.items || []);
+  for (const candidate of payloadCandidates) {
+    scan(candidate?.result?.items || candidate?.items || candidate?.result?.line_items || []);
+  }
 
   return nestedTexts.join("\n");
 }
 
 function extractCandidateLinesFromTabscanner(payload: any, fallbackText: string): string[] {
-  const structuredItems = payload?.result?.items || payload?.items || payload?.result?.line_items || [];
+  const payloadCandidates = collectPayloadCandidates(payload);
+  const structuredItems = payloadCandidates.flatMap((candidate) => {
+    const items = candidate?.result?.items || candidate?.items || candidate?.result?.line_items || [];
+    return Array.isArray(items) ? items : [];
+  });
   const linesFromItems: string[] = [];
 
   if (Array.isArray(structuredItems)) {
@@ -181,6 +192,22 @@ function extractCandidateLinesFromTabscanner(payload: any, fallbackText: string)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function collectPayloadCandidates(payload: any): any[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (Array.isArray(payload?.result)) {
+    return payload.result;
+  }
+
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+
+  return [payload];
 }
 
 function parseReceiptLineItems(sourceLines: string[], fullText: string): ParsedReceiptLine[] {
