@@ -180,13 +180,13 @@ export async function enrichLineItems(params: {
       ));
 
     if (missingSkus.length) {
-      if (!serpApiKey) {
+      if (!serpApiKey && store !== "sams_club") {
         throw new Error("SERPAPI_KEY missing");
       }
 
       const lookedUp = await lookupSkusViaSerpApi(
         missingSkus.slice(0, SERP_MAX_SKUS_PER_BATCH),
-        serpApiKey,
+        serpApiKey ?? "",
         skuHints,
         store,
         budget,
@@ -428,6 +428,33 @@ async function lookupSkusViaSerpApi(
       product_code: lineItem.product_code,
       store,
     });
+
+    if (store === "sams_club") {
+      const samsMatch = await enrichFromSamsClubSearch(sku, budget, {
+        raw_line_item: hint?.rawName ?? sku,
+        parsed_name: hint?.normalizedName ?? hint?.rawName ?? sku,
+        extracted_product_number: hint?.extractedProductNumber ?? null,
+        normalized_product_number: hint?.normalizedProductNumber ?? null,
+      });
+
+      if (samsMatch) {
+        rows.push({
+          sku,
+          clean_name: samsMatch.enriched_name,
+          source: samsMatch.source,
+          brand: inferBrand(samsMatch.enriched_name),
+          category: null,
+          source_url: samsMatch.sourceUrl,
+        });
+        continue;
+      }
+    }
+
+    if (!serpApiKey) {
+      console.log("SERPAPI_SKIPPED", { reason: "missing_serpapi_key", sku });
+      continue;
+    }
+
     const match = await enrichWithSerpAPI(
       sku,
       hint?.rawName ?? hint?.normalizedName ?? "",
@@ -460,6 +487,83 @@ async function lookupSkusViaSerpApi(
   }
 
   return rows;
+}
+
+async function enrichFromSamsClubSearch(
+  productNumber: string,
+  budget: EnrichmentBudget,
+  trace: SerpLineItemTrace,
+): Promise<SerpEnrichmentResult | null> {
+  const normalizedItemNumber = normalizeSamsItemNumber(trace.normalized_product_number)
+    ?? normalizeSamsItemNumber(trace.extracted_product_number)
+    ?? normalizeSamsItemNumber(productNumber);
+
+  if (!normalizedItemNumber) return null;
+
+  const searchUrl = `https://www.samsclub.com/s/${encodeURIComponent(normalizedItemNumber)}`;
+  const { payload, status } = await fetchWithRetry(
+    new URL(searchUrl),
+    { attempts: 2, timeoutMs: SEARCH_TIMEOUT_MS, name: "samsclub", budget, responseType: "text" },
+  );
+
+  if (typeof payload !== "string") {
+    console.log("SAMS_SEARCH_EMPTY", { normalizedItemNumber, status });
+    return null;
+  }
+
+  const title = extractFirstSamsSearchTitle(payload);
+  if (!title || !isAcceptableSamsProductTitle(title)) return null;
+
+  console.log("SERPAPI_LINE_ITEM_TRACE", {
+    ...trace,
+    value_sent_to_serpapi: normalizedItemNumber,
+    serpapi_response_title: title,
+    serpapi_raw_response: null,
+    final_product_title_used: title,
+    strategy: "samsclub_site",
+    phase: "direct_sams_search",
+  });
+
+  return {
+    enriched_name: cleanProductTitle(title),
+    confidence: "high",
+    source: "samsclub_site",
+    sourceUrl: searchUrl,
+  };
+}
+
+function extractFirstSamsSearchTitle(html: string): string | null {
+  const nextData = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i)?.[1] ?? null;
+  if (!nextData) return null;
+
+  try {
+    const parsed = JSON.parse(nextData);
+    const titles: string[] = [];
+    collectCandidateTitles(parsed, titles);
+    return titles.find((title) => isAcceptableSamsProductTitle(title)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function collectCandidateTitles(node: unknown, output: string[]) {
+  if (!node || output.length >= 25) return;
+
+  if (Array.isArray(node)) {
+    node.forEach((entry) => collectCandidateTitles(entry, output));
+    return;
+  }
+
+  if (typeof node !== "object") return;
+  const record = node as Record<string, unknown>;
+  for (const [key, value] of Object.entries(record)) {
+    if ((key === "title" || key === "name") && typeof value === "string") {
+      const normalized = value.trim();
+      if (normalized.length >= 6 && !output.includes(normalized)) output.push(normalized);
+    }
+
+    if (typeof value === "object" && value) collectCandidateTitles(value, output);
+  }
 }
 
 async function searchGoogleResults(query: string, serpApiKey: string, strategy: "samsclub_site" | "serpapi", budget: EnrichmentBudget): Promise<SerpSearchResult> {
@@ -653,7 +757,7 @@ function scoreSamsCandidate(
   return score;
 }
 
-async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number; name: string; budget: EnrichmentBudget }): Promise<{ payload: any | null; status: number | null }> {
+async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: number; name: string; budget: EnrichmentBudget; responseType?: "json" | "text" }): Promise<{ payload: any | null; status: number | null }> {
   let lastError: unknown = null;
   let lastStatus: number | null = null;
 
@@ -671,6 +775,9 @@ async function fetchWithRetry(url: URL, options: { attempts: number; timeoutMs: 
       if (!response.ok) {
         lastError = new Error(`http_${response.status}`);
         continue;
+      }
+      if (options.responseType === "text") {
+        return { payload: await response.text(), status: response.status };
       }
       return { payload: await response.json(), status: response.status };
     } catch (error) {
@@ -727,7 +834,7 @@ function selectLookupIdentifier(item: ParsedReceiptItem): ProductNumberExtractio
     };
   }
 
-  const fallback = String(item.rawName ?? "").match(/\d{8,14}/g) ?? [];
+  const fallback = String(item.rawName ?? "").match(/\d{6,14}/g) ?? [];
   const seededRaw = fallback
     .map((value) => ({ raw: value, compact: compactIdentifier(value) }))
     .filter((entry) => isValidProductNumber(entry.compact))
@@ -761,7 +868,7 @@ function normalizeIdentifier(input: string | null | undefined): string | null {
 
 function isValidProductNumber(value: string | null | undefined): boolean {
   if (!value) return false;
-  return /^[0-9]{8,14}$/.test(String(value));
+  return /^[0-9]{6,14}$/.test(String(value));
 }
 
 async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>, openAiApiKey: string): Promise<string[]> {
@@ -823,7 +930,7 @@ function extractNameWithoutProductNumber(rawLine: string): string | null {
 }
 
 function extractProductNumberFromLine(rawLine: string): ProductNumberExtraction {
-  const tokens = String(rawLine ?? "").match(/\d{8,14}/g) ?? [];
+  const tokens = String(rawLine ?? "").match(/\d{6,14}/g) ?? [];
   const candidates = tokens
     .map((token) => ({ raw: token, compact: compactIdentifier(token), normalized: normalizeIdentifier(token) }))
     .filter((entry) => isValidProductNumber(entry.normalized))
@@ -896,7 +1003,7 @@ function buildItemNumberVariants(normalized: string, raw: string | null): string
 
   return Array.from(new Set(candidates
     .map((token) => token.toLowerCase())
-    .filter((token) => token.length >= 8)));
+    .filter((token) => token.length >= 6)));
 }
 
 function isAcceptableSamsProductTitle(title: string | null): boolean {
