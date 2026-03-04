@@ -30,11 +30,12 @@ Deno.serve(async (req) => {
   try {
     const user = await requireAuthenticatedUser(req);
     const body = await parseJsonBody(req);
-    const filePath = normalizeIncomingFilePath(body.filePath);
+    const requestedFilePath = String(body.filePath ?? "");
+    const filePath = normalizeIncomingFilePath(requestedFilePath);
     const forceReanalyze = body.forceReanalyze === true;
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    await assertReceiptBelongsToUser(adminClient, user.id, filePath);
+    await assertReceiptBelongsToUser(adminClient, user.id, requestedFilePath, filePath);
 
     if (!forceReanalyze) {
       const cached = await readCachedAnalysis(adminClient, user.id, filePath);
@@ -130,16 +131,35 @@ async function requireAuthenticatedUser(req: Request) {
   return data.user;
 }
 
-async function assertReceiptBelongsToUser(adminClient: ReturnType<typeof createClient>, userId: string, filePath: string) {
+async function assertReceiptBelongsToUser(
+  adminClient: ReturnType<typeof createClient>,
+  userId: string,
+  requestedFilePath: string,
+  normalizedFilePath: string,
+) {
   const { data, error } = await adminClient
     .from("transactions")
-    .select("id")
+    .select("id, receipt_url")
     .eq("user_id", userId)
-    .eq("receipt_url", filePath)
-    .maybeSingle();
+    .not("receipt_url", "is", null)
+    .limit(5000);
 
   if (error) throw new HttpError(500, "Unable to validate receipt ownership", { db_error: error.message });
-  if (!data) throw new HttpError(403, "Receipt does not belong to authenticated user", { file_path: filePath });
+
+  const ownsReceipt = (data ?? []).some((row: { receipt_url?: string | null }) => {
+    const stored = String(row.receipt_url ?? "").trim();
+    if (!stored) return false;
+    if (stored === normalizedFilePath || stored === requestedFilePath) return true;
+    try {
+      return normalizeIncomingFilePath(stored) === normalizedFilePath;
+    } catch {
+      return false;
+    }
+  });
+
+  if (!ownsReceipt) {
+    throw new HttpError(403, "Receipt does not belong to authenticated user", { file_path: normalizedFilePath });
+  }
 }
 
 async function readCachedAnalysis(adminClient: ReturnType<typeof createClient>, userId: string, filePath: string) {
