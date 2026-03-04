@@ -2,8 +2,6 @@ project_id = "xbayklklcdohewvnbglq"
 
 # Keep platform JWT verification off for these functions.
 # Each function performs auth checks internally when needed.
-[functions.analyze-receipt]
-verify_jwt = false
 
 [functions.ask-ai]
 verify_jwt = false
@@ -14,8 +12,6 @@ verify_jwt = false
 [functions.exchange-token]
 verify_jwt = false
 
-[functions.parse-receipt]
-verify_jwt = false
 
 [functions.plaid-webhook]
 verify_jwt = false
