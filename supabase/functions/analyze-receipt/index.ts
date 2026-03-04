@@ -5,9 +5,9 @@ import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from
 
 type ParsedReceiptLine = {
   raw: string;
-  productNumber: string | null;
-  normalizedProductNumber: string | null;
-  textName: string | null;
+  rawItemNumber: string | null;
+  cleanedItemNumber: string | null;
+  receiptText: string | null;
 };
 
 type ReceiptItem = {
@@ -752,18 +752,18 @@ function parseSingleLine(line: string): ParsedReceiptLine | null {
   if (!clean) return null;
   if (isNonItemLine(clean)) return null;
 
-  const skuPattern = /^(\d{6,14})\s+(.+?)(?:\s+\$?\d+[\.,]\d{2})?$/;
+  const skuPattern = /^(\d{8,14})\s+(.+?)(?:\s+\$?\d+[\.,]\d{2})?$/;
   const skuMatch = clean.match(skuPattern);
   if (skuMatch) {
-    const productNumber = skuMatch[1];
-    const normalized = normalizeProductNumber(productNumber);
-    const textName = cleanupNameText(skuMatch[2]);
+    const rawItemNumber = skuMatch[1];
+    const cleanedItemNumber = normalizeProductNumber(rawItemNumber);
+    const receiptText = cleanupNameText(skuMatch[2]);
 
     return {
       raw: clean,
-      productNumber,
-      normalizedProductNumber: normalized,
-      textName,
+      rawItemNumber,
+      cleanedItemNumber,
+      receiptText,
     };
   }
 
@@ -773,14 +773,14 @@ function parseSingleLine(line: string): ParsedReceiptLine | null {
     .replace(/\s+\d+\s*[xX]\s*\$?\d+[\.,]\d{2}\s*$/, "")
     .trim();
 
-  const fallbackName = cleanupNameText(normalized);
-  if (!fallbackName || fallbackName.length < 2) return null;
+  const receiptText = cleanupNameText(normalized);
+  if (!receiptText || receiptText.length < 2) return null;
 
   return {
     raw: clean,
-    productNumber: null,
-    normalizedProductNumber: null,
-    textName: fallbackName,
+    rawItemNumber: null,
+    cleanedItemNumber: null,
+    receiptText,
   };
 }
 
@@ -831,8 +831,8 @@ async function resolveReceiptProductNames(
   const productCache: Record<string, string | null> = {};
 
   for (const line of lines) {
-    if (line.productNumber || line.normalizedProductNumber) {
-      const itemNumber = line.productNumber || line.normalizedProductNumber || "";
+    if (line.rawItemNumber || line.cleanedItemNumber) {
+      const itemNumber = line.rawItemNumber || line.cleanedItemNumber || "";
       const resolved = await resolveSamsClubProductName(itemNumber, serviceClient, productCache);
       if (resolved) {
         names.push(resolved);
@@ -840,8 +840,8 @@ async function resolveReceiptProductNames(
       }
     }
 
-    if (line.textName) {
-      names.push(line.textName);
+    if (line.receiptText) {
+      names.push(line.receiptText);
     }
   }
 
@@ -882,7 +882,6 @@ async function resolveSamsClubProductNameWithDebug(
   const serpResult = await lookupProductNameBySku(normalizedSku);
   if (serpResult.name) {
     productCache[normalizedSku] = serpResult.name;
-    await upsertProductLookupCache(serviceClient, normalizedSku, serpResult.name, "serpapi");
     return { resolvedName: serpResult.name, cleanedItemNumber: normalizedSku, serpQuery, serpResponse: serpResult.response };
   }
 
@@ -894,10 +893,10 @@ async function readProductLookupCache(
   serviceClient: any,
   normalizedSku: string,
 ): Promise<string | null> {
-  const { data, error }: { data: { clean_name?: string | null } | null; error: any } = await serviceClient
-    .from("product_lookup_cache")
-    .select("clean_name")
-    .eq("normalized_sku", normalizedSku)
+  const { data, error }: { data: { product_name?: string | null } | null; error: any } = await serviceClient
+    .from("product_lookup")
+    .select("product_name")
+    .eq("item_number", normalizedSku)
     .limit(1)
     .maybeSingle();
 
@@ -906,30 +905,7 @@ async function readProductLookupCache(
     return null;
   }
 
-  return data?.clean_name || null;
-}
-
-async function upsertProductLookupCache(
-  serviceClient: any,
-  normalizedSku: string,
-  cleanName: string,
-  source: string,
-): Promise<void> {
-  const payload = {
-    sku: normalizedSku,
-    clean_name: cleanName,
-    source,
-    metadata: { normalized_sku: normalizedSku },
-    last_checked_at: new Date().toISOString(),
-  };
-
-  const { error }: { error: any } = await serviceClient.from("product_lookup_cache").upsert(payload as any, {
-    onConflict: "sku",
-  });
-
-  if (error) {
-    console.warn("product cache upsert error", error);
-  }
+  return data?.product_name || null;
 }
 
 async function lookupProductNameBySku(normalizedSku: string): Promise<{ name: string | null; response: any }> {
@@ -974,9 +950,9 @@ async function applyResolvedNamesToItems(
 
   for (const item of items) {
     const matchedLine = findBestParsedLineForItem(item, lineQueue);
-    const rawItemNumber = matchedLine?.productNumber || matchedLine?.normalizedProductNumber || item.itemNumber || "";
+    const rawItemNumber = matchedLine?.rawItemNumber || matchedLine?.cleanedItemNumber || item.itemNumber || "";
     const cleanedItemNumber = rawItemNumber ? normalizeProductNumber(rawItemNumber) : "";
-    const originalName = String(item.name || "").trim();
+    const originalName = String(matchedLine?.receiptText || item.name || "").trim();
 
     let serpQuery: string | null = null;
     let serpResponse: any = null;
@@ -1011,8 +987,8 @@ async function applyResolvedNamesToItems(
 function findBestParsedLineForItem(item: ReceiptItem, parsedLines: ParsedReceiptLine[]): ParsedReceiptLine | null {
   const itemName = normalizeNameForMatch(item.name || "");
   const bestIndex = parsedLines.findIndex((line) => {
-    if (!line.productNumber) return false;
-    const lineName = normalizeNameForMatch(line.textName || "");
+    if (!line.rawItemNumber) return false;
+    const lineName = normalizeNameForMatch(line.receiptText || "");
     return lineName === itemName || lineName.includes(itemName) || itemName.includes(lineName);
   });
 
@@ -1021,7 +997,7 @@ function findBestParsedLineForItem(item: ReceiptItem, parsedLines: ParsedReceipt
     return line;
   }
 
-  const firstSkuIndex = parsedLines.findIndex((line) => line.productNumber);
+  const firstSkuIndex = parsedLines.findIndex((line) => line.rawItemNumber);
   if (firstSkuIndex >= 0) {
     const [line] = parsedLines.splice(firstSkuIndex, 1);
     return line;
