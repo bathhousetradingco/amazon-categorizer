@@ -1869,6 +1869,8 @@ const SplitState = {
   manualCategory: null,
   highlightedIndex: null,
   detectedReceiptItems: [],
+  receiptItemDrafts: {},
+  receiptItemEditorOpen: {},
   receiptExpanded: false,
   keypad: {
     value: "",
@@ -1999,12 +2001,36 @@ ${result.reason}` : "";
       return;
     }
 
-    SplitState.detectedReceiptItems = Array.isArray(result.items)
-      ? result.items
-          .map((entry) => typeof entry === "string" ? entry : entry?.name)
-          .map((name) => String(name || "").trim())
-          .filter((name) => name && !/error\s*form\s*parser|errorformparser/i.test(name))
+    const normalizedItems = Array.isArray(result?.items)
+      ? result.items.map((entry, index) => {
+          if(typeof entry === "string"){
+            return {
+              index,
+              receiptText: entry,
+              rawItemNumber: null,
+              cleanedItemNumber: null,
+              resolvedName: entry,
+              verified: false
+            };
+          }
+
+          const resolvedName = String(entry?.name || "").trim();
+          const receiptDebug = receiptItemDebug[index] || {};
+
+          return {
+            index,
+            receiptText: String(receiptDebug?.originalReceiptText || resolvedName || "").trim(),
+            rawItemNumber: receiptDebug?.rawItemNumber || null,
+            cleanedItemNumber: entry?.itemNumber || receiptDebug?.cleanedItemNumber || null,
+            resolvedName,
+            verified: false
+          };
+        }).filter((entry) => entry.resolvedName)
       : [];
+
+    SplitState.detectedReceiptItems = normalizedItems;
+    SplitState.receiptItemDrafts = {};
+    SplitState.receiptItemEditorOpen = {};
 
     if(!SplitState.detectedReceiptItems.length){
       alert("No receipt items detected");
@@ -2020,12 +2046,104 @@ ${result.reason}` : "";
   }
 }
 
+async function confirmDetectedItem(index, isCorrect){
+  const entry = SplitState.detectedReceiptItems?.[index];
+  if(!entry) return;
+
+  let finalName = entry.resolvedName;
+  if(!isCorrect){
+    const edited = String(SplitState.receiptItemDrafts?.[index] || "").trim();
+    if(!edited){
+      alert("Please enter a corrected product name before saving.");
+      return;
+    }
+    finalName = edited;
+  }
+
+  if(!entry.cleanedItemNumber){
+    console.warn("User confirmation result:", {
+      index,
+      confirmation: isCorrect ? "YES" : "NO",
+      item_number: null,
+      product_name: finalName,
+      stored: false,
+      reason: "missing cleaned item number"
+    });
+    entry.verified = true;
+    entry.resolvedName = finalName;
+    openDetectedReceiptItemsModal();
+    return;
+  }
+
+  const payload = {
+    item_number: String(entry.cleanedItemNumber),
+    product_name: finalName,
+    verified_by_user: true
+  };
+
+  const { error } = await supabaseClient.from("product_lookup").upsert(payload, {
+    onConflict: "item_number"
+  });
+
+  if(error){
+    console.error("Failed to store product verification", error);
+    alert("Unable to store product verification.");
+    return;
+  }
+
+  entry.verified = true;
+  entry.resolvedName = finalName;
+
+  console.log("User confirmation result:", {
+    index,
+    confirmation: isCorrect ? "YES" : "NO",
+    item_number: payload.item_number,
+    product_name: payload.product_name,
+    stored: true
+  });
+
+  openDetectedReceiptItemsModal();
+}
+
+function updateReceiptNameDraft(index, value){
+  SplitState.receiptItemDrafts[index] = value;
+}
+
+function openReceiptNameEditor(index){
+  SplitState.receiptItemEditorOpen[index] = true;
+  openDetectedReceiptItemsModal();
+}
+
 function openDetectedReceiptItemsModal(){
   const item = data[currentIndex];
   if(!item) return;
 
   const items = SplitState.detectedReceiptItems || [];
-  const listHtml = items.map((name, index) => `<li>${index + 1}. ${name}</li>`).join("");
+  const listHtml = items.map((entry, index) => {
+    const safeName = entry?.resolvedName || "Unknown product";
+    const showEditor = Boolean(SplitState.receiptItemEditorOpen?.[index]);
+    const currentDraft = SplitState.receiptItemDrafts?.[index] ?? safeName;
+
+    return `
+      <div style="border:1px solid var(--border);border-radius:10px;padding:10px;background:#fff;display:grid;gap:8px;">
+        <div><strong>${index + 1}. ${safeName}</strong></div>
+        <div class="small">Receipt text: ${entry?.receiptText || "N/A"}</div>
+        <div class="small">Item number: ${entry?.cleanedItemNumber || "Not detected"}</div>
+        ${entry?.verified ? `<div class="small" style="color:#2e7d32;font-weight:700;">Verified and saved.</div>` : `
+          <div class="small" style="font-weight:700;">Correct Name?</div>
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">
+            <button class="touchButton" onclick="confirmDetectedItem(${index}, true)" style="background:#2e7d32;color:#fff;">YES</button>
+            <button class="touchButton" onclick="openReceiptNameEditor(${index})" style="background:#c62828;color:#fff;">NO</button>
+          </div>
+          <div id="editNameWrap-${index}" style="display:${showEditor ? "grid" : "none"};gap:6px;">
+            <label class="small" for="editNameInput-${index}">Edit Name:</label>
+            <input id="editNameInput-${index}" value="${String(currentDraft).replace(/"/g, '&quot;')}" oninput="updateReceiptNameDraft(${index}, this.value)">
+            <button class="touchButton" onclick="confirmDetectedItem(${index}, false)" style="background:#1e3a8a;color:#fff;">Save Corrected Name</button>
+          </div>
+        `}
+      </div>
+    `;
+  }).join("");
 
   modalTitle.innerText = "Detected Receipt Items";
   modalContent.innerHTML = `
@@ -2033,7 +2151,7 @@ function openDetectedReceiptItemsModal(){
       <div class="lineItemsScroller" style="display:grid;gap:10px;">
         <h3 style="margin:0;">Detected Receipt Items</h3>
         ${items.length
-          ? `<ul style="margin:0;padding-left:20px;display:grid;gap:8px;">${listHtml}</ul>`
+          ? `<div style="display:grid;gap:10px;">${listHtml}</div>`
           : `<div class="small">No receipt items detected.</div>`
         }
       </div>
