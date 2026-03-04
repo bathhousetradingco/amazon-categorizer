@@ -405,8 +405,17 @@ function extractRawTextFromTabscanner(payload: any): string {
     ...payloadCandidates.flatMap((candidate) => [
       candidate?.result?.raw_text,
       candidate?.result?.text,
+      candidate?.result?.ocr_text,
+      candidate?.result?.full_text,
+      candidate?.result?.ocr?.text,
+      candidate?.result?.ocr?.raw_text,
+      candidate?.result?.document?.raw_text,
       candidate?.raw_text,
       candidate?.text,
+      candidate?.ocr_text,
+      candidate?.full_text,
+      candidate?.ocr?.text,
+      candidate?.ocr?.raw_text,
       candidate?.data?.text,
       candidate?.result?.document?.text,
       candidate?.document?.text,
@@ -414,6 +423,16 @@ function extractRawTextFromTabscanner(payload: any): string {
   ].filter(Boolean);
 
   if (candidates.length) return String(candidates[0]);
+
+  const discoveredText = findFirstDeepString(payloadCandidates, [
+    "raw_text",
+    "ocr_text",
+    "full_text",
+    "recognized_text",
+    "plain_text",
+    "text",
+  ]);
+  if (discoveredText) return discoveredText;
 
   const nestedTexts: string[] = [];
   const scan = (node: any) => {
@@ -457,6 +476,16 @@ function extractCandidateLinesFromTabscanner(payload: any, fallbackText: string)
 function extractStructuredItems(candidate: any): any[] {
   const direct = [
     candidate?.result?.items,
+    candidate?.result?.products,
+    candidate?.result?.entries,
+    candidate?.result?.positions,
+    candidate?.result?.lines,
+    candidate?.result?.lineItems,
+    candidate?.result?.line_items,
+    candidate?.result?.ocr?.items,
+    candidate?.result?.document?.line_items,
+    candidate?.result?.document?.lines,
+    candidate?.result?.receipt?.line_items,
     candidate?.items,
     candidate?.result?.line_items,
     candidate?.result?.document?.items,
@@ -473,6 +502,19 @@ function extractStructuredItems(candidate: any): any[] {
     if (Array.isArray(value) && value.length) {
       return value;
     }
+  }
+
+  const deepItems = findFirstDeepArray(candidate, [
+    "items",
+    "line_items",
+    "lineItems",
+    "products",
+    "positions",
+    "lines",
+    "entries",
+  ]);
+  if (deepItems.length) {
+    return deepItems;
   }
 
   return [];
@@ -531,11 +573,92 @@ function collectPayloadCandidates(payload: any): any[] {
     return payload.result;
   }
 
+  if (payload?.result && typeof payload.result === "object") {
+    return [payload.result];
+  }
+
+  if (typeof payload?.result === "string") {
+    const parsed = safeParseJson(payload.result);
+    if (parsed) return [parsed];
+  }
+
   if (Array.isArray(payload?.data)) {
     return payload.data;
   }
 
   return [payload];
+}
+
+function findFirstDeepString(root: any, keys: string[]): string | null {
+  const keySet = new Set(keys.map((key) => key.toLowerCase()));
+  let fallback: string | null = null;
+
+  const visit = (node: any) => {
+    if (!node) return;
+    if (typeof node === "string" && !fallback && /\S/.test(node)) {
+      fallback = node;
+      return;
+    }
+
+    if (Array.isArray(node)) {
+      for (const value of node) {
+        if (fallback) return;
+        visit(value);
+      }
+      return;
+    }
+
+    if (typeof node === "object") {
+      for (const [key, value] of Object.entries(node)) {
+        if (typeof value === "string" && keySet.has(key.toLowerCase()) && value.trim()) {
+          fallback = value;
+          return;
+        }
+      }
+
+      for (const value of Object.values(node)) {
+        if (fallback) return;
+        visit(value);
+      }
+    }
+  };
+
+  visit(root);
+  return fallback;
+}
+
+function findFirstDeepArray(root: any, keys: string[]): any[] {
+  const keySet = new Set(keys.map((key) => key.toLowerCase()));
+  let result: any[] = [];
+
+  const visit = (node: any) => {
+    if (!node || result.length) return;
+
+    if (Array.isArray(node)) {
+      for (const value of node) {
+        if (result.length) return;
+        visit(value);
+      }
+      return;
+    }
+
+    if (typeof node === "object") {
+      for (const [key, value] of Object.entries(node)) {
+        if (Array.isArray(value) && value.length && keySet.has(key.toLowerCase())) {
+          result = value;
+          return;
+        }
+      }
+
+      for (const value of Object.values(node)) {
+        if (result.length) return;
+        visit(value);
+      }
+    }
+  };
+
+  visit(root);
+  return result;
 }
 
 function parseReceiptLineItems(sourceLines: string[], fullText: string): ParsedReceiptLine[] {
