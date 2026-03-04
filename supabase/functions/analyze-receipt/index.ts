@@ -171,16 +171,15 @@ function extractRawTextFromTabscanner(payload: any): string {
 function extractCandidateLinesFromTabscanner(payload: any, fallbackText: string): string[] {
   const payloadCandidates = collectPayloadCandidates(payload);
   const structuredItems = payloadCandidates.flatMap((candidate) => {
-    const items = candidate?.result?.items || candidate?.items || candidate?.result?.line_items || [];
-    return Array.isArray(items) ? items : [];
+    return extractStructuredItems(candidate);
   });
   const linesFromItems: string[] = [];
 
   if (Array.isArray(structuredItems)) {
     for (const item of structuredItems) {
-      const text = item?.description || item?.name || item?.text || item?.raw || "";
+      const text = readLineItemText(item);
       if (typeof text === "string" && text.trim()) {
-        const amount = item?.price || item?.total || item?.amount;
+        const amount = readLineItemAmount(item);
         linesFromItems.push(amount ? `${text} ${amount}` : text);
       }
     }
@@ -192,6 +191,74 @@ function extractCandidateLinesFromTabscanner(payload: any, fallbackText: string)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function extractStructuredItems(candidate: any): any[] {
+  const direct = [
+    candidate?.result?.items,
+    candidate?.items,
+    candidate?.result?.line_items,
+    candidate?.result?.document?.items,
+    candidate?.document?.items,
+    candidate?.result?.receipt?.items,
+    candidate?.receipt?.items,
+    candidate?.result?.products,
+    candidate?.products,
+    candidate?.result?.positions,
+    candidate?.positions,
+  ];
+
+  for (const value of direct) {
+    if (Array.isArray(value) && value.length) {
+      return value;
+    }
+  }
+
+  return [];
+}
+
+function readLineItemText(item: any): string {
+  const text = [
+    item?.description,
+    item?.name,
+    item?.text,
+    item?.raw,
+    item?.desc,
+    item?.title,
+    item?.product_name,
+    item?.item,
+    item?.label,
+    item?.value,
+    item?.details?.description,
+    item?.details?.name,
+  ].find((value) => typeof value === "string" && value.trim());
+
+  if (typeof text === "string") return text;
+
+  const sku = [item?.sku, item?.product_code, item?.upc, item?.ean]
+    .find((value) => typeof value === "string" && value.trim());
+  const product = [item?.product, item?.details?.product]
+    .find((value) => typeof value === "string" && value.trim());
+
+  if (sku && product) return `${sku} ${product}`;
+  if (product) return product;
+
+  return "";
+}
+
+function readLineItemAmount(item: any): string {
+  const amount = [
+    item?.price,
+    item?.total,
+    item?.amount,
+    item?.value,
+    item?.sum,
+    item?.gross,
+    item?.net,
+    item?.details?.amount,
+  ].find((value) => ["string", "number"].includes(typeof value));
+
+  return amount == null ? "" : String(amount);
 }
 
 function collectPayloadCandidates(payload: any): any[] {
@@ -242,7 +309,13 @@ function parseSingleLine(line: string): ParsedReceiptLine | null {
     };
   }
 
-  const fallbackName = cleanupNameText(clean.replace(/\$?\d+[\.,]\d{2}\s*$/, "").trim());
+  const normalized = clean
+    .replace(/^\d+\s*[xX@]\s*\$?\d+[\.,]\d{2}\s+/, "")
+    .replace(/\s+\$?\d+[\.,]\d{2}\s*$/, "")
+    .replace(/\s+\d+\s*[xX]\s*\$?\d+[\.,]\d{2}\s*$/, "")
+    .trim();
+
+  const fallbackName = cleanupNameText(normalized);
   if (!fallbackName || fallbackName.length < 2) return null;
 
   return {
