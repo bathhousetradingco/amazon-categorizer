@@ -9,6 +9,7 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
 const ITEM_NUMBER_LINE_PATTERN = /^\d{9,12}\b/;
+const ITEM_NUMBER_WITH_TEXT_PATTERN = /^(\d{9,12})\b.*[A-Za-z]/;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -38,13 +39,14 @@ Deno.serve(async (req) => {
       .map((line) => line.trimEnd())
       .filter((line) => line.trim().length > 0);
 
-    const regexItemNumbers = extractItemNumbersFromLines(lines);
+    const lineItemNumbers = extractItemNumbersFromLineItems(lines);
+    const modelItemNumbers = filterModelItemNumbers(extraction.modelItemNumbers, lines);
     const itemNumbers = dedupeItemNumbers([
-      ...regexItemNumbers,
-      ...extraction.modelItemNumbers,
+      ...lineItemNumbers,
+      ...modelItemNumbers,
     ]);
 
-    const matchingLines = lines.filter((line) => hasItemNumber(line));
+    const matchingLines = lines.filter((line) => isLikelyLineItem(line));
 
     const debug = {
       provider: extraction.provider,
@@ -53,6 +55,7 @@ Deno.serve(async (req) => {
       lines_matching_item_number_pattern: matchingLines,
       item_numbers_found: itemNumbers,
       model_item_numbers: extraction.modelItemNumbers,
+      filtered_model_item_numbers: modelItemNumbers,
     };
 
     return jsonResponse({
@@ -245,19 +248,27 @@ function tryParseJson(value: string): Record<string, unknown> | null {
   }
 }
 
-function hasItemNumber(line: string): boolean {
-  return ITEM_NUMBER_LINE_PATTERN.test(line);
+function isLikelyLineItem(line: string): boolean {
+  return ITEM_NUMBER_WITH_TEXT_PATTERN.test(line);
 }
 
-function extractItemNumbersFromLines(lines: string[]): string[] {
+function extractItemNumbersFromLineItems(lines: string[]): string[] {
   const found: string[] = [];
 
   for (const line of lines) {
+    if (!isLikelyLineItem(line)) continue;
+
     const number = line.match(ITEM_NUMBER_LINE_PATTERN)?.[0];
     if (number) found.push(number);
   }
 
   return dedupeItemNumbers(found);
+}
+
+function filterModelItemNumbers(values: string[], lines: string[]): string[] {
+  const likelyItemNumbers = new Set(extractItemNumbersFromLineItems(lines));
+
+  return dedupeItemNumbers(values).filter((value) => likelyItemNumbers.has(value));
 }
 
 function dedupeItemNumbers(values: unknown[]): string[] {
