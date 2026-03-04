@@ -84,7 +84,7 @@ async function getUserReceiptPath(
   transactionId: string,
   userId: string,
 ): Promise<string> {
-  const { data, error } = await serviceClient
+  const { data, error }: { data: { receipt_url?: string | null } | null; error: any } = await serviceClient
     .from("transactions")
     .select("receipt_url")
     .eq("id", transactionId)
@@ -325,7 +325,7 @@ async function readProductLookupCache(
   serviceClient: ReturnType<typeof createClient>,
   normalizedSku: string,
 ): Promise<string | null> {
-  const { data, error } = await serviceClient
+  const { data, error }: { data: { clean_name?: string | null } | null; error: any } = await serviceClient
     .from("product_lookup_cache")
     .select("clean_name")
     .eq("normalized_sku", normalizedSku)
@@ -353,7 +353,7 @@ async function upsertProductLookupCache(
     last_checked_at: new Date().toISOString(),
   };
 
-  const { error } = await serviceClient.from("product_lookup_cache").upsert(payload, {
+  const { error }: { error: any } = await serviceClient.from("product_lookup_cache").upsert(payload as any, {
     onConflict: "sku",
   });
 
