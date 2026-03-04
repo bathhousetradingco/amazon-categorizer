@@ -815,19 +815,14 @@ async function resolveReceiptProductNames(
   lines: ParsedReceiptLine[],
 ): Promise<string[]> {
   const names: string[] = [];
+  const productCache: Record<string, string | null> = {};
 
   for (const line of lines) {
-    if (line.normalizedProductNumber) {
-      const cached = await readProductLookupCache(serviceClient, line.normalizedProductNumber);
-      if (cached) {
-        names.push(cached);
-        continue;
-      }
-
-      const resolved = await lookupProductNameBySku(line.normalizedProductNumber);
+    if (line.productNumber || line.normalizedProductNumber) {
+      const itemNumber = line.productNumber || line.normalizedProductNumber || "";
+      const resolved = await resolveSamsClubProductName(itemNumber, serviceClient, productCache);
       if (resolved) {
         names.push(resolved);
-        await upsertProductLookupCache(serviceClient, line.normalizedProductNumber, resolved);
         continue;
       }
     }
@@ -838,6 +833,42 @@ async function resolveReceiptProductNames(
   }
 
   return names;
+}
+
+async function resolveSamsClubProductName(
+  itemNumber: string,
+  serviceClient: any,
+  productCache: Record<string, string | null>,
+): Promise<string | null> {
+  const normalizedSku = normalizeProductNumber(itemNumber);
+  if (!normalizedSku) return null;
+
+  if (normalizedSku in productCache) {
+    return productCache[normalizedSku];
+  }
+
+  const cached = await readProductLookupCache(serviceClient, normalizedSku);
+  if (cached) {
+    productCache[normalizedSku] = cached;
+    return cached;
+  }
+
+  const samsClubName = await lookupSamsClubNameByItemNumber(normalizedSku);
+  if (samsClubName) {
+    productCache[normalizedSku] = samsClubName;
+    await upsertProductLookupCache(serviceClient, normalizedSku, samsClubName, "sams_club_jsonld");
+    return samsClubName;
+  }
+
+  const fallbackName = await lookupProductNameBySku(normalizedSku);
+  if (fallbackName) {
+    productCache[normalizedSku] = fallbackName;
+    await upsertProductLookupCache(serviceClient, normalizedSku, fallbackName, "serpapi");
+    return fallbackName;
+  }
+
+  productCache[normalizedSku] = null;
+  return null;
 }
 
 async function readProductLookupCache(
@@ -863,11 +894,12 @@ async function upsertProductLookupCache(
   serviceClient: any,
   normalizedSku: string,
   cleanName: string,
+  source: string,
 ): Promise<void> {
   const payload = {
     sku: normalizedSku,
     clean_name: cleanName,
-    source: "serpapi",
+    source,
     metadata: { normalized_sku: normalizedSku },
     last_checked_at: new Date().toISOString(),
   };
@@ -908,6 +940,107 @@ async function lookupProductNameBySku(normalizedSku: string): Promise<string | n
   const title = fromShopping?.title || fromOrganic?.title || "";
   const cleanTitle = cleanupNameText(String(title));
   return cleanTitle || null;
+}
+
+async function lookupSamsClubNameByItemNumber(normalizedSku: string): Promise<string | null> {
+  const searchUrl = `https://www.samsclub.com/s/${encodeURIComponent(normalizedSku)}`;
+
+  const searchResponse = await fetchWithTimeout(searchUrl, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+  }, 12000).catch(() => null);
+
+  if (!searchResponse?.ok) {
+    return null;
+  }
+
+  const searchHtml = await searchResponse.text().catch(() => "");
+  const directName = extractProductNameFromJsonLd(searchHtml, normalizedSku);
+  if (directName) {
+    return directName;
+  }
+
+  const productUrl = extractSamsClubProductUrl(searchHtml);
+  if (!productUrl) {
+    return null;
+  }
+
+  const productResponse = await fetchWithTimeout(productUrl, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+  }, 12000).catch(() => null);
+
+  if (!productResponse?.ok) {
+    return null;
+  }
+
+  const productHtml = await productResponse.text().catch(() => "");
+  return extractProductNameFromJsonLd(productHtml, normalizedSku);
+}
+
+function extractProductNameFromJsonLd(html: string, normalizedSku: string): string | null {
+  const scripts = Array.from(html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi));
+  if (!scripts.length) return null;
+
+  const productNodes: any[] = [];
+  for (const script of scripts) {
+    const parsed = safeParseJson(script[1] || "");
+    if (!parsed) continue;
+    collectJsonLdProducts(parsed, productNodes);
+  }
+
+  if (!productNodes.length) return null;
+
+  const normalizedMatch = productNodes.find((node) => {
+    const sku = normalizeProductNumber(String(node?.sku || ""));
+    return sku && sku === normalizedSku;
+  });
+
+  const candidate = normalizedMatch || productNodes.find((node) => node?.name);
+  const cleanName = cleanupNameText(String(candidate?.name || ""));
+  return cleanName || null;
+}
+
+function collectJsonLdProducts(node: any, output: any[]) {
+  if (!node) return;
+
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      collectJsonLdProducts(entry, output);
+    }
+    return;
+  }
+
+  if (typeof node !== "object") return;
+
+  const typeField = node["@type"];
+  const types = Array.isArray(typeField) ? typeField : [typeField];
+  const isProduct = types.some((type) => typeof type === "string" && type.toLowerCase() === "product");
+
+  if (isProduct && node?.name) {
+    output.push(node);
+  }
+
+  if (node["@graph"]) {
+    collectJsonLdProducts(node["@graph"], output);
+  }
+}
+
+function extractSamsClubProductUrl(html: string): string | null {
+  const hrefMatches = Array.from(html.matchAll(/href=["']([^"']+)["']/gi));
+
+  for (const match of hrefMatches) {
+    const href = match[1] || "";
+    if (!/\/p\//i.test(href) || /\/s\//i.test(href)) continue;
+
+    try {
+      const url = new URL(href, "https://www.samsclub.com");
+      if (!/samsclub\.com$/i.test(url.hostname)) continue;
+      return url.toString();
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 function dedupeAndNormalizeNames(items: string[]): string[] {
