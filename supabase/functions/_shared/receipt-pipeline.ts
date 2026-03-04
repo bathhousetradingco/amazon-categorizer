@@ -4,39 +4,28 @@ import { fetchWithTimeout } from "./fetch.ts";
 const RECEIPTS_BUCKET = "receipts";
 const STORAGE_MARKER = "/storage/v1/object/";
 
-export type ReceiptItem = {
+export type PipelineLineItem = {
   product_number: string | null;
-  resolved_name: string;
-  raw_description: string;
+  raw_line_text: string;
   quantity: number;
   unit_price: number | null;
-  line_total: number;
+  total_price: number;
+  product_name: string;
+  category_suggestion: string | null;
   discount_promotion: number;
-  tax_line: number;
   needs_review: boolean;
-  suggested_category: string | null;
-  parser_source: "structured" | "text";
-};
-
-export type ParsedReceipt = {
-  store: string | null;
-  date: string | null;
-  subtotal: number | null;
-  tax: number | null;
-  total: number | null;
-  items: ReceiptItem[];
 };
 
 export type IngestedReceipt = {
   store: string | null;
   date: string | null;
-  raw: Record<string, unknown>;
-  raw_text_lines: string[];
-  structured_blocks: Record<string, unknown>[];
-  structured_items: Array<{ description: string; amount: number | null; product_number: string | null }>;
   subtotal_hint: number | null;
   tax_hint: number | null;
   total_hint: number | null;
+  raw: Record<string, unknown>;
+  raw_text: string;
+  raw_text_lines: string[];
+  structured_blocks: Record<string, unknown>[];
 };
 
 export function normalizeIncomingFilePath(inputPath: unknown): string {
@@ -74,9 +63,10 @@ export async function requestTabscannerIngestion(params: {
   if (!apiKey) throw new HttpError(500, "TABSCANNER_API_KEY is required");
 
   const endpoint = Deno.env.get("TABSCANNER_API_URL") ?? "https://api.tabscanner.com";
-  const timeoutMs = params.timeoutMs ?? 15000;
+  const timeoutMs = params.timeoutMs ?? 20000;
   const maxPollAttempts = params.maxPollAttempts ?? Number(Deno.env.get("TABSCANNER_MAX_POLL_ATTEMPTS") ?? 20);
   const pollIntervalMs = params.pollIntervalMs ?? Number(Deno.env.get("TABSCANNER_POLL_INTERVAL_MS") ?? 1200);
+
   const form = new FormData();
   form.append("file", new File([params.blob], params.filename, { type: params.mimeType }));
 
@@ -93,14 +83,11 @@ export async function requestTabscannerIngestion(params: {
 
   let payload = submitPayload;
   const token = String(submitPayload?.token ?? submitPayload?.id ?? submitPayload?.uuid ?? "").trim();
-  let lastStatus = extractTabscannerStatus(payload);
 
   for (let attempt = 0; attempt < maxPollAttempts; attempt++) {
-    const normalized = normalizeTabscannerIngestionPayload(payload);
-    if (normalized.raw_text_lines.length || normalized.structured_items.length) return normalized;
-
-    const shouldPollAgain = token && (!lastStatus || lastStatus === "processing");
-    if (!shouldPollAgain) break;
+    const normalized = normalizeTabscannerPayload(payload);
+    if (normalized.raw_text.trim()) return normalized;
+    if (!token) break;
 
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     const poll = await fetchWithTimeout(`${endpoint}/api/2/result/${token}`, {
@@ -108,139 +95,204 @@ export async function requestTabscannerIngestion(params: {
       headers: { apikey: apiKey },
     }, timeoutMs);
     payload = await safeParseJsonResponse(poll);
-    lastStatus = extractTabscannerStatus(payload);
-    if (!poll.ok) continue;
   }
 
-  const normalized = normalizeTabscannerIngestionPayload(payload);
-  if (!normalized.raw_text_lines.length && !normalized.structured_items.length) {
+  const normalized = normalizeTabscannerPayload(payload);
+  if (!normalized.raw_text.trim()) {
     throw new HttpError(422, "TabScanner returned no parsable receipt text", {
-      status: lastStatus,
       has_token: Boolean(token),
       max_poll_attempts: maxPollAttempts,
     });
   }
+
   return normalized;
 }
 
-function extractTabscannerStatus(payload: unknown): "processing" | "done" | null {
-  if (!payload || typeof payload !== "object") return null;
+export async function parseReceiptWithOpenAI(params: {
+  ocrText: string;
+  apiKey?: string;
+}): Promise<Array<Pick<PipelineLineItem, "product_number" | "raw_line_text" | "quantity" | "unit_price" | "total_price" | "discount_promotion">>> {
+  const apiKey = params.apiKey?.trim();
+  if (!apiKey) throw new HttpError(500, "OPENAI_API_KEY is required");
+  if (!params.ocrText.trim()) throw new HttpError(422, "OCR text is empty");
 
-  const nodes = collectCandidateNodes([payload]);
-  for (const node of nodes) {
-    const explicitStatus = String(node.status ?? node.state ?? node.processingStatus ?? "").trim().toLowerCase();
-    if (["pending", "processing", "running", "queued", "in_progress"].includes(explicitStatus)) return "processing";
-    if (["done", "finished", "completed", "success", "ok"].includes(explicitStatus)) return "done";
+  const prompt = `Parse the receipt text into line items.\nDo not infer product names.\nKeep promotions/discounts as negative discount_promotion values.\nReturn strict JSON only.`;
 
-    const doneFlag = node.done;
-    if (doneFlag === true) return "done";
-    if (doneFlag === false) return "processing";
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      line_items: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            product_number: { type: ["string", "null"] },
+            raw_line_text: { type: "string" },
+            quantity: { type: "number" },
+            unit_price: { type: ["number", "null"] },
+            total_price: { type: "number" },
+            discount_promotion: { type: "number" },
+          },
+          required: ["product_number", "raw_line_text", "quantity", "unit_price", "total_price", "discount_promotion"],
+        },
+      },
+    },
+    required: ["line_items"],
+  };
 
-    const readyFlag = node.ready;
-    if (readyFlag === true) return "done";
-    if (readyFlag === false) return "processing";
+  const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: Deno.env.get("OPENAI_RECEIPT_MODEL") ?? "gpt-4.1-mini",
+      input: [
+        {
+          role: "system",
+          content: [{ type: "input_text", text: prompt }],
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: params.ocrText.slice(0, 120000) }],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "receipt_line_items",
+          strict: true,
+          schema,
+        },
+      },
+    }),
+  }, 30000);
+
+  const payload = await safeParseJsonResponse(response);
+  if (!response.ok) {
+    throw new HttpError(502, "OpenAI structured parsing failed", { status: response.status, payload });
   }
 
-  return null;
+  const parsed = extractResponseJson(payload);
+  const items = Array.isArray(parsed?.line_items) ? parsed.line_items : [];
+  if (!items.length) throw new HttpError(422, "OpenAI returned no line items");
+
+  return items.map((item: Record<string, unknown>) => ({
+    product_number: normalizeProductNumber(item.product_number),
+    raw_line_text: String(item.raw_line_text ?? "").trim(),
+    quantity: normalizeQuantity(item.quantity),
+    unit_price: toMoneyOrNull(item.unit_price),
+    total_price: toMoney(item.total_price),
+    discount_promotion: toMoneyOrZero(item.discount_promotion),
+  })).filter((item) => item.raw_line_text && Number.isFinite(item.total_price));
 }
 
-function normalizeTabscannerIngestionPayload(payload: any): IngestedReceipt {
-  const source = (payload?.result ?? payload?.data ?? payload ?? {}) as Record<string, unknown>;
-  const candidateNodes = collectCandidateNodes([payload, source]);
+export async function resolveProductNames(params: {
+  items: Array<Pick<PipelineLineItem, "product_number" | "raw_line_text" | "quantity" | "unit_price" | "total_price" | "discount_promotion">>;
+  serpApiKey?: string;
+  openAiKey?: string;
+}): Promise<PipelineLineItem[]> {
+  const serpCache = new Map<string, string | null>();
 
-  const structuredBlocks = candidateNodes
+  return Promise.all(params.items.map(async (item) => {
+    const number = normalizeProductNumber(item.product_number);
+    let productName: string | null = null;
+
+    if (number && params.serpApiKey) {
+      if (!serpCache.has(number)) {
+        serpCache.set(number, await fetchSerpProductTitle(number, params.serpApiKey));
+      }
+      productName = serpCache.get(number) ?? null;
+    }
+
+    if (!productName) {
+      productName = await inferProductNameFromOpenAI(item.raw_line_text, params.openAiKey);
+    }
+
+    return {
+      product_number: number,
+      raw_line_text: item.raw_line_text,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      total_price: item.total_price,
+      discount_promotion: item.discount_promotion,
+      product_name: productName || "Unknown Item",
+      category_suggestion: null,
+      needs_review: !productName,
+    };
+  }));
+}
+
+export function applyCategorySuggestions(items: PipelineLineItem[], categories: string[]): PipelineLineItem[] {
+  return items.map((item) => {
+    const suggestion = suggestCategory(item.product_name, categories);
+    return { ...item, category_suggestion: suggestion ?? item.category_suggestion };
+  });
+}
+
+export function validateReceiptMath(params: {
+  items: PipelineLineItem[];
+  subtotalHint: number | null;
+  taxHint: number | null;
+  totalHint: number | null;
+}) {
+  const subtotal = toMoney(params.items.reduce((sum, item) => sum + item.total_price + item.discount_promotion, 0));
+  const tax = toMoneyOrZero(params.taxHint);
+  const computedTotal = toMoney(subtotal + tax);
+  const totalHint = Number.isFinite(params.totalHint) ? toMoney(params.totalHint as number) : null;
+
+  const subtotalDelta = Number.isFinite(params.subtotalHint)
+    ? toMoney((params.subtotalHint as number) - subtotal)
+    : 0;
+  const totalDelta = Number.isFinite(totalHint)
+    ? toMoney((totalHint as number) - computedTotal)
+    : 0;
+
+  return {
+    subtotal,
+    tax,
+    total: totalHint ?? computedTotal,
+    computed_total: computedTotal,
+    subtotal_ok: Math.abs(subtotalDelta) <= 0.05,
+    total_ok: Math.abs(totalDelta) <= 0.05,
+    delta_subtotal: subtotalDelta,
+    delta_total: totalDelta,
+  };
+}
+
+function normalizeTabscannerPayload(payload: unknown): IngestedReceipt {
+  const source = (payload && typeof payload === "object") ? payload as Record<string, unknown> : {};
+  const nodes = collectCandidateNodes([payload]);
+
+  const structuredBlocks = nodes
     .flatMap((node) => [node.blocks, node.textBlocks, node.ocrBlocks])
     .flatMap((value) => Array.isArray(value) ? value : [])
     .filter((entry) => entry && typeof entry === "object") as Record<string, unknown>[];
 
-  const rawText = candidateNodes
+  const joinedLines = nodes
     .flatMap((node) => [node.text, node.rawText, node.fullText, node.ocrText, node.documentText])
     .find((value) => typeof value === "string" && value.trim()) as string | undefined;
 
-  const lineCandidates = candidateNodes
-    .flatMap((node) => [node.lines, node.raw_lines, node.ocr_lines, node.textLines, node.rawTextLines, node.documentLines])
-    .find((value) => Array.isArray(value));
-
-  const rawTextLinesFromCandidates = rawText
-    ? rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-    : toLineStrings(lineCandidates);
-
-  const rawTextLines = rawTextLinesFromCandidates.length
-    ? rawTextLinesFromCandidates
-    : extractLinesFromStructuredBlocks(structuredBlocks);
-
-  const rawItems = candidateNodes
-    .flatMap((node) => [node.items, node.lineItems, node.products, node.entries, node.receiptItems])
-    .find((value) => Array.isArray(value));
-
-  const structuredItems = (Array.isArray(rawItems) ? rawItems : [])
-    .map((entry: any) => normalizeStructuredItem(entry))
-    .filter((entry) => entry.description);
-
-  const subtotal_hint = firstFiniteMoney(...candidateNodes.map((node) => node.subtotal ?? node.subTotal));
-  const tax_hint = firstFiniteMoney(...candidateNodes.map((node) => node.tax ?? node.totalTax));
-  const total_hint = firstFiniteMoney(...candidateNodes.map((node) => node.total ?? node.grandTotal));
+  const rawTextLines = joinedLines
+    ? joinedLines.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    : structuredBlocks
+      .map((block) => String(block.text ?? block.rawText ?? block.value ?? "").trim())
+      .filter(Boolean);
 
   return {
-    store: firstString(...candidateNodes.map((node) => node.store ?? node.storeName ?? node.merchant)),
-    date: firstString(...candidateNodes.map((node) => node.date ?? node.purchaseDate)),
+    store: firstString(...nodes.map((node) => node.store ?? node.storeName ?? node.merchant)),
+    date: firstString(...nodes.map((node) => node.date ?? node.purchaseDate)),
+    subtotal_hint: firstFiniteMoney(...nodes.map((node) => node.subtotal ?? node.subTotal)),
+    tax_hint: firstFiniteMoney(...nodes.map((node) => node.tax ?? node.totalTax)),
+    total_hint: firstFiniteMoney(...nodes.map((node) => node.total ?? node.grandTotal)),
     raw: source,
+    raw_text: rawTextLines.join("\n"),
     raw_text_lines: rawTextLines,
     structured_blocks: structuredBlocks,
-    structured_items: structuredItems,
-    subtotal_hint,
-    tax_hint,
-    total_hint,
   };
-}
-
-function normalizeStructuredItem(entry: any): { description: string; amount: number | null; product_number: string | null } {
-  const description = stringOrNull(
-    entry?.name ?? entry?.description ?? entry?.title ?? entry?.text ?? entry?.label ?? entry?.item,
-  ) ?? "";
-  const amount = firstFiniteMoney(
-    entry?.price,
-    entry?.amount,
-    entry?.total,
-    entry?.lineTotal,
-    entry?.value,
-    entry?.line_amount,
-  );
-  const product_number = normalizeProductNumber(
-    entry?.product_number ?? entry?.code ?? entry?.sku ?? entry?.barcode ?? entry?.id ?? entry?.gtin ?? entry?.upc,
-  );
-  return { description, amount, product_number };
-}
-
-function toLineStrings(lines: unknown): string[] {
-  if (!Array.isArray(lines)) return [];
-  return lines
-    .map((line) => {
-      if (typeof line === "string") return line;
-      if (line && typeof line === "object") {
-        const node = line as Record<string, unknown>;
-        return String(node.text ?? node.rawText ?? node.value ?? node.line ?? "");
-      }
-      return String(line ?? "");
-    })
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function extractLinesFromStructuredBlocks(blocks: Record<string, unknown>[]): string[] {
-  return blocks
-    .flatMap((block) => [
-      block.text,
-      block.rawText,
-      block.value,
-      block.line,
-      block.description,
-      block.name,
-      block.label,
-      block.item,
-    ])
-    .map((value) => String(value ?? "").trim())
-    .filter(Boolean);
 }
 
 function collectCandidateNodes(seeds: unknown[]): Record<string, unknown>[] {
@@ -268,171 +320,8 @@ function collectCandidateNodes(seeds: unknown[]): Record<string, unknown>[] {
   return out;
 }
 
-export function parseReceiptLines(ingested: IngestedReceipt): ParsedReceipt {
-  const fromStructured = ingested.structured_items.map((item) => parseStructuredItem(item));
-  const fromText = parseTextLines(ingested.raw_text_lines);
-
-  const deduped = dedupeItems([...fromStructured, ...fromText]);
-
-  const saleItems = deduped.filter((item) => item.tax_line === 0 && item.line_total > 0);
-  const discountTotal = deduped.reduce((sum, item) => sum + item.discount_promotion, 0);
-  const explicitTax = deduped.reduce((sum, item) => sum + item.tax_line, 0);
-
-  const subtotal = toMoney(saleItems.reduce((sum, item) => sum + item.line_total, 0) + discountTotal);
-  const tax = firstFiniteMoney(explicitTax, ingested.tax_hint, 0);
-  const total = toMoney(subtotal + (tax ?? 0));
-
-  return {
-    store: ingested.store,
-    date: ingested.date,
-    subtotal: firstFiniteMoney(ingested.subtotal_hint, subtotal),
-    tax,
-    total: firstFiniteMoney(ingested.total_hint, total),
-    items: deduped,
-  };
-}
-
-function parseStructuredItem(item: { description: string; amount: number | null; product_number: string | null }): ReceiptItem {
-  const quantityParse = extractQuantityAndUnit(item.description, item.amount ?? undefined);
-  const raw = item.description.trim();
-  const isDiscount = isDiscountLine(raw);
-  const isTax = isTaxLine(raw);
-  const lineTotal = Number.isFinite(item.amount) ? toMoney(item.amount as number) : toMoney(quantityParse.lineTotal);
-
-  return {
-    product_number: item.product_number,
-    resolved_name: raw,
-    raw_description: raw,
-    quantity: quantityParse.quantity,
-    unit_price: quantityParse.unitPrice,
-    line_total: lineTotal,
-    discount_promotion: isDiscount ? -Math.abs(lineTotal) : 0,
-    tax_line: isTax ? Math.abs(lineTotal) : 0,
-    needs_review: false,
-    suggested_category: null,
-    parser_source: "structured",
-  };
-}
-
-function parseTextLines(lines: string[]): ReceiptItem[] {
-  const output: ReceiptItem[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const current = normalizeWhitespace(lines[i]);
-    if (!current) continue;
-
-    const currentMoney = parseTrailingMoney(current);
-    const next = normalizeWhitespace(lines[i + 1] ?? "");
-    const nextMoney = parseTrailingMoney(next);
-    const shouldUseNextLinePrice = !Number.isFinite(currentMoney) && Number.isFinite(nextMoney) && !/\d{5,}/.test(next);
-
-    const descriptor = shouldUseNextLinePrice ? current : stripTrailingMoney(current);
-    const lineTotal = Number.isFinite(currentMoney) ? currentMoney : (shouldUseNextLinePrice ? (nextMoney as number) : NaN);
-    const quantityParse = extractQuantityAndUnit(descriptor, Number.isFinite(lineTotal) ? lineTotal : undefined);
-
-    if (shouldUseNextLinePrice) i += 1;
-
-    if (!Number.isFinite(lineTotal) && !looksLikeItemDescriptor(descriptor)) continue;
-
-    const cleanDescription = descriptor.trim();
-    const product_number = extractProductNumber(cleanDescription);
-    const isDiscount = isDiscountLine(cleanDescription);
-    const isTax = isTaxLine(cleanDescription);
-
-    if (isSubtotalOrTotal(cleanDescription) || /^\s*(cash|change|payment|visa|mastercard|debit|credit)\b/i.test(cleanDescription)) {
-      continue;
-    }
-
-    output.push({
-      product_number,
-      resolved_name: cleanDescription,
-      raw_description: cleanDescription,
-      quantity: quantityParse.quantity,
-      unit_price: quantityParse.unitPrice,
-      line_total: Number.isFinite(lineTotal) ? toMoney(lineTotal) : toMoney(quantityParse.lineTotal),
-      discount_promotion: isDiscount ? -Math.abs(Number.isFinite(lineTotal) ? lineTotal : quantityParse.lineTotal) : 0,
-      tax_line: isTax ? Math.abs(Number.isFinite(lineTotal) ? lineTotal : quantityParse.lineTotal) : 0,
-      needs_review: false,
-      suggested_category: null,
-      parser_source: "text",
-    });
-  }
-
-  return output;
-}
-
-function dedupeItems(items: ReceiptItem[]): ReceiptItem[] {
-  const seen = new Set<string>();
-  const deduped: ReceiptItem[] = [];
-
-  for (const item of items) {
-    if (!item.raw_description || (!item.line_total && !item.tax_line && !item.discount_promotion)) continue;
-    const key = [
-      item.product_number ?? "none",
-      item.raw_description.toLowerCase().replace(/\s+/g, " "),
-      item.quantity,
-      item.line_total.toFixed(2),
-      item.tax_line.toFixed(2),
-      item.discount_promotion.toFixed(2),
-    ].join("|");
-
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(item);
-  }
-
-  return deduped;
-}
-
-function extractQuantityAndUnit(description: string, lineTotal?: number): { quantity: number; unitPrice: number | null; lineTotal: number } {
-  const atMatch = description.match(/\b(\d{1,4})\s*@\s*(\d+(?:\.\d{1,2})?)\b/i);
-  if (atMatch) {
-    const quantity = Math.max(1, Number(atMatch[1]));
-    const unit = toMoney(Number(atMatch[2]));
-    const total = Number.isFinite(lineTotal) ? toMoney(lineTotal as number) : toMoney(quantity * unit);
-    return { quantity, unitPrice: unit, lineTotal: total };
-  }
-
-  const qtyPrefix = description.match(/^\s*(\d{1,4})\s+(?:x\s+)?/i);
-  if (qtyPrefix && Number(qtyPrefix[1]) > 1 && Number.isFinite(lineTotal)) {
-    const quantity = Number(qtyPrefix[1]);
-    return { quantity, unitPrice: toMoney((lineTotal as number) / quantity), lineTotal: toMoney(lineTotal as number) };
-  }
-
-  if (Number.isFinite(lineTotal)) {
-    return { quantity: 1, unitPrice: toMoney(lineTotal as number), lineTotal: toMoney(lineTotal as number) };
-  }
-
-  return { quantity: 1, unitPrice: null, lineTotal: 0 };
-}
-
-export async function resolveProductNames(params: {
-  items: ReceiptItem[];
-  serpApiKey?: string;
-}): Promise<ReceiptItem[]> {
-  const cache = new Map<string, string | null>();
-
-  return Promise.all(params.items.map(async (item) => {
-    const cleanedNumber = normalizeProductNumber(item.product_number);
-    let resolved = item.raw_description;
-
-    if (cleanedNumber && params.serpApiKey) {
-      if (!cache.has(cleanedNumber)) {
-        cache.set(cleanedNumber, await fetchSerpProductTitle(cleanedNumber, params.serpApiKey));
-      }
-      resolved = cache.get(cleanedNumber) ?? item.raw_description;
-    }
-
-    return {
-      ...item,
-      product_number: cleanedNumber,
-      resolved_name: resolved,
-      needs_review: item.needs_review || !cleanedNumber || !resolved || resolved === item.raw_description,
-    };
-  }));
-}
-
-async function fetchSerpProductTitle(productNumber: string, apiKey: string): Promise<string | null> {
+async function fetchSerpProductTitle(productNumber: string, apiKey?: string): Promise<string | null> {
+  if (!apiKey) return null;
   const endpoint = new URL("https://serpapi.com/search.json");
   endpoint.searchParams.set("engine", "google");
   endpoint.searchParams.set("q", productNumber);
@@ -449,27 +338,90 @@ async function fetchSerpProductTitle(productNumber: string, apiKey: string): Pro
   }
 }
 
-export function validateReceiptMath(parsed: ParsedReceipt): { subtotal_ok: boolean; total_ok: boolean; delta_subtotal: number; delta_total: number } {
-  const itemSubtotal = toMoney(parsed.items.filter((item) => item.tax_line === 0).reduce((sum, item) => sum + item.line_total + item.discount_promotion, 0));
-  const computedTotal = toMoney(itemSubtotal + (parsed.tax ?? 0));
+async function inferProductNameFromOpenAI(rawLineText: string, apiKey?: string): Promise<string | null> {
+  if (!apiKey || !rawLineText.trim()) return null;
 
-  const deltaSubtotal = Number.isFinite(parsed.subtotal) ? toMoney((parsed.subtotal as number) - itemSubtotal) : 0;
-  const deltaTotal = Number.isFinite(parsed.total) ? toMoney((parsed.total as number) - computedTotal) : 0;
+  const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: Deno.env.get("OPENAI_RECEIPT_MODEL") ?? "gpt-4.1-mini",
+      input: [{ role: "user", content: [{ type: "input_text", text: `Return product name only for this receipt line: ${rawLineText}` }] }],
+      max_output_tokens: 30,
+    }),
+  }, 15000);
 
-  return {
-    subtotal_ok: Math.abs(deltaSubtotal) <= 0.05,
-    total_ok: Math.abs(deltaTotal) <= 0.05,
-    delta_subtotal: deltaSubtotal,
-    delta_total: deltaTotal,
-  };
+  if (!response.ok) return null;
+  const payload = await safeParseJsonResponse(response);
+  const text = String(payload?.output_text ?? payload?.output?.[0]?.content?.[0]?.text ?? "").trim();
+  return text || null;
 }
 
-export function applyCategorySuggestions(items: ReceiptItem[], categories: string[]): ReceiptItem[] {
-  return items.map((item) => {
-    if (!item.needs_review) return item;
-    const suggestion = suggestCategory(item.resolved_name, categories);
-    return { ...item, suggested_category: suggestion };
-  });
+function extractResponseJson(payload: any): any {
+  const direct = payload?.output?.[0]?.content?.[0]?.text;
+  const fallback = payload?.output_text;
+  const raw = String(direct ?? fallback ?? "").trim();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(raw.slice(start, end + 1));
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+}
+
+function normalizeProductNumber(raw: unknown): string | null {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  if (!digits) return null;
+  const trimmed = digits.replace(/^0+/, "");
+  return trimmed || "0";
+}
+
+function normalizeQuantity(raw: unknown): number {
+  const quantity = Number(raw);
+  if (!Number.isFinite(quantity) || quantity <= 0) return 1;
+  return Number(quantity.toFixed(3));
+}
+
+function toMoney(raw: unknown): number {
+  const parsed = Number(String(raw ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : 0;
+}
+
+function toMoneyOrNull(raw: unknown): number | null {
+  const parsed = Number(String(raw ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : null;
+}
+
+function toMoneyOrZero(raw: unknown): number {
+  return Number.isFinite(Number(raw)) ? toMoney(raw) : 0;
+}
+
+function firstFiniteMoney(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = toMoneyOrNull(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return null;
 }
 
 function suggestCategory(name: string, categories: string[]): string | null {
@@ -484,80 +436,7 @@ function suggestCategory(name: string, categories: string[]): string | null {
     return { category, score };
   }).sort((a, b) => b.score - a.score || a.category.localeCompare(b.category));
 
-  return scored[0]?.category ?? null;
-}
-
-function extractProductNumber(line: string): string | null {
-  const matches = line.match(/\b\d{6,14}\b/g) ?? [];
-  if (!matches.length) return null;
-  return normalizeProductNumber(matches[0]);
-}
-
-function normalizeProductNumber(raw: unknown): string | null {
-  const digits = String(raw ?? "").replace(/\D/g, "");
-  if (!digits || digits.length < 6 || digits.length > 14) return null;
-  return digits.replace(/^0+/, "") || "0";
-}
-
-function isDiscountLine(line: string): boolean {
-  return /\b(discount|coupon|promo|promotion|inst\s*sv|savings?)\b/i.test(line);
-}
-
-function isTaxLine(line: string): boolean {
-  return /\b(tax|vat)\b/i.test(line);
-}
-
-function isSubtotalOrTotal(line: string): boolean {
-  return /\b(sub\s*total|total)\b/i.test(line);
-}
-
-function looksLikeItemDescriptor(line: string): boolean {
-  if (!line) return false;
-  if (isSubtotalOrTotal(line) || isTaxLine(line)) return false;
-  return /[a-zA-Z]/.test(line) || /\b\d{6,14}\b/.test(line);
-}
-
-function parseTrailingMoney(line: string): number {
-  const match = line.match(/(-?\$?\d+(?:\.\d{1,2})?)\s*$/);
-  return match ? parseMoney(match[1]) : NaN;
-}
-
-function stripTrailingMoney(line: string): string {
-  return line.replace(/\s*-?\$?\d+(?:\.\d{1,2})?\s*$/, "").trim();
-}
-
-function parseMoney(raw: unknown): number {
-  const value = Number(String(raw ?? "").replace(/[^\d.-]/g, ""));
-  return Number.isFinite(value) ? toMoney(value) : NaN;
-}
-
-function firstFiniteMoney(...values: unknown[]): number | null {
-  for (const value of values) {
-    const parsed = parseMoney(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-}
-
-function firstString(...values: unknown[]): string | null {
-  for (const value of values) {
-    const normalized = stringOrNull(value);
-    if (normalized) return normalized;
-  }
-  return null;
-}
-
-function stringOrNull(raw: unknown): string | null {
-  const value = String(raw ?? "").trim();
-  return value || null;
-}
-
-function normalizeWhitespace(value: string): string {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function toMoney(value: number): number {
-  return Number(value.toFixed(2));
+  return scored[0]?.score ? scored[0].category : null;
 }
 
 async function safeParseJsonResponse(response: Response): Promise<any> {
