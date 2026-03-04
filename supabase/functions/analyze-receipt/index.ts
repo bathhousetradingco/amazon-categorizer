@@ -294,7 +294,7 @@ function dedupeItemNumbers(values: unknown[]): string[] {
   const normalized = values
     .map((value) => String(value || "").replace(/\D/g, ""))
     .filter((value) => /^\d{9,12}$/.test(value))
-    .map((value) => value.replace(/^0+/, ""))
+    .map((value) => normalizeProductNumber(value))
     .filter(Boolean);
 
   return [...new Set(normalized)];
