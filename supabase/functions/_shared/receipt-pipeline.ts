@@ -127,9 +127,13 @@ function normalizeTabscannerIngestionPayload(payload: any): IngestedReceipt {
     .flatMap((node) => [node.lines, node.raw_lines, node.ocr_lines, node.textLines, node.rawTextLines, node.documentLines])
     .find((value) => Array.isArray(value));
 
-  const rawTextLines = rawText
+  const rawTextLinesFromCandidates = rawText
     ? rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
     : toLineStrings(lineCandidates);
+
+  const rawTextLines = rawTextLinesFromCandidates.length
+    ? rawTextLinesFromCandidates
+    : extractLinesFromStructuredBlocks(structuredBlocks);
 
   const rawItems = candidateNodes
     .flatMap((node) => [node.items, node.lineItems, node.products, node.entries, node.receiptItems])
@@ -186,6 +190,22 @@ function toLineStrings(lines: unknown): string[] {
       return String(line ?? "");
     })
     .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function extractLinesFromStructuredBlocks(blocks: Record<string, unknown>[]): string[] {
+  return blocks
+    .flatMap((block) => [
+      block.text,
+      block.rawText,
+      block.value,
+      block.line,
+      block.description,
+      block.name,
+      block.label,
+      block.item,
+    ])
+    .map((value) => String(value ?? "").trim())
     .filter(Boolean);
 }
 
