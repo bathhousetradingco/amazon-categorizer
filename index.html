@@ -1950,11 +1950,38 @@ function parseReceiptTotals(rawReceiptText){
   return totals;
 }
 
-function validateReceiptMath(parsedItems, receiptTotals){
+function validateReceiptMath(parsedItems, receiptTotals, options = {}){
+  const itemNumbers = Array.isArray(options.itemNumbers) ? options.itemNumbers : [];
+  const lineItemPrices = options.lineItemPrices && typeof options.lineItemPrices === "object"
+    ? options.lineItemPrices
+    : {};
+  const parsedItemsByProduct = new Map(
+    (parsedItems || []).map((entry) => [String(entry?.product_number || "").trim(), entry])
+  );
+  const effectiveParsedItems = [
+    ...(parsedItems || []).filter((entry) => String(entry?.product_number || "").trim())
+  ];
+
+  itemNumbers.forEach((num) => {
+    const normalized = String(num || "").trim();
+    if(!normalized || parsedItemsByProduct.has(normalized)) return;
+
+    const fallbackPrice = Number(lineItemPrices[normalized]);
+    if(!Number.isFinite(fallbackPrice)) return;
+
+    effectiveParsedItems.push({
+      product_number: normalized,
+      quantity: 1,
+      unit_price: fallbackPrice,
+      total_price: fallbackPrice,
+      inferred_from_line_item_price: true
+    });
+  });
+
   const lineItemDiagnostics = [];
   let computedSubtotalCents = 0;
 
-  (parsedItems || []).forEach((entry, index) => {
+  effectiveParsedItems.forEach((entry, index) => {
     const quantity = Number(entry?.quantity || 0);
     const unitPriceCents = toCents(entry?.unit_price);
     const parsedLineTotalCents = toCents(entry?.total_price);
@@ -1983,7 +2010,8 @@ function validateReceiptMath(parsedItems, receiptTotals){
       unit_price: centsToAmount(unitPriceCents),
       detected_line_total: centsToAmount(parsedLineTotalCents),
       expected_line_total: centsToAmount(expectedLineTotalCents),
-      difference: centsToAmount(differenceCents)
+      difference: centsToAmount(differenceCents),
+      inferred_from_line_item_price: Boolean(entry?.inferred_from_line_item_price)
     });
 
     computedSubtotalCents += parsedLineTotalCents;
@@ -2011,6 +2039,7 @@ function validateReceiptMath(parsedItems, receiptTotals){
   };
 
   return {
+    effectiveParsedItems,
     lineItemDiagnostics,
     summary,
     hasDiscrepancy: lineItemDiagnostics.some((entry) => entry.status === "mismatch" || entry.status === "invalid")
@@ -2145,7 +2174,10 @@ async function analyzeSplitReceipt(){
       return acc;
     }, {});
     const receiptTotals = parseReceiptTotals(rawReceiptText);
-    const receiptMathValidation = validateReceiptMath(parsedItems, receiptTotals);
+    const receiptMathValidation = validateReceiptMath(parsedItems, receiptTotals, {
+      itemNumbers,
+      lineItemPrices: parsedLineItemPrices
+    });
 
     console.group("RAW RECEIPT TEXT");
     console.log(rawReceiptText);
