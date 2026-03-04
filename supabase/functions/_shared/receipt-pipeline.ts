@@ -112,40 +112,40 @@ export async function requestTabscannerIngestion(params: {
 
 function normalizeTabscannerIngestionPayload(payload: any): IngestedReceipt {
   const source = (payload?.result ?? payload?.data ?? payload ?? {}) as Record<string, unknown>;
-  const receipt = (source.receipt ?? {}) as Record<string, unknown>;
-  const structuredBlocks = (Array.isArray(source.blocks) ? source.blocks : (Array.isArray(receipt.blocks) ? receipt.blocks : []))
+  const candidateNodes = collectCandidateNodes([payload, source]);
+
+  const structuredBlocks = candidateNodes
+    .flatMap((node) => [node.blocks, node.textBlocks, node.ocrBlocks])
+    .flatMap((value) => Array.isArray(value) ? value : [])
     .filter((entry) => entry && typeof entry === "object") as Record<string, unknown>[];
 
-  const rawText = [
-    source.text,
-    source.rawText,
-    receipt.text,
-    receipt.rawText,
-  ].find((v) => typeof v === "string") as string | undefined;
+  const rawText = candidateNodes
+    .flatMap((node) => [node.text, node.rawText, node.fullText, node.ocrText, node.documentText])
+    .find((value) => typeof value === "string" && value.trim()) as string | undefined;
+
+  const lineCandidates = candidateNodes
+    .flatMap((node) => [node.lines, node.raw_lines, node.ocr_lines, node.textLines, node.rawTextLines, node.documentLines])
+    .find((value) => Array.isArray(value));
 
   const rawTextLines = rawText
     ? rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-    : (Array.isArray(source.lines) ? source.lines : (Array.isArray(receipt.lines) ? receipt.lines : []))
-      .map((line: unknown) => String(line ?? "").trim())
-      .filter(Boolean);
+    : toLineStrings(lineCandidates);
 
-  const rawItems = [source.items, source.lineItems, source.products, receipt.items].find((v) => Array.isArray(v));
+  const rawItems = candidateNodes
+    .flatMap((node) => [node.items, node.lineItems, node.products, node.entries, node.receiptItems])
+    .find((value) => Array.isArray(value));
+
   const structuredItems = (Array.isArray(rawItems) ? rawItems : [])
-    .map((entry: any) => {
-      const description = String(entry?.name ?? entry?.description ?? entry?.title ?? "").trim();
-      const amount = parseMoney(entry?.price ?? entry?.amount ?? entry?.total);
-      const product_number = normalizeProductNumber(entry?.code ?? entry?.sku ?? entry?.barcode ?? entry?.id);
-      return { description, amount: Number.isFinite(amount) ? amount : null, product_number };
-    })
+    .map((entry: any) => normalizeStructuredItem(entry))
     .filter((entry) => entry.description);
 
-  const subtotal_hint = firstFiniteMoney(source.subtotal, source.subTotal, receipt.subtotal);
-  const tax_hint = firstFiniteMoney(source.tax, source.totalTax, receipt.tax);
-  const total_hint = firstFiniteMoney(source.total, source.grandTotal, receipt.total);
+  const subtotal_hint = firstFiniteMoney(...candidateNodes.map((node) => node.subtotal ?? node.subTotal));
+  const tax_hint = firstFiniteMoney(...candidateNodes.map((node) => node.tax ?? node.totalTax));
+  const total_hint = firstFiniteMoney(...candidateNodes.map((node) => node.total ?? node.grandTotal));
 
   return {
-    store: stringOrNull(source.store ?? source.storeName ?? receipt.store ?? source.merchant ?? receipt.merchant),
-    date: stringOrNull(source.date ?? source.purchaseDate ?? receipt.date),
+    store: firstString(...candidateNodes.map((node) => node.store ?? node.storeName ?? node.merchant)),
+    date: firstString(...candidateNodes.map((node) => node.date ?? node.purchaseDate)),
     raw: source,
     raw_text_lines: rawTextLines,
     structured_blocks: structuredBlocks,
@@ -154,6 +154,64 @@ function normalizeTabscannerIngestionPayload(payload: any): IngestedReceipt {
     tax_hint,
     total_hint,
   };
+}
+
+function normalizeStructuredItem(entry: any): { description: string; amount: number | null; product_number: string | null } {
+  const description = stringOrNull(
+    entry?.name ?? entry?.description ?? entry?.title ?? entry?.text ?? entry?.label ?? entry?.item,
+  ) ?? "";
+  const amount = firstFiniteMoney(
+    entry?.price,
+    entry?.amount,
+    entry?.total,
+    entry?.lineTotal,
+    entry?.value,
+    entry?.line_amount,
+  );
+  const product_number = normalizeProductNumber(
+    entry?.product_number ?? entry?.code ?? entry?.sku ?? entry?.barcode ?? entry?.id ?? entry?.gtin ?? entry?.upc,
+  );
+  return { description, amount, product_number };
+}
+
+function toLineStrings(lines: unknown): string[] {
+  if (!Array.isArray(lines)) return [];
+  return lines
+    .map((line) => {
+      if (typeof line === "string") return line;
+      if (line && typeof line === "object") {
+        const node = line as Record<string, unknown>;
+        return String(node.text ?? node.rawText ?? node.value ?? node.line ?? "");
+      }
+      return String(line ?? "");
+    })
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function collectCandidateNodes(seeds: unknown[]): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  const queue = [...seeds];
+  const seen = new Set<unknown>();
+
+  while (queue.length) {
+    const next = queue.shift();
+    if (!next || typeof next !== "object" || seen.has(next)) continue;
+    seen.add(next);
+
+    if (Array.isArray(next)) {
+      for (const item of next) queue.push(item);
+      continue;
+    }
+
+    const record = next as Record<string, unknown>;
+    out.push(record);
+    for (const value of Object.values(record)) {
+      if (value && typeof value === "object") queue.push(value);
+    }
+  }
+
+  return out;
 }
 
 export function parseReceiptLines(ingested: IngestedReceipt): ParsedReceipt {
@@ -423,6 +481,14 @@ function firstFiniteMoney(...values: unknown[]): number | null {
   for (const value of values) {
     const parsed = parseMoney(value);
     if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = stringOrNull(value);
+    if (normalized) return normalized;
   }
   return null;
 }
