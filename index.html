@@ -1969,17 +1969,27 @@ async function analyzeSplitReceipt(){
     modalContent.innerHTML = `<div class="small" style="padding:14px;">Extracting receipt items…</div>`;
     openModal();
 
-    const { response, result } = await invokeEdgeFunction("analyze-receipt", {
-      transaction_id: item.id
-    });
+    const payload = {
+      transaction_id: item.id,
+      receipt_url: item.receipt_url
+    };
+    console.log("analyze-receipt payload", payload);
+
+    const { response, result } = await invokeEdgeFunction("analyze-receipt", payload);
 
     if(!response?.ok || !result?.success){
-      alert(result?.message || result?.error?.message || "No receipt items detected");
+      console.warn("analyze-receipt failed", { status: response?.status, result });
+      const stage = result?.stage ? ` [${result.stage}]` : "";
+      const reason = result?.reason ? `
+${result.reason}` : "";
+      alert((result?.message || result?.error?.message || "No receipt items detected") + stage + reason);
       openSplitModal();
       return;
     }
 
-    SplitState.detectedReceiptItems = Array.isArray(result.items) ? result.items : [];
+    SplitState.detectedReceiptItems = Array.isArray(result.items)
+      ? result.items.map((entry) => typeof entry === "string" ? entry : entry?.name).filter(Boolean)
+      : [];
 
     if(!SplitState.detectedReceiptItems.length){
       alert("No receipt items detected");
