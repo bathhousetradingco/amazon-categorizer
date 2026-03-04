@@ -11,12 +11,15 @@ const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 const ITEM_NUMBER_LINE_PATTERN = /^\d{9,12}\b/;
 const ITEM_NUMBER_WITH_TEXT_PATTERN = /^(\d{9,12})\b.*[A-Za-z]/;
 const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT\s+1\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
+const INST_SV_LINE_PATTERN = /^INST\s+SV\b/i;
+const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*$/;
 
 type ParsedReceiptItem = {
   product_number: string;
   quantity: number;
   unit_price: number;
   total_price: number;
+  instant_savings_discount?: number;
 };
 
 Deno.serve(async (req) => {
@@ -320,6 +323,14 @@ function extractParsedReceiptItems(lines: string[], itemNumbers: string[]): Pars
       total_price: totalPrice,
     };
 
+    const instantSavingsLine = String(lines[i + 2] || "").trim();
+    if (INST_SV_LINE_PATTERN.test(instantSavingsLine)) {
+      const instantSavingsAmount = parseInstantSavingsAmount(instantSavingsLine);
+      if (Number.isFinite(instantSavingsAmount)) {
+        parsedItem.instant_savings_discount = instantSavingsAmount;
+      }
+    }
+
     console.log("Parsed Item:", parsedItem);
     parsedItems.push(parsedItem);
   }
@@ -329,4 +340,12 @@ function extractParsedReceiptItems(lines: string[], itemNumbers: string[]): Pars
 
 function normalizeProductNumber(value: string): string {
   return String(value || "").replace(/\D/g, "").replace(/^0+/, "");
+}
+
+function parseInstantSavingsAmount(line: string): number {
+  const match = String(line || "").match(INST_SV_AMOUNT_PATTERN);
+  if (!match) return Number.NaN;
+
+  const parsed = Number.parseFloat(match[1]);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
