@@ -72,55 +72,48 @@ Deno.serve(async (req) => {
 
     debug.stage = "ocr";
     const extraction = await extractReceiptTextAndLines(signedUrl);
-    debug.ocr = {
-      full_text_length: extraction.fullText.length,
-      line_count: extraction.lines.length,
-      text_preview: extraction.fullText.slice(0, 500),
-    };
 
-    debug.stage = "openai_parse";
-    const openAiParsedItems = await parseReceiptItemsWithOpenAI(extraction.fullText, extraction.lines, signedUrl);
-    debug.openai = {
-      items_count: openAiParsedItems.items.length,
-      raw_preview: openAiParsedItems.rawResponse.slice(0, 500),
-      parse_error: openAiParsedItems.parseError,
-    };
+    console.group("RAW RECEIPT TEXT");
+    console.log(extraction.fullText || "");
+    console.groupEnd();
 
-    const parsedLines = parseReceiptLineItems(extraction.lines, extraction.fullText);
-    debug.parsed_line_count = parsedLines.length;
-    debug.parsed_lines_preview = parsedLines.slice(0, 12);
+    const receiptLines = String(extraction.fullText || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
 
-    const productNameCandidates = await resolveReceiptProductNames(serviceClient, parsedLines);
-    const fallbackItems = dedupeAndNormalizeNames(productNameCandidates).map((name) => ({
-      name,
-      price: null,
-      qty: 1,
-    }));
-
-    const parserItems = buildReceiptItemsFromParsedLines(parsedLines);
-    const baseItems = parserItems.length
-      ? parserItems
-      : (openAiParsedItems.items.length ? openAiParsedItems.items : fallbackItems);
-    debug.base_item_source = parserItems.length ? "state_machine_parser" : (openAiParsedItems.items.length ? "openai" : "fallback_names");
-    const itemResolution = await applyResolvedNamesToItems(serviceClient, baseItems, parsedLines);
-    const items = itemResolution.items;
-    debug.item_resolution = itemResolution.debug;
-
-    console.log("analyze-receipt pipeline", {
-      transaction_id: transactionId,
-      receipt_path: receiptPath,
-      receipt_download: receiptDownload,
-      ocr_line_count: extraction.lines.length,
-      ocr_text_length: extraction.fullText.length,
-      openai_items_count: openAiParsedItems.items.length,
-      fallback_items_count: fallbackItems.length,
-      final_items_count: items.length,
+    console.group("RECEIPT LINES");
+    receiptLines.forEach((line, i) => {
+      console.log(i, line);
     });
+    console.groupEnd();
+
+    const parsedLines = parseReceiptLineItems(receiptLines.length ? receiptLines : extraction.lines, extraction.fullText);
+    const items = parsedLines
+      .filter((line) => Boolean(line.cleanedItemNumber))
+      .map((line) => ({
+        itemNumber: line.cleanedItemNumber || undefined,
+        name: String(line.receiptText || "").trim() || "Unknown item",
+        price: null,
+        qty: 1,
+      }));
+
+    debug.raw_receipt_text = extraction.fullText;
+    debug.receipt_lines = receiptLines;
+    debug.parsed_line_count = parsedLines.length;
+    debug.item_resolution = parsedLines.map((line) => ({
+      originalReceiptText: line.receiptText || "",
+      rawItemNumber: line.rawItemNumber,
+      cleanedItemNumber: line.cleanedItemNumber,
+      serpQuery: null,
+      serpResponse: null,
+      resolvedName: line.receiptText || "",
+    }));
 
     if (!items.length) {
       return jsonResponse({
         success: false,
-        stage: inferFailureStage(debug),
+        stage: "parse",
         reason: "No receipt items detected",
         message: "No receipt items detected",
         debug,
@@ -133,7 +126,7 @@ Deno.serve(async (req) => {
       line_items: items.map((item) => item.name),
       metadata: {
         parsed_line_count: parsedLines.length,
-        source_line_count: extraction.lines.length,
+        source_line_count: receiptLines.length || extraction.lines.length,
       },
       debug,
     });
@@ -778,18 +771,21 @@ function parseSamsClubStateMachine(lines: string[]): ParsedReceiptLine[] {
     const line = String(lineRaw || "").replace(/\s+/g, " ").trim();
     if (!line || isNonItemLine(line)) continue;
 
-    const skuPrefixMatch = line.match(/^(\d{8,12})\s+/);
-    if (skuPrefixMatch) {
+    const match = line.match(/^\d{8,12}/);
+    console.group("ITEM NUMBER DETECTION");
+    console.log("Line:", line);
+    console.log("Match:", match);
+    console.groupEnd();
+
+    if (match) {
       if (pending) {
         parsed.push(pending);
-        console.group("PARSED ITEM OBJECT");
-        console.log(pending);
-        console.groupEnd();
+        console.log("Parsed receipt item:", pending);
       }
 
-      const rawItemNumber = skuPrefixMatch[1];
-      const cleanedItemNumber = normalizeProductNumber(rawItemNumber);
-      const receiptText = cleanupNameText(line.slice(skuPrefixMatch[0].length));
+      const rawItemNumber = match[0];
+      const cleanedItemNumber = rawItemNumber.replace(/^0+/, "") || "0";
+      const receiptText = cleanupNameText(line.slice(rawItemNumber.length));
 
       console.log("Raw item number:", rawItemNumber);
       console.log("Cleaned item number:", cleanedItemNumber);
@@ -812,18 +808,14 @@ function parseSamsClubStateMachine(lines: string[]): ParsedReceiptLine[] {
       pending.unitPrice = qtyPrice.unitPrice;
       pending.raw = `${pending.raw} || ${line}`;
       parsed.push(pending);
-      console.group("PARSED ITEM OBJECT");
-      console.log(pending);
-      console.groupEnd();
+      console.log("Parsed receipt item:", pending);
       pending = null;
     }
   }
 
   if (pending) {
     parsed.push(pending);
-    console.group("PARSED ITEM OBJECT");
-    console.log(pending);
-    console.groupEnd();
+    console.log("Parsed receipt item:", pending);
   }
 
   return parsed;
