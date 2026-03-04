@@ -144,13 +144,14 @@ async function extractReceiptText(signedUrl: string): Promise<{ fullText: string
 
   const payload = {
     document: { image_url: signedUrl },
-    output: ["raw_text"],
+    output: ["raw_text", "items"],
   };
 
   const response = await fetchWithTimeout("https://api.tabscanner.com/api/2/process", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "X-Api-Key": TABSCANNER_API_KEY,
       "apikey": TABSCANNER_API_KEY,
     },
     body: JSON.stringify(payload),
@@ -177,19 +178,124 @@ async function safeJson(response: Response) {
 }
 
 function extractRawText(payload: any): string {
-  const candidates = [
-    payload?.result?.raw_text,
-    payload?.raw_text,
-    payload?.data?.raw_text,
-    payload?.result?.text,
-    payload?.text,
+  const payloadCandidates = collectPayloadCandidates(payload);
+  const directCandidates = [
+    ...payloadCandidates.flatMap((candidate) => [
+      candidate?.result?.raw_text,
+      candidate?.result?.text,
+      candidate?.result?.ocr_text,
+      candidate?.result?.full_text,
+      candidate?.result?.ocr?.text,
+      candidate?.result?.ocr?.raw_text,
+      candidate?.result?.document?.raw_text,
+      candidate?.result?.document?.text,
+      candidate?.raw_text,
+      candidate?.text,
+      candidate?.ocr_text,
+      candidate?.full_text,
+      candidate?.ocr?.text,
+      candidate?.ocr?.raw_text,
+      candidate?.data?.raw_text,
+      candidate?.data?.text,
+      candidate?.document?.text,
+    ]),
   ];
 
-  for (const candidate of candidates) {
+  for (const candidate of directCandidates) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate;
     }
   }
 
-  return "";
+  const discoveredText = findFirstDeepString(payloadCandidates, [
+    "raw_text",
+    "ocr_text",
+    "full_text",
+    "recognized_text",
+    "plain_text",
+    "text",
+  ]);
+  if (discoveredText) return discoveredText;
+
+  const itemBasedLines = payloadCandidates.flatMap((candidate) =>
+    normalizeCandidateItems(candidate).map((entry) => extractItemText(entry)).filter(Boolean),
+  );
+
+  return itemBasedLines.join("\n");
+}
+
+function collectPayloadCandidates(payload: any): any[] {
+  const candidates = [
+    payload,
+    payload?.result,
+    payload?.data,
+    payload?.response,
+  ].filter(Boolean);
+
+  const task = payload?.task || payload?.result?.task || payload?.data?.task;
+  if (task) {
+    candidates.push(task);
+    candidates.push(task?.result);
+    candidates.push(task?.data);
+  }
+
+  const tasks = [payload?.tasks, payload?.result?.tasks, payload?.data?.tasks]
+    .filter((value) => Array.isArray(value))
+    .flat();
+  for (const entry of tasks) {
+    candidates.push(entry, entry?.result, entry?.data);
+  }
+
+  return candidates;
+}
+
+function findFirstDeepString(nodes: any[], keys: string[]): string | null {
+  const queue = [...nodes];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object") continue;
+
+    for (const key of keys) {
+      const value = (current as Record<string, unknown>)[key];
+      if (typeof value === "string" && value.trim()) {
+        return value;
+      }
+    }
+
+    for (const value of Object.values(current)) {
+      if (value && typeof value === "object") {
+        queue.push(value);
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeCandidateItems(candidate: any): any[] {
+  const buckets = [
+    candidate?.result?.items,
+    candidate?.items,
+    candidate?.result?.line_items,
+    candidate?.line_items,
+    candidate?.result?.receipt?.items,
+    candidate?.receipt?.items,
+  ];
+
+  return buckets.filter((bucket) => Array.isArray(bucket)).flat();
+}
+
+function extractItemText(item: any): string {
+  const textParts = [
+    item?.raw_text,
+    item?.text,
+    item?.name,
+    item?.description,
+    item?.item,
+  ]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
+
+  return textParts.join(" ").trim();
 }
