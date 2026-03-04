@@ -866,6 +866,8 @@ function parseSingleLine(line: string): ParsedReceiptLine | null {
       rawItemNumber,
       cleanedItemNumber,
       receiptText,
+      quantity: null,
+      unitPrice: null,
     };
   }
 
