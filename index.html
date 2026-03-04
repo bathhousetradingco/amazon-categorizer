@@ -2238,7 +2238,7 @@ async function openSplitModal(){
             ${item.receipt_url ? `<button class="touchButton" onclick="openSplitReceiptViewer()" style="background:#1565c0;color:#fff;flex:1;">View Receipt</button>` : ""}
           </div>
           ${item.receipt_url ? `
-            <button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:8px;">${getReceiptAnalysisItems(item).length ? "🔁 Load Saved Analysis" : "🤖 Analyze Receipt"}</button>
+            <button id="analyzeBtn" class="touchButton" onclick="analyzeReceipt(data[currentIndex])" style="background:#000;color:#fff;width:100%;margin-bottom:8px;">${getReceiptAnalysisItems(item).length ? "🔁 Re-Analyze Receipt" : "Analyze Receipt"}</button>
             <button class="touchButton" onclick="analyzeReceipt(data[currentIndex], { forceReanalyze: true })" style="background:#6b7280;color:#fff;width:100%;margin-bottom:10px;">♻️ Re-analyze Receipt</button>
           ` : `<div class="small" style="margin-bottom:8px;">No receipt attached. Use keypad-first split entry for fast mobile input.</div>`}
           <div class="small" style="padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--panel-alt);">Receipt hidden by default. Tap <strong>View Receipt</strong> to open it.</div>
@@ -2673,7 +2673,7 @@ async function analyzeReceipt(item, options = {}){
   if(btn){
     btn.dataset.loading = "true";
     btn.disabled = true;
-    btn.innerText = "⏳ Analyzing...";
+    btn.innerText = "⏳ Analyzing Receipt...";
     btn.style.opacity = "0.6";
   }
 
@@ -2685,7 +2685,7 @@ async function analyzeReceipt(item, options = {}){
       <div style="padding:40px; text-align:center;">
         <div style="font-size:18px;">🤖 Analyzing Receipt...</div>
         <div style="margin-top:10px; font-size:14px; opacity:.6;">
-          Extracting clean line items...
+          Pipeline: OCR → Structured Parse → Name Resolution...
         </div>
       </div>
     `;
@@ -2747,12 +2747,21 @@ async function analyzeReceipt(item, options = {}){
 
     // 🚫 Prevent empty results
     if(lineItems.length === 0){
-      throw new Error("No valid line items detected");
+      throw new Error(resultPayload?.message || "Receipt analysis pipeline initializing");
     }
 
     // ✅ Store result
     item.receipt_analysis = {
-      items: lineItems,
+      items: lineItems.map((entry) => ({
+        ...entry,
+        product_number: entry.product_number || entry.product_code || null,
+        product_name: entry.product_name || entry.resolved_name || entry.raw_line_text || entry.raw_description || "Unknown Item",
+        raw_line_text: entry.raw_line_text || entry.raw_description || "",
+        line_total: entry.line_total ?? entry.total_price ?? entry.amount ?? 0,
+        total_price: entry.total_price ?? entry.line_total ?? entry.amount ?? 0,
+        suggested_category: entry.suggested_category || entry.category_suggestion || null,
+        category_suggestion: entry.category_suggestion || entry.suggested_category || null
+      })),
       tax_amount: taxAmount,
       receipt_total: resultPayload.receipt_total ?? item.Amount ?? 0,
       computed_total: resultPayload.computed_total ?? 0,
@@ -2789,7 +2798,7 @@ async function analyzeReceipt(item, options = {}){
     if(btn){
       btn.dataset.loading = "false";
       btn.disabled = false;
-      btn.innerText = getReceiptAnalysisItems(item).length ? "🔁 Load Saved Analysis" : "🤖 Analyze Receipt";
+      btn.innerText = getReceiptAnalysisItems(item).length ? "🔁 Re-Analyze Receipt" : "Analyze Receipt";
       btn.style.opacity = "1";
     }
 
@@ -2801,12 +2810,12 @@ async function analyzeReceipt(item, options = {}){
   if(btn){
     btn.dataset.loading = "false";
     btn.disabled = false;
-    btn.innerText = "🤖 Analyze Receipt";
+    btn.innerText = "Analyze Receipt";
   }
 }
 
   function extractProductCode(line){
-    const match = line.match(/\b\d{5,15}\b/);
+    const match = String(line || "").match(/\b\d{5,15}\b/);
     if(!match) return null;
 
     const raw = match[0];
@@ -2817,8 +2826,11 @@ async function analyzeReceipt(item, options = {}){
 
   function getSuggestionDisplayName(suggestion){
     return (
+      suggestion?.product_name ||
+      suggestion?.resolved_name ||
       suggestion?.enriched_description ||
       suggestion?.normalized_description ||
+      suggestion?.raw_line_text ||
       suggestion?.raw_description ||
       "Unknown item"
     );
@@ -2944,7 +2956,7 @@ function logReceiptReviewDebug(item, source){
 
   item.Splits.push({
     item_index: index,
-    Category: suggestion.suggested_category || "Needs Review",
+    Category: suggestion.suggested_category || suggestion.category_suggestion || "Needs Review",
     Amount: parseFloat(canonicalAmount.toFixed(2))
   });
 
@@ -2955,10 +2967,11 @@ function logReceiptReviewDebug(item, source){
   // =============================
   try {
 
-    const fromProductCode = suggestion?.product_code
-      ? { raw: String(suggestion.product_code), normalized: String(suggestion.product_code).replace(/^0+/, "") || String(suggestion.product_code) }
+    const rawProductCode = suggestion?.product_number || suggestion?.product_code || null;
+    const fromProductCode = rawProductCode
+      ? { raw: String(rawProductCode), normalized: String(rawProductCode).replace(/^0+/, "") || String(rawProductCode) }
       : null;
-    const fromLine = extractProductCode(suggestion.raw_description || "");
+    const fromLine = extractProductCode(suggestion.raw_line_text || suggestion.raw_description || "");
     const code = fromProductCode || fromLine;
 
     if(code){

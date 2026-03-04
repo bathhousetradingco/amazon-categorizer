@@ -11,7 +11,7 @@ import {
 import {
   applyCategorySuggestions,
   normalizeIncomingFilePath,
-  parseReceiptLines,
+  parseReceiptWithOpenAI,
   requestTabscannerIngestion,
   resolveProductNames,
   validateReceiptMath,
@@ -22,7 +22,8 @@ const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SUPABASE_ANON_KEY = getRequiredEnv("SUPABASE_ANON_KEY");
 const TABSCANNER_API_KEY = Deno.env.get("TABSCANNER_API_KEY") ?? undefined;
 const SERPAPI_API_KEY = Deno.env.get("SERPAPI_KEY") ?? Deno.env.get("SERPAPI_API_KEY") ?? undefined;
-const PIPELINE_VERSION = 3;
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? undefined;
+const PIPELINE_VERSION = 4;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -40,6 +41,7 @@ Deno.serve(async (req) => {
     if (!forceReanalyze) {
       const cached = await readCachedAnalysis(adminClient, user.id, filePath);
       if (cached) {
+        console.log("PIPELINE_STAGE_CACHE_HIT", { user_id: user.id, file_path: filePath });
         return jsonResponse({ success: true, data: cached, meta: { source: "stored", pipeline_version: PIPELINE_VERSION } });
       }
     }
@@ -49,48 +51,71 @@ Deno.serve(async (req) => {
     const mimeType = blob.type || "application/octet-stream";
     const filename = `receipt.${filePath.split(".").pop() || "jpg"}`;
 
-    const ingested = await requestTabscannerIngestion({
-      blob,
-      filename,
-      mimeType,
-      apiKey: TABSCANNER_API_KEY,
+    console.log("PIPELINE_STAGE_1_OCR_START", { user_id: user.id, file_path: filePath });
+    const ingested = await requestTabscannerIngestion({ blob, filename, mimeType, apiKey: TABSCANNER_API_KEY });
+    console.log("PIPELINE_STAGE_1_OCR_DONE", { lines: ingested.raw_text_lines.length });
+
+    console.log("PIPELINE_STAGE_2_OPENAI_PARSE_START", { user_id: user.id, file_path: filePath });
+    const parsedItems = await parseReceiptWithOpenAI({
+      ocrText: ingested.raw_text,
+      apiKey: OPENAI_API_KEY,
     });
+    if (!parsedItems.length) {
+      return jsonResponse({
+        success: true,
+        data: { message: "Receipt analysis pipeline initializing", line_items: [] },
+        meta: { source: "initializing", pipeline_version: PIPELINE_VERSION },
+      });
+    }
+    console.log("PIPELINE_STAGE_2_OPENAI_PARSE_DONE", { parsed_items: parsedItems.length });
 
-    const parsed = parseReceiptLines(ingested);
-    const withNames = await resolveProductNames({ items: parsed.items, serpApiKey: SERPAPI_API_KEY });
+    console.log("PIPELINE_STAGE_3_NAME_RESOLUTION_START", { user_id: user.id, file_path: filePath });
+    const withNames = await resolveProductNames({ items: parsedItems, serpApiKey: SERPAPI_API_KEY, openAiKey: OPENAI_API_KEY });
     const withCategories = applyCategorySuggestions(withNames, categories);
+    console.log("PIPELINE_STAGE_3_NAME_RESOLUTION_DONE", { resolved_items: withCategories.length });
 
-    const receipt = {
-      ...parsed,
+    console.log("PIPELINE_STAGE_4_VALIDATION_START", { user_id: user.id, file_path: filePath });
+    const validation = validateReceiptMath({
       items: withCategories,
-    };
+      subtotalHint: ingested.subtotal_hint,
+      taxHint: ingested.tax_hint,
+      totalHint: ingested.total_hint,
+    });
+    console.log("PIPELINE_STAGE_4_VALIDATION_DONE", validation);
 
-    const validation = validateReceiptMath(receipt);
-    const normalizedItems = receipt.items.map((item) => ({
+    const lineItems = withCategories.map((item) => ({
       product_number: item.product_number,
-      resolved_name: item.resolved_name,
-      raw_description: item.raw_description,
+      product_name: item.product_name,
+      raw_line_text: item.raw_line_text,
       quantity: item.quantity,
       unit_price: item.unit_price,
-      line_total: item.line_total,
-      needs_review: item.needs_review || !validation.total_ok || !validation.subtotal_ok,
-      suggested_category: item.suggested_category,
+      total_price: item.total_price,
+      line_total: item.total_price,
+      category_suggestion: item.category_suggestion,
+      suggested_category: item.category_suggestion,
       discount_promotion: item.discount_promotion,
-      tax_line: item.tax_line,
-      parser_source: item.parser_source,
+      needs_review: item.needs_review || !validation.total_ok || !validation.subtotal_ok,
     }));
 
     const analysis = {
-      receipt,
-      line_items: normalizedItems,
-      tax_amount: receipt.tax,
-      receipt_total: receipt.total,
-      computed_total: Number((receipt.subtotal ?? 0) + (receipt.tax ?? 0)).toFixed(2),
+      receipt: {
+        store: ingested.store,
+        date: ingested.date,
+        subtotal: validation.subtotal,
+        tax: validation.tax,
+        total: validation.total,
+      },
+      line_items: lineItems,
+      items: lineItems,
+      tax_amount: validation.tax,
+      receipt_total: validation.total,
+      computed_total: validation.computed_total,
       totals_match: validation.total_ok && validation.subtotal_ok,
       validation,
       raw_ocr: {
         provider: "tabscanner",
         raw: ingested.raw,
+        raw_text: ingested.raw_text,
         raw_text_lines: ingested.raw_text_lines,
         structured_blocks: ingested.structured_blocks,
       },
@@ -107,6 +132,12 @@ Deno.serve(async (req) => {
     });
   } catch (error: unknown) {
     const httpError = toHttpError(error);
+    console.error("PIPELINE_ERROR", {
+      status: httpError.status,
+      message: httpError.message,
+      details: httpError.details ?? null,
+    });
+
     return jsonResponse({
       success: false,
       error: {
