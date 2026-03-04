@@ -11,9 +11,19 @@ type ParsedReceiptLine = {
 };
 
 type ReceiptItem = {
+  itemNumber?: string;
   name: string;
   price: number | null;
   qty: number;
+};
+
+type ItemResolutionDebug = {
+  originalReceiptText: string;
+  rawItemNumber: string | null;
+  cleanedItemNumber: string | null;
+  serpQuery: string | null;
+  serpResponse: any;
+  resolvedName: string;
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -84,7 +94,10 @@ Deno.serve(async (req) => {
       qty: 1,
     }));
 
-    const items = openAiParsedItems.items.length ? openAiParsedItems.items : fallbackItems;
+    const baseItems = openAiParsedItems.items.length ? openAiParsedItems.items : fallbackItems;
+    const itemResolution = await applyResolvedNamesToItems(serviceClient, baseItems, parsedLines);
+    const items = itemResolution.items;
+    debug.item_resolution = itemResolution.debug;
 
     console.log("analyze-receipt pipeline", {
       transaction_id: transactionId,
@@ -840,35 +853,41 @@ async function resolveSamsClubProductName(
   serviceClient: any,
   productCache: Record<string, string | null>,
 ): Promise<string | null> {
+  const result = await resolveSamsClubProductNameWithDebug(itemNumber, serviceClient, productCache);
+  return result.resolvedName;
+}
+
+async function resolveSamsClubProductNameWithDebug(
+  itemNumber: string,
+  serviceClient: any,
+  productCache: Record<string, string | null>,
+): Promise<{ resolvedName: string | null; cleanedItemNumber: string; serpQuery: string; serpResponse: any }> {
   const normalizedSku = normalizeProductNumber(itemNumber);
-  if (!normalizedSku) return null;
+  const serpQuery = `${normalizedSku} sams club`;
+
+  if (!normalizedSku) {
+    return { resolvedName: null, cleanedItemNumber: normalizedSku, serpQuery, serpResponse: null };
+  }
 
   if (normalizedSku in productCache) {
-    return productCache[normalizedSku];
+    return { resolvedName: productCache[normalizedSku], cleanedItemNumber: normalizedSku, serpQuery, serpResponse: { cache: "memory" } };
   }
 
   const cached = await readProductLookupCache(serviceClient, normalizedSku);
   if (cached) {
     productCache[normalizedSku] = cached;
-    return cached;
+    return { resolvedName: cached, cleanedItemNumber: normalizedSku, serpQuery, serpResponse: { cache: "database" } };
   }
 
-  const samsClubName = await lookupSamsClubNameByItemNumber(normalizedSku);
-  if (samsClubName) {
-    productCache[normalizedSku] = samsClubName;
-    await upsertProductLookupCache(serviceClient, normalizedSku, samsClubName, "sams_club_jsonld");
-    return samsClubName;
-  }
-
-  const fallbackName = await lookupProductNameBySku(normalizedSku);
-  if (fallbackName) {
-    productCache[normalizedSku] = fallbackName;
-    await upsertProductLookupCache(serviceClient, normalizedSku, fallbackName, "serpapi");
-    return fallbackName;
+  const serpResult = await lookupProductNameBySku(normalizedSku);
+  if (serpResult.name) {
+    productCache[normalizedSku] = serpResult.name;
+    await upsertProductLookupCache(serviceClient, normalizedSku, serpResult.name, "serpapi");
+    return { resolvedName: serpResult.name, cleanedItemNumber: normalizedSku, serpQuery, serpResponse: serpResult.response };
   }
 
   productCache[normalizedSku] = null;
-  return null;
+  return { resolvedName: null, cleanedItemNumber: normalizedSku, serpQuery, serpResponse: serpResult.response };
 }
 
 async function readProductLookupCache(
@@ -913,8 +932,8 @@ async function upsertProductLookupCache(
   }
 }
 
-async function lookupProductNameBySku(normalizedSku: string): Promise<string | null> {
-  if (!SERPAPI_KEY) return null;
+async function lookupProductNameBySku(normalizedSku: string): Promise<{ name: string | null; response: any }> {
+  if (!SERPAPI_KEY) return { name: null, response: { error: "Missing SERPAPI_KEY" } };
 
   const url = new URL("https://serpapi.com/search.json");
   url.searchParams.set("engine", "google_shopping");
@@ -926,7 +945,7 @@ async function lookupProductNameBySku(normalizedSku: string): Promise<string | n
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
     console.warn("serpapi lookup failed", json);
-    return null;
+    return { name: null, response: json };
   }
 
   const fromShopping = Array.isArray(json?.shopping_results)
@@ -939,41 +958,80 @@ async function lookupProductNameBySku(normalizedSku: string): Promise<string | n
 
   const title = fromShopping?.title || fromOrganic?.title || "";
   const cleanTitle = cleanupNameText(String(title));
-  return cleanTitle || null;
+  return { name: cleanTitle || null, response: json };
 }
 
-async function lookupSamsClubNameByItemNumber(normalizedSku: string): Promise<string | null> {
-  const searchUrl = `https://www.samsclub.com/s/${encodeURIComponent(normalizedSku)}`;
 
-  const searchResponse = await fetchWithTimeout(searchUrl, {
-    headers: { "User-Agent": "Mozilla/5.0" },
-  }, 12000).catch(() => null);
+async function applyResolvedNamesToItems(
+  serviceClient: any,
+  items: ReceiptItem[],
+  parsedLines: ParsedReceiptLine[],
+): Promise<{ items: ReceiptItem[]; debug: ItemResolutionDebug[] }> {
+  const productCache: Record<string, string | null> = {};
+  const lineQueue = [...parsedLines];
+  const debug: ItemResolutionDebug[] = [];
+  const resolvedItems: ReceiptItem[] = [];
 
-  if (!searchResponse?.ok) {
-    return null;
+  for (const item of items) {
+    const matchedLine = findBestParsedLineForItem(item, lineQueue);
+    const rawItemNumber = matchedLine?.productNumber || matchedLine?.normalizedProductNumber || item.itemNumber || "";
+    const cleanedItemNumber = rawItemNumber ? normalizeProductNumber(rawItemNumber) : "";
+    const originalName = String(item.name || "").trim();
+
+    let serpQuery: string | null = null;
+    let serpResponse: any = null;
+    let resolvedName = originalName;
+
+    if (cleanedItemNumber) {
+      const resolution = await resolveSamsClubProductNameWithDebug(rawItemNumber, serviceClient, productCache);
+      serpQuery = resolution.serpQuery;
+      serpResponse = resolution.serpResponse;
+      resolvedName = resolution.resolvedName || originalName;
+    }
+
+    resolvedItems.push({
+      ...item,
+      itemNumber: cleanedItemNumber || undefined,
+      name: resolvedName,
+    });
+
+    debug.push({
+      originalReceiptText: originalName,
+      rawItemNumber: rawItemNumber || null,
+      cleanedItemNumber: cleanedItemNumber || null,
+      serpQuery,
+      serpResponse,
+      resolvedName,
+    });
   }
 
-  const searchHtml = await searchResponse.text().catch(() => "");
-  const directName = extractProductNameFromJsonLd(searchHtml, normalizedSku);
-  if (directName) {
-    return directName;
+  return { items: resolvedItems, debug };
+}
+
+function findBestParsedLineForItem(item: ReceiptItem, parsedLines: ParsedReceiptLine[]): ParsedReceiptLine | null {
+  const itemName = normalizeNameForMatch(item.name || "");
+  const bestIndex = parsedLines.findIndex((line) => {
+    if (!line.productNumber) return false;
+    const lineName = normalizeNameForMatch(line.textName || "");
+    return lineName === itemName || lineName.includes(itemName) || itemName.includes(lineName);
+  });
+
+  if (bestIndex >= 0) {
+    const [line] = parsedLines.splice(bestIndex, 1);
+    return line;
   }
 
-  const productUrl = extractSamsClubProductUrl(searchHtml);
-  if (!productUrl) {
-    return null;
+  const firstSkuIndex = parsedLines.findIndex((line) => line.productNumber);
+  if (firstSkuIndex >= 0) {
+    const [line] = parsedLines.splice(firstSkuIndex, 1);
+    return line;
   }
 
-  const productResponse = await fetchWithTimeout(productUrl, {
-    headers: { "User-Agent": "Mozilla/5.0" },
-  }, 12000).catch(() => null);
+  return null;
+}
 
-  if (!productResponse?.ok) {
-    return null;
-  }
-
-  const productHtml = await productResponse.text().catch(() => "");
-  return extractProductNameFromJsonLd(productHtml, normalizedSku);
+function normalizeNameForMatch(name: string): string {
+  return String(name || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 function extractProductNameFromJsonLd(html: string, normalizedSku: string): string | null {

@@ -1973,9 +1973,21 @@ async function analyzeSplitReceipt(){
       transaction_id: item.id,
       receipt_url: item.receipt_url
     };
-    console.log("analyze-receipt payload", payload);
+    console.log("analyze-receipt payload:", payload);
 
     const { response, result } = await invokeEdgeFunction("analyze-receipt", payload);
+
+    const receiptItemDebug = Array.isArray(result?.debug?.item_resolution) ? result.debug.item_resolution : [];
+    receiptItemDebug.forEach((entry) => {
+      console.group("Receipt Item Debug");
+      console.log("Original receipt text:", entry?.originalReceiptText ?? null);
+      console.log("Raw item number:", entry?.rawItemNumber ?? null);
+      console.log("Cleaned item number:", entry?.cleanedItemNumber ?? null);
+      console.log("SERPAPI query:", entry?.serpQuery ?? null);
+      console.log("SERPAPI response:", entry?.serpResponse ?? null);
+      console.log("Resolved product name:", entry?.resolvedName ?? null);
+      console.groupEnd();
+    });
 
     if(!response?.ok || !result?.success){
       console.warn("analyze-receipt failed", { status: response?.status, result });
