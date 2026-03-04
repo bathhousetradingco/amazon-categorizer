@@ -8,7 +8,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") || "";
 
-const ITEM_NUMBER_LINE_PATTERN = /(?:^|\b)(0\d{8,11}|\d{9,12})(?:\b|$)/g;
+const ITEM_NUMBER_LINE_PATTERN = /^0\d{9}\b/;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -246,7 +246,6 @@ function tryParseJson(value: string): Record<string, unknown> | null {
 }
 
 function hasItemNumber(line: string): boolean {
-  ITEM_NUMBER_LINE_PATTERN.lastIndex = 0;
   return ITEM_NUMBER_LINE_PATTERN.test(line);
 }
 
@@ -254,10 +253,8 @@ function extractItemNumbersFromLines(lines: string[]): string[] {
   const found: string[] = [];
 
   for (const line of lines) {
-    const numbers = line.match(ITEM_NUMBER_LINE_PATTERN) || [];
-    for (const number of numbers) {
-      found.push(number);
-    }
+    const number = line.match(ITEM_NUMBER_LINE_PATTERN)?.[0];
+    if (number) found.push(number);
   }
 
   return dedupeItemNumbers(found);
@@ -266,7 +263,8 @@ function extractItemNumbersFromLines(lines: string[]): string[] {
 function dedupeItemNumbers(values: unknown[]): string[] {
   const normalized = values
     .map((value) => String(value || "").replace(/\D/g, ""))
-    .filter((value) => value.length >= 9 && value.length <= 12);
+    .filter((value) => /^0\d{9}$/.test(value))
+    .map((value) => value.slice(1));
 
   return [...new Set(normalized)];
 }
