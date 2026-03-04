@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
     };
 
     debug.stage = "openai_parse";
-    const openAiParsedItems = await parseReceiptItemsWithOpenAI(extraction.fullText, extraction.lines);
+    const openAiParsedItems = await parseReceiptItemsWithOpenAI(extraction.fullText, extraction.lines, signedUrl);
     debug.openai = {
       items_count: openAiParsedItems.items.length,
       raw_preview: openAiParsedItems.rawResponse.slice(0, 500),
@@ -229,7 +229,8 @@ async function verifyReceiptDownload(signedUrl: string): Promise<Record<string, 
 
 async function extractReceiptTextAndLines(signedUrl: string): Promise<{ fullText: string; lines: string[] }> {
   if (!TABSCANNER_API_KEY) {
-    throw new HttpError(500, "TABSCANNER_API_KEY is not configured");
+    console.warn("tabscanner disabled: TABSCANNER_API_KEY is not configured");
+    return { fullText: "", lines: [] };
   }
 
   const payload = {
@@ -251,6 +252,14 @@ async function extractReceiptTextAndLines(signedUrl: string): Promise<{ fullText
   const tabscannerApiError = extractTabscannerApiError(json);
   if (!response.ok) {
     throw new HttpError(422, "No receipt items detected", json);
+  }
+
+  if (isTabscannerParserError(json)) {
+    console.warn("tabscanner parser error, continuing with OpenAI image fallback", {
+      status: response.status,
+      body: json,
+    });
+    return { fullText: "", lines: [] };
   }
 
   if (tabscannerApiError) {
@@ -294,7 +303,7 @@ function extractTabscannerApiError(payload: any): string | null {
   return authError || null;
 }
 
-async function parseReceiptItemsWithOpenAI(fullText: string, lines: string[]): Promise<{
+async function parseReceiptItemsWithOpenAI(fullText: string, lines: string[], signedUrl: string): Promise<{
   items: ReceiptItem[];
   rawResponse: string;
   parseError: string | null;
@@ -304,11 +313,11 @@ async function parseReceiptItemsWithOpenAI(fullText: string, lines: string[]): P
   }
 
   const trimmedText = String(fullText || "").trim();
-  if (!trimmedText && !lines.length) {
-    return { items: [], rawResponse: "", parseError: "No OCR text to parse" };
+  if (!trimmedText && !lines.length && !signedUrl) {
+    return { items: [], rawResponse: "", parseError: "No OCR text or image to parse" };
   }
 
-  const prompt = `Extract receipt line items from OCR text and return STRICT JSON only using this schema:
+  const prompt = `Extract receipt line items and return STRICT JSON only using this schema:
 {
   "items": [
     { "name": "", "price": 0, "qty": 1 }
@@ -322,8 +331,15 @@ Rules:
 - price must be numeric if visible, otherwise null.
 - If no items are found, return {"items":[]}.
 
+You may use OCR_TEXT and/or the receipt image to identify items.
+
 OCR_TEXT:
 ${trimmedText || lines.join("\n")}`;
+
+  const inputContent: Array<Record<string, unknown>> = [{ type: "input_text", text: prompt }];
+  if (signedUrl) {
+    inputContent.push({ type: "input_image", image_url: signedUrl });
+  }
 
   const openaiRes = await fetchWithTimeout("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -333,7 +349,7 @@ ${trimmedText || lines.join("\n")}`;
     },
     body: JSON.stringify({
       model: "gpt-4.1-mini",
-      input: [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
+      input: [{ role: "user", content: inputContent }],
       text: {
         format: {
           type: "json_schema",
@@ -618,6 +634,22 @@ function collectPayloadCandidates(payload: any): any[] {
   return [payload];
 }
 
+function isTabscannerParserError(payload: any): boolean {
+  const messageCandidates = [
+    payload?.error,
+    payload?.message,
+    payload?.detail,
+    payload?.result?.error,
+    payload?.result?.message,
+    payload?.result?.detail,
+  ]
+    .filter((value) => typeof value === "string")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+
+  return messageCandidates.some((value) => /error\s*form\s*parser|errorformparser|form\s*parser/i.test(value));
+}
+
 function findFirstDeepString(root: any, keys: string[]): string | null {
   const keySet = new Set(keys.map((key) => key.toLowerCase()));
   let fallback: string | null = null;
@@ -760,6 +792,7 @@ function isNonItemLine(line: string): boolean {
     "STORE",
     "TERMINAL",
     "AUTH",
+    "ERRORFORMPARSER",
   ];
 
   return blocked.some((token) => upper.includes(token));

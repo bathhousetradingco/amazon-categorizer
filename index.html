@@ -1988,7 +1988,10 @@ ${result.reason}` : "";
     }
 
     SplitState.detectedReceiptItems = Array.isArray(result.items)
-      ? result.items.map((entry) => typeof entry === "string" ? entry : entry?.name).filter(Boolean)
+      ? result.items
+          .map((entry) => typeof entry === "string" ? entry : entry?.name)
+          .map((name) => String(name || "").trim())
+          .filter((name) => name && !/error\s*form\s*parser|errorformparser/i.test(name))
       : [];
 
     if(!SplitState.detectedReceiptItems.length){
