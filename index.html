@@ -2054,6 +2054,45 @@ function calculateSplitStats(item){
   return { allocated, remaining };
 }
 
+function findAutoTaxSplitIndex(item){
+  if(!item?.Splits?.length) return -1;
+  return item.Splits.findIndex((split) => split?.AutoDetectedTax === true);
+}
+
+function syncDetectedTaxSplit(item, taxAmount){
+  if(!item) return false;
+  if(!item.Splits) item.Splits = [];
+
+  const taxCents = toCents(taxAmount);
+  const index = findAutoTaxSplitIndex(item);
+
+  if(!Number.isFinite(taxCents) || taxCents <= 0){
+    if(index >= 0){
+      item.Splits.splice(index, 1);
+      if(!item.Splits.length) item.Category = "";
+      return true;
+    }
+    return false;
+  }
+
+  const normalizedTaxAmount = centsToAmount(taxCents);
+
+  if(index >= 0){
+    const currentCents = Math.round(parseFloat(item.Splits[index].Amount || 0) * 100);
+    if(currentCents === taxCents) return false;
+    item.Splits[index].Amount = normalizedTaxAmount;
+    return true;
+  }
+
+  item.Splits.push({
+    Category: "Line Items",
+    Amount: normalizedTaxAmount,
+    AutoDetectedTax: true
+  });
+  item.Category = "SPLIT";
+  return true;
+}
+
 function renderSplitTotals(item){
   const { allocated, remaining } = calculateSplitStats(item);
   const remainingClass = Math.abs(remaining) < 0.01 ? "done zeroFlash" : remaining <= item.Amount * 0.2 ? "nearDone" : "";
@@ -2252,6 +2291,12 @@ async function analyzeSplitReceipt(){
     SplitState.detectedReceiptSubtotal = receiptTotals.subtotal;
     SplitState.detectedReceiptTotal = receiptTotals.receiptTotal;
     SplitState.receiptMathValidation = receiptMathValidation;
+
+    const taxSplitChanged = syncDetectedTaxSplit(item, receiptTotals.tax);
+    if(taxSplitChanged){
+      await persistSplitItem(item);
+    }
+
     openDetectedReceiptItemsModal();
   } catch (error) {
     console.error("Receipt analysis error:", error);
