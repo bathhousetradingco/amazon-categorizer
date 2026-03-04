@@ -1869,6 +1869,7 @@ const SplitState = {
   manualCategory: null,
   highlightedIndex: null,
   detectedItemNumbers: [],
+  detectedParsedItems: [],
   receiptItemDrafts: {},
   receiptItemEditorOpen: {},
   receiptExpanded: false,
@@ -1987,6 +1988,16 @@ async function analyzeSplitReceipt(){
     const itemNumbers = Array.isArray(result?.item_numbers)
       ? result.item_numbers.map((value) => String(value).trim()).filter(Boolean)
       : [];
+    const parsedItems = Array.isArray(result?.parsed_items)
+      ? result.parsed_items
+        .map((entry) => ({
+          product_number: String(entry?.product_number || "").trim(),
+          quantity: Number(entry?.quantity || 0),
+          unit_price: Number(entry?.unit_price || 0),
+          total_price: Number(entry?.total_price || 0)
+        }))
+        .filter((entry) => entry.product_number)
+      : [];
 
     console.group("RAW RECEIPT TEXT");
     console.log(rawReceiptText);
@@ -1995,6 +2006,7 @@ async function analyzeSplitReceipt(){
     console.log("TOTAL LINES DETECTED:", totalLinesDetected);
     console.log("LINES MATCHING ITEM NUMBER PATTERN:", matchingLines);
     console.log("ITEM NUMBERS FOUND:", itemNumbers);
+    console.log("PARSED PURCHASE LINES:", parsedItems);
     console.log("Detected Item Numbers:", itemNumbers);
 
     if(!response?.ok || !result?.success){
@@ -2005,6 +2017,7 @@ async function analyzeSplitReceipt(){
     }
 
     SplitState.detectedItemNumbers = itemNumbers;
+    SplitState.detectedParsedItems = parsedItems;
     openDetectedReceiptItemsModal();
   } catch (error) {
     console.error("Receipt analysis error:", error);
@@ -2018,8 +2031,17 @@ function openDetectedReceiptItemsModal(){
   if(!item) return;
 
   const itemNumbers = SplitState.detectedItemNumbers || [];
+  const parsedItemsByProduct = new Map(
+    (SplitState.detectedParsedItems || []).map((entry) => [entry.product_number, entry])
+  );
   const listHtml = itemNumbers.length
-    ? `<div style="display:grid;gap:6px;">${itemNumbers.map((num) => `<div><code>${num}</code></div>`).join("")}</div>`
+    ? `<div style="display:grid;gap:8px;">${itemNumbers.map((num) => {
+      const parsed = parsedItemsByProduct.get(num);
+      const purchaseLine = parsed
+        ? `<span class="small" style="margin-left:8px;color:#4b5563;">${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}</span>`
+        : "";
+      return `<div style="display:flex;align-items:baseline;flex-wrap:wrap;"><code>${num}</code>${purchaseLine}</div>`;
+    }).join("")}</div>`
     : `<div class="small">No item numbers detected.</div>`;
 
   modalTitle.innerText = "Detected Items";
