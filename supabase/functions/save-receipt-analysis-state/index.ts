@@ -8,7 +8,7 @@ import {
   parseJsonBody,
   toHttpError,
 } from "../_shared/http.ts";
-import { normalizeIncomingFilePath } from "../_shared/receipt.ts";
+import { normalizeIncomingFilePath } from "../_shared/receipt-pipeline.ts";
 
 const SUPABASE_URL = getRequiredEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
