@@ -816,7 +816,9 @@ async function aiCleanupNames(items: Array<{ name: string; sku: string | null }>
 }
 
 function extractNameWithoutProductNumber(rawLine: string): string | null {
-  const withoutProductNumber = rawLine.replace(/^\s*(?:#|item\s*#?\s*)?[0-9A-Za-z-]{6,20}\s+/, "").trim();
+  const withoutProductNumber = rawLine
+    .replace(/^\s*(?:#|item\s*#?\s*)?(?=[0-9-]{6,20}\b)[0-9-]{6,20}\s+/, "")
+    .trim();
   return withoutProductNumber || null;
 }
 
@@ -841,9 +843,18 @@ function validateSamsUrlSearchResult(
 ): { accepted: boolean; reason: string } {
   const link = match.link ?? "";
   if (!isLikelySamsProductUrl(link)) return { accepted: false, reason: "invalid_sams_product_url" };
-  if (!urlContainsItemNumber(link, normalizedItemNumber, rawItemNumber)) return { accepted: false, reason: "missing_item_number_in_url" };
+  const hasItemNumberInUrl = urlContainsItemNumber(link, normalizedItemNumber, rawItemNumber);
+  const queryTargetsItemNumber = queryContainsItemNumber(match.query, normalizedItemNumber, rawItemNumber);
+  if (!hasItemNumberInUrl && !queryTargetsItemNumber) return { accepted: false, reason: "missing_item_number_signal" };
   if (!isAcceptableSamsProductTitle(match.title)) return { accepted: false, reason: "blocked_title" };
-  return { accepted: true, reason: "url_contains_id" };
+  return { accepted: true, reason: hasItemNumberInUrl ? "url_contains_id" : "query_contains_id" };
+}
+
+function queryContainsItemNumber(query: string | null, normalized: string, raw: string | null): boolean {
+  const lowered = String(query ?? "").toLowerCase();
+  if (!lowered) return false;
+  const variants = buildItemNumberVariants(normalized, raw);
+  return variants.some((token) => lowered.includes(token));
 }
 
 function isLikelySamsProductUrl(url: string): boolean {
