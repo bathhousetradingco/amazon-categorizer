@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v3
@@ -22,13 +23,14 @@ jobs:
       - name: Validate Edge Functions
         run: deno check supabase/functions/**/*.ts
 
-      - run: |
+      - name: Deploy Edge Functions (API mode, no Docker pull)
+        run: |
           # JWT behavior is controlled in supabase/config.toml.
-          supabase functions deploy analyze-receipt --project-ref xbayklklcdohewvnbglq
-          supabase functions deploy ask-ai --project-ref xbayklklcdohewvnbglq
-          supabase functions deploy create-link-token --project-ref xbayklklcdohewvnbglq
-          supabase functions deploy exchange-token --project-ref xbayklklcdohewvnbglq
-          supabase functions deploy plaid-webhook --project-ref xbayklklcdohewvnbglq
-          supabase functions deploy sync-plaid-transactions --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy analyze-receipt --use-api --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy ask-ai --use-api --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy create-link-token --use-api --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy exchange-token --use-api --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy plaid-webhook --use-api --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy sync-plaid-transactions --use-api --project-ref xbayklklcdohewvnbglq
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
