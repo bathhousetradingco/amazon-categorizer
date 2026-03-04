@@ -242,13 +242,22 @@ async function extractReceiptTextAndLines(signedUrl: string): Promise<{ fullText
     headers: {
       "Content-Type": "application/json",
       "X-Api-Key": TABSCANNER_API_KEY,
+      apikey: TABSCANNER_API_KEY,
     },
     body: JSON.stringify(payload),
   }, 25000);
 
   const json = await response.json().catch(() => ({}));
+  const tabscannerApiError = extractTabscannerApiError(json);
   if (!response.ok) {
     throw new HttpError(422, "No receipt items detected", json);
+  }
+
+  if (tabscannerApiError) {
+    throw new HttpError(500, `Tabscanner authentication failed: ${tabscannerApiError}`, {
+      status: response.status,
+      body: json,
+    });
   }
 
   const fullText = extractRawTextFromTabscanner(json);
@@ -263,6 +272,26 @@ async function extractReceiptTextAndLines(signedUrl: string): Promise<{ fullText
   });
 
   return { fullText, lines };
+}
+
+function extractTabscannerApiError(payload: any): string | null {
+  const messageCandidates = [
+    payload?.error,
+    payload?.message,
+    payload?.detail,
+    payload?.result?.error,
+    payload?.result?.message,
+    payload?.result?.detail,
+  ]
+    .filter((value) => typeof value === "string")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+
+  const authError = messageCandidates.find((value) =>
+    /api key not found|invalid api key|unauthorized|forbidden|auth/i.test(value)
+  );
+
+  return authError || null;
 }
 
 async function parseReceiptItemsWithOpenAI(fullText: string, lines: string[]): Promise<{
