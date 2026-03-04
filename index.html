@@ -2029,6 +2029,9 @@ ${result.reason}` : "";
       : [];
 
     SplitState.detectedReceiptItems = normalizedItems;
+    console.group("UI RECEIPT ITEMS");
+    console.log(SplitState.detectedReceiptItems);
+    console.groupEnd();
     SplitState.receiptItemDrafts = {};
     SplitState.receiptItemEditorOpen = {};
 
