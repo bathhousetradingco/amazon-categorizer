@@ -562,6 +562,13 @@ margin-top:8px;
   opacity:.5;
   cursor:not-allowed;
 }
+
+.breakdownTitleRow {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
 .topActionStack {
   display:grid;
   gap:8px;
@@ -3625,7 +3632,6 @@ goNext();
 
 function showCategoryBreakdown(categoryName){
 
-  modalTitle.innerText = categoryName + " Transactions";
   currentCategoryBreakdownRows = [];
   currentCategoryBreakdownName = categoryName;
   let html = "";
@@ -3691,15 +3697,16 @@ function showCategoryBreakdown(categoryName){
   });
 
   const exportDisabled = currentCategoryBreakdownRows.length === 0 ? "disabled" : "";
-  const toolbar = `
-    <div class="breakdownToolbar">
+  modalTitle.innerHTML = `
+    <div class="breakdownTitleRow">
+      <span>${categoryName} Transactions</span>
       <button class="breakdownExportBtn" onclick="exportCurrentCategoryBreakdown()" ${exportDisabled}>Export to Excel</button>
     </div>
   `;
 
   if(!html) html = "No transactions in this category.";
 
-  modalContent.innerHTML = toolbar + html;
+  modalContent.innerHTML = html;
   openModal();
 }
 
@@ -3725,9 +3732,7 @@ function exportCurrentCategoryBreakdown(){
     "Date": toExcelDateValue(row.Date),
     "Vendor / Description": row.VendorDescription || "",
     "Category": row.Category || "",
-    "Amount": Number(row.Amount) || 0,
-    "Notes": row.Notes || "",
-    "Receipt Attached": !!row.ReceiptAttached
+    "Amount": Number(row.Amount) || 0
   }));
 
   const ws = XLSX.utils.json_to_sheet(rows);
