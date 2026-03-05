@@ -330,6 +330,7 @@ margin-top:8px;
   border: 1px solid var(--border);
   border-radius: 14px;
   padding:12px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   display:flex;
   gap:10px;
   align-items:center;
@@ -503,11 +504,25 @@ margin-top:8px;
       </select>
     </label>
     <label>
-      Transaction Date
-      <input type="date" id="dateFilter" onchange="applyDateFilter()">
+      Start Date
+      <input type="date" id="startDateFilter" onchange="applyDateFilter()">
+    </label>
+    <label>
+      End Date
+      <input type="date" id="endDateFilter" onchange="applyDateFilter()">
+    </label>
+    <label>
+      Transaction Type
+      <select id="transactionFilter" onchange="applyTransactionTypeFilter()">
+        <option value="all">All Transactions</option>
+        <option value="uncategorized">Show Only Uncategorized</option>
+        <option value="categorized">Show Only Categorized</option>
+        <option value="with_receipt">Transactions with Receipt</option>
+        <option value="without_receipt">Transactions without Receipt</option>
+      </select>
     </label>
   </div>
-  <button id="clearDateBtn" class="category-btn" style="background:#6b7280; margin-top:8px; display:none;" onclick="clearDateFilter()">Clear Date Filter</button>
+  <button id="clearDateBtn" class="category-btn" style="background:#6b7280; margin-top:8px; display:none;" onclick="clearDateFilter()">Clear Filters</button>
 
   <div class="progress-bar-container">
     <div id="progressBar" class="progress-bar"></div>
@@ -517,9 +532,9 @@ margin-top:8px;
 </div>
 
 <div class="panel appCard integratedCard">
+  <div id="currentCategory" class="small"></div>
   <h3 id="cardTitle"></h3>
   <div id="cardMeta" class="small"></div>
-  <div id="currentCategory" class="small"></div>
   <div id="splitSummary" class="lineItemsPanel"></div>
 
   <button onclick="resetSplits()" style="background:#c62828; color:white; padding:10px 14px; border-radius:10px; margin-top:10px; width:100%;">
@@ -621,6 +636,21 @@ const AppState = {
   get isModalOpen(){ return modalOverlay.style.display === "flex"; }
 };
 
+let modalBackAction = null;
+function setModalBackAction(action){
+  modalBackAction = typeof action === "function" ? action : null;
+}
+
+function dismissModalToContext(){
+  if(typeof modalBackAction === "function") {
+    const action = modalBackAction;
+    closeModal();
+    window.setTimeout(() => action(), 0);
+    return;
+  }
+  closeModal();
+}
+
 // API LAYER
 const Api = {
   async updateTransaction(id, payload){
@@ -650,7 +680,9 @@ let showOnlyUncategorized=false;
 let activeSearchFilter=null;
 let splitMode = false;
 let activeYearFilter = null;
-let activeDateFilter = null;
+let activeStartDateFilter = null;
+let activeEndDateFilter = null;
+let activeTransactionTypeFilter = "all";
 let aiContext = null; 
 // null = normal transaction
 // { type: "receipt", index: X } = receipt item mode
@@ -1239,19 +1271,41 @@ showCard();
 }
 
 function applyDateFilter(){
-  const val = document.getElementById("dateFilter").value;
-  activeDateFilter = val || null;
+  const startVal = document.getElementById("startDateFilter")?.value || "";
+  const endVal = document.getElementById("endDateFilter")?.value || "";
+  activeStartDateFilter = startVal || null;
+  activeEndDateFilter = endVal || null;
   currentIndex = 0;
-  document.getElementById("clearDateBtn").style.display = activeDateFilter ? "block" : "none";
+  const hasDateRange = !!(activeStartDateFilter || activeEndDateFilter);
+  const hasTypeFilter = (activeTransactionTypeFilter || "all") !== "all";
+  document.getElementById("clearDateBtn").style.display = (hasDateRange || hasTypeFilter) ? "block" : "none";
+  updateTotals();
+  updateProgress();
+  showCard();
+}
+
+function applyTransactionTypeFilter(){
+  const val = document.getElementById("transactionFilter")?.value || "all";
+  activeTransactionTypeFilter = val;
+  currentIndex = 0;
+  const hasDateRange = !!(activeStartDateFilter || activeEndDateFilter);
+  const hasTypeFilter = val !== "all";
+  document.getElementById("clearDateBtn").style.display = (hasDateRange || hasTypeFilter) ? "block" : "none";
   updateTotals();
   updateProgress();
   showCard();
 }
 
 function clearDateFilter(){
-  activeDateFilter = null;
-  const dateInput = document.getElementById("dateFilter");
-  if(dateInput) dateInput.value = "";
+  activeStartDateFilter = null;
+  activeEndDateFilter = null;
+  activeTransactionTypeFilter = "all";
+  const startDateInput = document.getElementById("startDateFilter");
+  const endDateInput = document.getElementById("endDateFilter");
+  const transactionTypeInput = document.getElementById("transactionFilter");
+  if(startDateInput) startDateInput.value = "";
+  if(endDateInput) endDateInput.value = "";
+  if(transactionTypeInput) transactionTypeInput.value = "all";
   document.getElementById("clearDateBtn").style.display = "none";
   currentIndex = 0;
   updateTotals();
@@ -1548,6 +1602,8 @@ alert("Receipt saved successfully.");
 
 async function openReceiptViewerModal(item, backAction = "", title = "Receipt Preview"){
 
+setModalBackAction(backAction ? () => { try { eval(backAction); } catch(_){} } : null);
+
 if(!item?.id) return;
 
 if(!item.receipt_url){
@@ -1668,12 +1724,28 @@ if(activeYearFilter){
   });
 }
 
-if(activeDateFilter){
+if(activeStartDateFilter || activeEndDateFilter){
   filtered = filtered.filter(i=>{
     const d = data[i];
     if(!d.Date) return false;
     const normalized = d.Date.toString().slice(0,10);
-    return normalized === activeDateFilter;
+    if(activeStartDateFilter && normalized < activeStartDateFilter) return false;
+    if(activeEndDateFilter && normalized > activeEndDateFilter) return false;
+    return true;
+  });
+}
+
+if(activeTransactionTypeFilter && activeTransactionTypeFilter !== "all"){
+  filtered = filtered.filter(i=>{
+    const d = data[i];
+    const hasCategory = !!(d.Category && String(d.Category).trim());
+    const hasReceipt = !!d.receipt_url;
+
+    if(activeTransactionTypeFilter === "uncategorized") return !hasCategory;
+    if(activeTransactionTypeFilter === "categorized") return hasCategory;
+    if(activeTransactionTypeFilter === "with_receipt") return hasReceipt;
+    if(activeTransactionTypeFilter === "without_receipt") return !hasReceipt;
+    return true;
   });
 }
 
@@ -1752,8 +1824,7 @@ div.innerHTML = `
       <button class="category-btn" style="background:#1e3a8a;" onclick="openCategoryModal()">Choose Category</button>
       <button class="category-btn" style="background:#ff9800;" onclick="openSplitModal()">Split Transaction</button>
     </div>
-    <div class="inlineHint">All categories are still available in the chooser, now in a compact list.</div>
-    <button id="filterToggle" class="category-btn filterBtn" onclick="toggleFilter()">Show Only Uncategorized</button>
+    <button class="category-btn" style="background:#000;" onclick="askAI()">Ask AI</button>
   </div>
 `;
 }
@@ -1770,6 +1841,7 @@ function generateCategoryButtonsForAction(actionName, actionArgs = []){
   const serializedArgs = actionArgs.map((arg) => `'${escapeForSingleQuote(arg)}'`).join(", ");
   return `
     <div style="padding:10px; display:flex; flex-direction:column; gap:8px;">
+      <button class="touchButton" type="button" onclick="dismissModalToContext()" style="background:#6b7280;color:#fff;">← Back</button>
       ${categories.map(c => `
         <div class="categoryPickerRow">
           <button class="category-btn ${c.class}"
@@ -1785,6 +1857,7 @@ function generateCategoryButtonsForAction(actionName, actionArgs = []){
 }
 
 function openCategoryModal(){
+  setModalBackAction(null);
   aiContext = null;
   modalTitle.innerText = "Choose Category";
   modalContent.innerHTML = generateCategoryButtonsForAction("selectCategory");
@@ -2141,6 +2214,7 @@ function renderSplitItems(item){
 }
 
 async function openSplitModal(){
+  setModalBackAction(null);
   splitMode = false;
   SplitState.receiptExpanded = false;
   const item = data[currentIndex];
@@ -2188,6 +2262,7 @@ async function analyzeSplitReceipt(){
   try {
     modalTitle.innerText = "Analyzing Receipt";
     modalContent.innerHTML = `<div class="small" style="padding:14px;">Extracting item numbers…</div>`;
+    setModalBackAction(() => openSplitModal());
     openModal();
 
     const payload = {
@@ -2319,6 +2394,7 @@ async function analyzeSplitReceipt(){
 }
 
 function openDetectedReceiptItemsModal(){
+  setModalBackAction(() => openSplitModal());
   const item = data[currentIndex];
   if(!item) return;
 
@@ -2357,20 +2433,23 @@ function openDetectedReceiptItemsModal(){
         : null);
       const amount = getDetectedItemAmount(num);
       const assigned = getAssignedForItem(num);
+      const assignedCategories = (item.Splits || []).filter((split) => String(split?.SourceProductNumber || "") === String(num)).map((split) => split?.Category).filter(Boolean);
+      const displayCategory = assignedCategories.length ? assignedCategories[assignedCategories.length - 1] : "Uncategorized";
       const purchaseLine = parsed
         ? `${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}`
         : null;
       return `
         <div class="splitItemRow">
+          <div><span class="currentCategoryBadge" style="margin-top:0;">${displayCategory}</span></div>
           <div class="splitItemMeta">
             <strong><code>${num}</code></strong>
             <div class="small">${amount ? Utils.money(amount) : "No total price detected"}</div>
           </div>
           <div class="small">${purchaseLine || "Quantity/price details unavailable"}</div>
-          ${assigned > 0 ? `<div class="small" style="color:#2e7d32;">Assigned so far: ${Utils.money(assigned)}</div>` : ""}
           <div class="splitItemActions">
             <button class="touchButton" style="background:#1e3a8a;color:#fff;" onclick="openDetectedItemCategoryModal('${escapeForSingleQuote(num)}')" ${amount ? "" : "disabled"}>Choose Category</button>
             <button class="touchButton" style="background:#000;color:#fff;" onclick="askAIForDetectedItem('${escapeForSingleQuote(num)}')">Ask AI</button>
+            ${assigned > 0 ? `<button class="touchButton" style="background:#0f766e;color:#fff;" disabled>Assigned ${Utils.money(assigned)}</button>` : ""}
           </div>
         </div>
       `;
@@ -2403,6 +2482,7 @@ function openDetectedReceiptItemsModal(){
 }
 
 function openDetectedItemCategoryModal(itemNumber){
+  setModalBackAction(() => openDetectedReceiptItemsModal());
   SplitState.selectedDetectedItem = itemNumber;
   modalTitle.innerText = `Choose Category • ${itemNumber}`;
   modalContent.innerHTML = generateCategoryButtonsForAction("applyDetectedItemCategory", [itemNumber]);
@@ -2452,6 +2532,7 @@ function askAIForDetectedItem(itemNumber){
 }
 
 function openManualSplitModal(){
+  setModalBackAction(() => openSplitModal());
   SplitState.manualAmount = 0;
   SplitState.manualCategory = null;
   const item = data[currentIndex];
@@ -3195,12 +3276,13 @@ const modalSwipeState = {
   dragY: 0,
   tracking: false,
   lockedToScroll: false,
-  activeScroller: null
+  activeScroller: null,
+  startedInHeader: false
 };
 
-const MODAL_SWIPE_DISTANCE_PX = 96;
-const MODAL_SWIPE_VELOCITY_PX_PER_MS = 0.65;
-const MODAL_SWIPE_MIN_DRAG_PX = 10;
+const MODAL_SWIPE_DISTANCE_PX = 140;
+const MODAL_SWIPE_VELOCITY_PX_PER_MS = 0.9;
+const MODAL_SWIPE_MIN_DRAG_PX = 18;
 const MODAL_SWIPE_RESISTANCE = 0.42;
 
 function getScrollableParent(target, limitEl){
@@ -3242,7 +3324,7 @@ function animateModalCloseFromSwipe(sheet){
   });
   window.setTimeout(() => {
     resetModalSheetStyles(sheet);
-    closeModal();
+    dismissModalToContext();
   }, 220);
 }
 
@@ -3261,6 +3343,7 @@ function closeModal(){
   modalContent.innerHTML = "";
   document.body.style.overflow = "";
   closeNumericKeypad(true);
+  modalBackAction = null;
   const sheet = document.querySelector('.modalBox');
   if(sheet) resetModalSheetStyles(sheet);
 }
@@ -3280,8 +3363,10 @@ function initModalSwipeClose(){
     modalSwipeState.lastTime = modalSwipeState.startTime;
     modalSwipeState.dragY = 0;
     modalSwipeState.tracking = true;
+    const sheetRect = sheet.getBoundingClientRect();
+    modalSwipeState.startedInHeader = !!e.target.closest(".modalDragHandle") || (t.clientY - sheetRect.top) <= 110;
     modalSwipeState.activeScroller = getScrollableParent(e.target, sheet);
-    modalSwipeState.lockedToScroll = (modalSwipeState.activeScroller?.scrollTop || 0) > 0;
+    modalSwipeState.lockedToScroll = (modalSwipeState.activeScroller?.scrollTop || 0) > 0 || !modalSwipeState.startedInHeader;
   }, { passive: true });
 
   sheet.addEventListener('touchmove', (e) => {
@@ -3297,6 +3382,7 @@ function initModalSwipeClose(){
     if(dx > Math.abs(dy)) return;
     if(dy <= 0) return;
 
+    if(!modalSwipeState.startedInHeader) return;
     const scrollerTop = (modalSwipeState.activeScroller?.scrollTop || 0) <= 0;
     if(modalSwipeState.lockedToScroll || !scrollerTop) return;
 
@@ -3329,6 +3415,7 @@ function initModalSwipeClose(){
     modalSwipeState.tracking = false;
     modalSwipeState.lockedToScroll = false;
     modalSwipeState.activeScroller = null;
+    modalSwipeState.startedInHeader = false;
     modalSwipeState.dragY = 0;
   }, { passive: true });
 
@@ -3337,16 +3424,17 @@ function initModalSwipeClose(){
     modalSwipeState.tracking = false;
     modalSwipeState.lockedToScroll = false;
     modalSwipeState.activeScroller = null;
+    modalSwipeState.startedInHeader = false;
     modalSwipeState.dragY = 0;
   }, { passive: true });
 }
 
 modalOverlay.addEventListener("click",function(e){
-if(e.target===modalOverlay) closeModal();
+if(e.target===modalOverlay) dismissModalToContext();
 });
 
 document.addEventListener("keydown",function(e){
-if(e.key==="Escape") closeModal();
+if(e.key==="Escape") dismissModalToContext();
 });
 
 /* Show Card */
@@ -3388,32 +3476,18 @@ function showCard(){
   cardTitle.innerText = item.Title || item.Vendor || "Untitled Transaction";
 
   cardMeta.innerHTML =
-  (item.Vendor ? `Vendor: ${item.Vendor}<br>` : "") +
-  (item.Institution ? `Account: ${item.Institution}<br>` : "") +
-  (item.Date ? `Date: ${item.Date}<br>` : "") +
-  `Amount: $${item.Amount.toFixed(2)}<br>` +
-  (item.receipt_url ? 
-    `📎 Receipt Attached<br>
-     <button class="viewBtn" onclick="viewReceipt()">View Receipt</button>
-     <button class="removeBtn" onclick="removeReceipt()">Remove Attachment</button><br>` 
-    : ""
-  ) +
-  `<label class="receiptUploadLabel" for="receiptUploadInput">📎 Upload / Replace Receipt</label>
-  <input id="receiptUploadInput" class="receiptUploadInput" type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
-
-  <button onclick="askAI()" style="
-    background:#000;
-    color:white;
-    padding:10px;
-    border-radius:10px;
-    margin-top:8px;
-    width:100%;
-  ">
-    🤖 Ask AI
-  </button>
-
-  <button class="removeBtn" onclick="deleteTransaction()">Delete Transaction</button>
-  `;
+  `<div style="display:grid;gap:8px;">
+    <div>${item.Vendor ? `Vendor: ${item.Vendor}<br>` : ""}${item.Institution ? `Account: ${item.Institution}<br>` : ""}${item.Date ? `Date: ${item.Date}<br>` : ""}Amount: $${item.Amount.toFixed(2)}</div>
+    <div class="categoryPickerActions">
+      <button class="touchButton" style="background:#1e3a8a;color:#fff;" onclick="openCategoryModal()">Choose Category</button>
+      <button class="touchButton" style="background:#ff9800;color:#fff;" onclick="openSplitModal()">Split Transaction</button>
+    </div>
+    <button class="touchButton" onclick="askAI()" style="background:#000;color:white;">🤖 Ask AI</button>
+    ${item.receipt_url ? `<button class="viewBtn touchButton" onclick="viewReceipt()">View Receipt</button><button class="removeBtn touchButton" onclick="removeReceipt()">Remove Attachment</button>` : ""}
+    <label class="receiptUploadLabel" for="receiptUploadInput">📎 Upload / Replace Receipt</label>
+    <input id="receiptUploadInput" class="receiptUploadInput" type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
+    <button class="removeBtn touchButton" onclick="deleteTransaction()">Delete Transaction</button>
+  </div>`;
 
   splitSummary.innerHTML = buildSplitSummaryHTML(item);
 
