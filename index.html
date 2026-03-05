@@ -768,9 +768,13 @@ function initSwipeNavigation(){
   const transactionReviewPanel = document.getElementById("transactionReviewPanel");
   if(!transactionReviewPanel) return;
 
-  const SWIPE_THRESHOLD = 70;
+  const SWIPE_THRESHOLD = 100;
+  const HORIZONTAL_INTENT_RATIO = 1.5;
   let touchStartX = null;
   let touchStartY = null;
+  let touchCurrentX = null;
+  let touchCurrentY = null;
+  let swipeDirection = null;
 
   function shouldIgnoreSwipeStart(event){
     if(AppState.isModalOpen) return true;
@@ -785,27 +789,68 @@ function initSwipeNavigation(){
     if(shouldIgnoreSwipeStart(event)){
       touchStartX = null;
       touchStartY = null;
+      touchCurrentX = null;
+      touchCurrentY = null;
+      swipeDirection = null;
       return;
     }
 
     const touch = event.touches[0];
     touchStartX = touch.clientX;
     touchStartY = touch.clientY;
+    touchCurrentX = touch.clientX;
+    touchCurrentY = touch.clientY;
+    swipeDirection = null;
   }, { passive: true });
+
+  transactionReviewPanel.addEventListener("touchmove", (event) => {
+    if(touchStartX === null || touchStartY === null) return;
+    if(AppState.isModalOpen) return;
+
+    const touch = event.touches[0];
+    touchCurrentX = touch.clientX;
+    touchCurrentY = touch.clientY;
+
+    const deltaX = touchCurrentX - touchStartX;
+    const deltaY = touchCurrentY - touchStartY;
+    const absDeltaX = Math.abs(deltaX);
+    const absDeltaY = Math.abs(deltaY);
+
+    if(!swipeDirection){
+      if(absDeltaX > absDeltaY * HORIZONTAL_INTENT_RATIO){
+        swipeDirection = "horizontal";
+      } else if(absDeltaY > absDeltaX){
+        swipeDirection = "vertical";
+      }
+    }
+
+    if(swipeDirection === "horizontal"){
+      event.preventDefault();
+    }
+  }, { passive: false });
 
   transactionReviewPanel.addEventListener("touchend", (event) => {
     if(touchStartX === null || touchStartY === null) return;
     if(AppState.isModalOpen) return;
 
     const touch = event.changedTouches[0];
-    const deltaX = touch.clientX - touchStartX;
-    const deltaY = touch.clientY - touchStartY;
+    const endX = touchCurrentX ?? touch.clientX;
+    const endY = touchCurrentY ?? touch.clientY;
+    const deltaX = endX - touchStartX;
+    const deltaY = endY - touchStartY;
+    const absDeltaX = Math.abs(deltaX);
+    const absDeltaY = Math.abs(deltaY);
+    const isClearlyHorizontal = absDeltaX > absDeltaY * HORIZONTAL_INTENT_RATIO;
 
     touchStartX = null;
     touchStartY = null;
+    touchCurrentX = null;
+    touchCurrentY = null;
+    const completedDirection = swipeDirection;
+    swipeDirection = null;
 
-    if(Math.abs(deltaX) < SWIPE_THRESHOLD) return;
-    if(Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    if(completedDirection !== "horizontal" && !isClearlyHorizontal) return;
+    if(absDeltaX < SWIPE_THRESHOLD) return;
 
     transactionReviewPanel.style.setProperty("--swipe-offset", deltaX < 0 ? "-14px" : "14px");
     transactionReviewPanel.classList.remove("swipeNavFeedback");
