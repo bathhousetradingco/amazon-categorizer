@@ -600,8 +600,8 @@ margin-top:8px;
 <div class="panel appCard integratedCard">
   <div id="currentCategory" class="small"></div>
   <h3 id="cardTitle"></h3>
-  <div id="categoryButtons"></div>
   <div id="cardMeta" class="small"></div>
+  <div id="categoryButtons"></div>
   <div id="splitSummary" class="lineItemsPanel"></div>
 
   <button onclick="resetSplits()" style="background:#c62828; color:white; padding:10px 14px; border-radius:10px; margin-top:10px; width:100%;">
@@ -3577,7 +3577,7 @@ function showCard(){
 
   cardMeta.innerHTML =
   `<div style="display:grid;gap:8px;">
-    <div>${item.Vendor ? `Vendor: ${item.Vendor}<br>` : ""}${item.Institution ? `Account: ${item.Institution}<br>` : ""}${item.Date ? `Date: ${item.Date}<br>` : ""}Amount: $${item.Amount.toFixed(2)}</div>
+    <div>${item.Date ? `Date: ${item.Date}<br>` : ""}Amount: $${item.Amount.toFixed(2)}</div>
     <div class="receiptActionRow">
       ${item.receipt_url ? `<button class="compactActionBtn primary touchButton" onclick="viewReceipt()">👁 View</button><button class="compactActionBtn danger touchButton" onclick="removeReceipt()">✕ Remove</button>` : ""}
       <label class="compactActionBtn upload" for="receiptUploadInput">📎 Add Receipt</label>
