@@ -542,6 +542,26 @@ margin-top:8px;
   font-size:13px;
   color:var(--text-soft);
 }
+
+.breakdownToolbar {
+  display:flex;
+  justify-content:flex-end;
+  margin-bottom:8px;
+}
+
+.breakdownExportBtn {
+  width:auto;
+  padding:8px 12px;
+  border-radius:10px;
+  background:#111827;
+  color:#fff;
+  font-size:12px;
+}
+
+.breakdownExportBtn:disabled {
+  opacity:.5;
+  cursor:not-allowed;
+}
 .topActionStack {
   display:grid;
   gap:8px;
@@ -733,6 +753,8 @@ const currentCategory = document.getElementById("currentCategory");
 const totals = document.getElementById("totals");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
+let currentCategoryBreakdownRows = [];
+let currentCategoryBreakdownName = "";
 function triggerHaptic(style = "light"){
   if(!navigator?.vibrate) return;
   const pattern = style === "success" ? [14, 18, 24] : style === "heavy" ? [24] : [10];
@@ -3604,6 +3626,8 @@ goNext();
 function showCategoryBreakdown(categoryName){
 
   modalTitle.innerText = categoryName + " Transactions";
+  currentCategoryBreakdownRows = [];
+  currentCategoryBreakdownName = categoryName;
   let html = "";
 
   const visible = getVisibleIndexes();
@@ -3619,6 +3643,15 @@ function showCategoryBreakdown(categoryName){
     }
 
     if(normalizedCategory === categoryName){
+      currentCategoryBreakdownRows.push({
+        index: i,
+        Date: d.Date,
+        VendorDescription: d.Vendor || d.Title || "",
+        Category: normalizedCategory || "",
+        Amount: Number(d.Amount) || 0,
+        Notes: d.Notes || d.notes || "",
+        ReceiptAttached: !!d.receipt_url
+      });
       html += `
         <div class="modalItem" onclick="jumpToItem(${i})">
           ${d.Title} — $${d.Amount.toFixed(2)}
@@ -3636,6 +3669,15 @@ function showCategoryBreakdown(categoryName){
         }
 
         if(splitCategory === categoryName){
+          currentCategoryBreakdownRows.push({
+            index: i,
+            Date: d.Date,
+            VendorDescription: d.Vendor || d.Title || "",
+            Category: splitCategory || "",
+            Amount: parseFloat(s.Amount) || 0,
+            Notes: d.Notes || d.notes || "",
+            ReceiptAttached: !!d.receipt_url
+          });
           html += `
             <div class="modalItem" onclick="jumpToItem(${i})">
               ${d.Title} (Split) — $${parseFloat(s.Amount).toFixed(2)}
@@ -3648,10 +3690,69 @@ function showCategoryBreakdown(categoryName){
 
   });
 
+  const exportDisabled = currentCategoryBreakdownRows.length === 0 ? "disabled" : "";
+  const toolbar = `
+    <div class="breakdownToolbar">
+      <button class="breakdownExportBtn" onclick="exportCurrentCategoryBreakdown()" ${exportDisabled}>Export to Excel</button>
+    </div>
+  `;
+
   if(!html) html = "No transactions in this category.";
 
-  modalContent.innerHTML = html;
+  modalContent.innerHTML = toolbar + html;
   openModal();
+}
+
+function toExcelDateValue(value){
+  if(!value) return "";
+  const parsed = new Date(value);
+  if(Number.isNaN(parsed.getTime())) return value;
+  return parsed;
+}
+
+function toExportFileSlug(categoryName){
+  return String(categoryName || "category")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "category";
+}
+
+function exportCurrentCategoryBreakdown(){
+  if(!currentCategoryBreakdownRows.length) return;
+
+  const rows = currentCategoryBreakdownRows.map((row) => ({
+    "Date": toExcelDateValue(row.Date),
+    "Vendor / Description": row.VendorDescription || "",
+    "Category": row.Category || "",
+    "Amount": Number(row.Amount) || 0,
+    "Notes": row.Notes || "",
+    "Receipt Attached": !!row.ReceiptAttached
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const range = XLSX.utils.decode_range(ws["!ref"] || "A1:A1");
+
+  for(let r = 1; r <= range.e.r; r++){
+    const dateCellAddress = XLSX.utils.encode_cell({ r, c: 0 });
+    const dateCell = ws[dateCellAddress];
+    if(dateCell && dateCell.t === "d"){
+      dateCell.z = "yyyy-mm-dd";
+    }
+
+    const amountCellAddress = XLSX.utils.encode_cell({ r, c: 3 });
+    const amountCell = ws[amountCellAddress];
+    if(amountCell){
+      amountCell.t = "n";
+      amountCell.z = "0.00";
+    }
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Transactions");
+  const today = new Date().toISOString().slice(0, 10);
+  const filename = `${toExportFileSlug(currentCategoryBreakdownName)}-transactions-${today}.xlsx`;
+  XLSX.writeFile(wb, filename, { cellDates: true });
 }
 
 function jumpToItem(index){
