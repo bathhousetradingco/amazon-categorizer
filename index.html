@@ -131,7 +131,6 @@ font-size:16px;
 .lineItemsPanel h4 { margin: 0 0 8px; }
 .currentCategoryBadge {
   display: inline-block;
-  margin-top: 8px;
   padding: 6px 10px;
   border-radius: 999px;
   background: #1e3a8a;
@@ -139,6 +138,24 @@ font-size:16px;
   font-weight: 700;
   font-size: 12px;
   letter-spacing: 0.2px;
+}
+.currentCategoryRow {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:8px;
+}
+.deletePillBtn {
+  background:#fee2e2;
+  color:#991b1b;
+  border:1px solid #fecaca;
+  border-radius:999px;
+  padding:8px 12px;
+  font-size:12px;
+  font-weight:700;
+  white-space:nowrap;
 }
 .fileInput { margin-bottom: 12px; background: #fff; }
 .appCard { padding: 12px; }
@@ -393,6 +410,25 @@ margin-top:8px;
   grid-template-columns: 1fr;
   margin-top: 8px;
 }
+.filterTriggerBtn {
+  width:100%;
+  background:#0f766e;
+  color:#fff;
+  margin-top:8px;
+}
+.filterSummary {
+  margin-top:8px;
+  padding:8px 10px;
+  border-radius:10px;
+  border:1px solid var(--border);
+  background:#f8fafc;
+  font-size:13px;
+  color:var(--text-soft);
+}
+.topActionStack {
+  display:grid;
+  gap:8px;
+}
 .filterGrid label {
   font-size: 13px;
   color: var(--text-soft);
@@ -496,21 +532,9 @@ margin-top:8px;
     <button class="category-btn" style="background:#000; margin-bottom:0;" onclick="forcePlaidSync()">🔄 Sync Bank Now</button>
   </div>
 
+  <button id="dateFilterBtn" class="filterTriggerBtn" onclick="openDateFilterModal()">🗓 Date Filter</button>
+  <div id="dateFilterSummary" class="filterSummary">All dates</div>
   <div class="filterGrid">
-    <label>
-      Year
-      <select id="yearFilter" onchange="applyYearFilter()">
-        <option value="">All Years</option>
-      </select>
-    </label>
-    <label>
-      Start Date
-      <input type="date" id="startDateFilter" onchange="applyDateFilter()">
-    </label>
-    <label>
-      End Date
-      <input type="date" id="endDateFilter" onchange="applyDateFilter()">
-    </label>
     <label>
       Transaction Type
       <select id="transactionFilter" onchange="applyTransactionTypeFilter()">
@@ -543,12 +567,6 @@ margin-top:8px;
 
   <hr>
 
-  <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
-    <button class="navBtn" onclick="goBack()">⬅ Back</button>
-    <button class="navBtn" onclick="goNext()">Next ➡</button>
-  </div>
-
-  <h4>Choose Category</h4>
   <div id="categoryButtons"></div>
 </div>
 </div>
@@ -1189,35 +1207,21 @@ function populateYearFilter(){
 
   data.forEach(d=>{
     if(!d.Date) return;
-
     const year = d.Date ? d.Date.toString().slice(0,4) : null;
-    if(!isNaN(year)){
-      years.add(year.toString());
-    }
+    if(!isNaN(year)) years.add(year.toString());
   });
 
-  const select = document.getElementById("yearFilter");
-  select.innerHTML = `<option value="">All Years</option>`;
-
-  const sortedYears = Array.from(years)
-    .sort((a,b)=>b-a);
-
-  sortedYears
-    .forEach(y=>{
-      select.innerHTML += `<option value="${y}">${y}</option>`;
-    });
+  const sortedYears = Array.from(years).sort((a,b)=>b-a);
 
   if (sortedYears.length === 0) {
     activeYearFilter = null;
-    select.value = "";
+    updateDateFilterSummary();
     return;
   }
 
-  const shouldKeepCurrentYear =
-    activeYearFilter && sortedYears.includes(activeYearFilter);
-
+  const shouldKeepCurrentYear = activeYearFilter && sortedYears.includes(activeYearFilter);
   activeYearFilter = shouldKeepCurrentYear ? activeYearFilter : sortedYears[0];
-  select.value = activeYearFilter;
+  updateDateFilterSummary();
 }
 async function forcePlaidSync(){
 
@@ -1259,20 +1263,21 @@ async function forcePlaidSync(){
   }
 
 }
-function applyYearFilter(){
-  const val = document.getElementById("yearFilter").value;
-  activeYearFilter = val || null;
+function applyYearFilter(yearValue){
+  activeYearFilter = yearValue || null;
   activeSearchFilter = null;
-document.getElementById("clearSearchBtn").style.display = "none";
+  document.getElementById("clearSearchBtn").style.display = "none";
   currentIndex = 0;
+  const hasDateRange = !!(activeStartDateFilter || activeEndDateFilter);
+  const hasTypeFilter = (activeTransactionTypeFilter || "all") !== "all";
+  document.getElementById("clearDateBtn").style.display = (hasDateRange || hasTypeFilter) ? "block" : "none";
   updateTotals();
-updateProgress();
-showCard();
+  updateProgress();
+  showCard();
+  updateDateFilterSummary();
 }
 
-function applyDateFilter(){
-  const startVal = document.getElementById("startDateFilter")?.value || "";
-  const endVal = document.getElementById("endDateFilter")?.value || "";
+function applyDateFilter(startVal = "", endVal = ""){
   activeStartDateFilter = startVal || null;
   activeEndDateFilter = endVal || null;
   currentIndex = 0;
@@ -1282,6 +1287,7 @@ function applyDateFilter(){
   updateTotals();
   updateProgress();
   showCard();
+  updateDateFilterSummary();
 }
 
 function applyTransactionTypeFilter(){
@@ -1294,23 +1300,73 @@ function applyTransactionTypeFilter(){
   updateTotals();
   updateProgress();
   showCard();
+  updateDateFilterSummary();
 }
 
 function clearDateFilter(){
   activeStartDateFilter = null;
   activeEndDateFilter = null;
   activeTransactionTypeFilter = "all";
-  const startDateInput = document.getElementById("startDateFilter");
-  const endDateInput = document.getElementById("endDateFilter");
   const transactionTypeInput = document.getElementById("transactionFilter");
-  if(startDateInput) startDateInput.value = "";
-  if(endDateInput) endDateInput.value = "";
   if(transactionTypeInput) transactionTypeInput.value = "all";
   document.getElementById("clearDateBtn").style.display = "none";
   currentIndex = 0;
   updateTotals();
   updateProgress();
   showCard();
+  updateDateFilterSummary();
+}
+
+function openDateFilterModal(){
+  const years = new Set();
+  data.forEach(d=>{
+    if(!d.Date) return;
+    const year = d.Date.toString().slice(0,4);
+    if(!isNaN(year)) years.add(year.toString());
+  });
+  const sortedYears = Array.from(years).sort((a,b)=>b-a);
+
+  modalTitle.innerText = "Date Filter";
+  modalContent.innerHTML = `
+    <div style="display:grid;gap:10px;padding:8px 0;">
+      <label>Year
+        <select id="modalYearFilter">
+          <option value="">All Years</option>
+          ${sortedYears.map(y=>`<option value="${y}" ${activeYearFilter===y ? "selected" : ""}>${y}</option>`).join("")}
+        </select>
+      </label>
+      <label>Start Date
+        <input type="date" id="modalStartDateFilter" value="${activeStartDateFilter || ""}">
+      </label>
+      <label>End Date
+        <input type="date" id="modalEndDateFilter" value="${activeEndDateFilter || ""}">
+      </label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <button class="touchButton" style="background:#0f766e;color:#fff;" onclick="applyDateFilterFromModal()">Apply Filter</button>
+        <button class="touchButton" style="background:#6b7280;color:#fff;" onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
+  `;
+  openModal();
+}
+
+function applyDateFilterFromModal(){
+  const yearVal = document.getElementById("modalYearFilter")?.value || "";
+  const startVal = document.getElementById("modalStartDateFilter")?.value || "";
+  const endVal = document.getElementById("modalEndDateFilter")?.value || "";
+  applyYearFilter(yearVal);
+  applyDateFilter(startVal, endVal);
+  closeModal();
+}
+
+function updateDateFilterSummary(){
+  const summaryEl = document.getElementById("dateFilterSummary");
+  if(!summaryEl) return;
+  const parts = [];
+  if(activeYearFilter) parts.push(`Year: ${activeYearFilter}`);
+  if(activeStartDateFilter) parts.push(`From: ${activeStartDateFilter}`);
+  if(activeEndDateFilter) parts.push(`To: ${activeEndDateFilter}`);
+  summaryEl.innerText = parts.length ? parts.join(" • ") : "All dates";
 }
 
 function updateSearchResults(){
@@ -1816,15 +1872,19 @@ function goBack(){
 
 function renderCategories(){
 const div=document.getElementById("categoryButtons");
-div.innerHTML="";
+if(!div) return;
 
 div.innerHTML = `
-  <div class="categoryPickerCompact">
+  <div class="topActionStack">
     <div class="categoryPickerActions">
-      <button class="category-btn" style="background:#1e3a8a;" onclick="openCategoryModal()">Choose Category</button>
       <button class="category-btn" style="background:#ff9800;" onclick="openSplitModal()">Split Transaction</button>
+      <button class="category-btn" style="background:#1e3a8a;" onclick="openCategoryModal()">Choose Category</button>
     </div>
-    <button class="category-btn" style="background:#000;" onclick="askAI()">Ask AI</button>
+    <button class="category-btn" style="background:#000; margin-bottom:0;" onclick="askAI()">Ask AI</button>
+    <div style="display:flex; justify-content:space-between; gap:8px;">
+      <button class="navBtn" onclick="goBack()">⬅ Back</button>
+      <button class="navBtn" onclick="goNext()">Next ➡</button>
+    </div>
   </div>
 `;
 }
@@ -3478,15 +3538,9 @@ function showCard(){
   cardMeta.innerHTML =
   `<div style="display:grid;gap:8px;">
     <div>${item.Vendor ? `Vendor: ${item.Vendor}<br>` : ""}${item.Institution ? `Account: ${item.Institution}<br>` : ""}${item.Date ? `Date: ${item.Date}<br>` : ""}Amount: $${item.Amount.toFixed(2)}</div>
-    <div class="categoryPickerActions">
-      <button class="touchButton" style="background:#1e3a8a;color:#fff;" onclick="openCategoryModal()">Choose Category</button>
-      <button class="touchButton" style="background:#ff9800;color:#fff;" onclick="openSplitModal()">Split Transaction</button>
-    </div>
-    <button class="touchButton" onclick="askAI()" style="background:#000;color:white;">🤖 Ask AI</button>
     ${item.receipt_url ? `<button class="viewBtn touchButton" onclick="viewReceipt()">View Receipt</button><button class="removeBtn touchButton" onclick="removeReceipt()">Remove Attachment</button>` : ""}
     <label class="receiptUploadLabel" for="receiptUploadInput">📎 Upload / Replace Receipt</label>
     <input id="receiptUploadInput" class="receiptUploadInput" type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
-    <button class="removeBtn touchButton" onclick="deleteTransaction()">Delete Transaction</button>
   </div>`;
 
   splitSummary.innerHTML = buildSplitSummaryHTML(item);
@@ -3495,7 +3549,7 @@ function showCard(){
     ? "Split transaction"
     : (item.Category || "Uncategorized");
 
-  currentCategory.innerHTML = `<span class="currentCategoryBadge">Current Category: ${categoryLabel}</span>`;
+  currentCategory.innerHTML = `<div class="currentCategoryRow"><span class="currentCategoryBadge">Current Category: ${categoryLabel}</span><button class="deletePillBtn touchButton" onclick="deleteTransaction()">Delete Transaction</button></div>`;
 }
 
 /* Totals */
