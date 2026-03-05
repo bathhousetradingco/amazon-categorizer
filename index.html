@@ -407,6 +407,18 @@ margin-top:8px;
 }
 .receiptViewport.expanded { max-height: 66vh; }
 .receiptViewport img, .receiptViewport iframe { width:100%; height:auto; display:block; border:none; object-fit:contain; }
+.receiptViewport iframe { min-height: 60vh; }
+.receiptViewport .receiptFallback {
+  min-height: 180px;
+  display:grid;
+  place-items:center;
+  text-align:center;
+  padding:16px;
+  color:#e2e8f0;
+  font-size:14px;
+  line-height:1.4;
+}
+.receiptViewport .receiptFallback a { color:#93c5fd; }
 .lineItemsScroller {
   min-height: 0;
   overflow:auto;
@@ -1818,39 +1830,62 @@ const rowsToInsert = res.data.map(row => ({
 
 /* Receipt */
 
+function inferReceiptFileKind(pathOrName = "", mimeType = ""){
+  const normalizedPath = String(pathOrName || "").toLowerCase().split("?")[0].split("#")[0];
+  const normalizedMime = String(mimeType || "").toLowerCase();
+  const ext = (normalizedPath.split(".").pop() || "").trim();
+
+  if(ext === "pdf" || normalizedMime === "application/pdf") return "pdf";
+  if(["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif"].includes(ext)) return "image";
+  if(normalizedMime.startsWith("image/")) return "image";
+  return "unknown";
+}
+
+function sanitizeReceiptFileExt(file){
+  const inferredExt = String(file?.name || "").split(".").pop()?.toLowerCase()?.replace(/[^a-z0-9]/g, "");
+  if(inferredExt) return inferredExt;
+  if(file?.type === "application/pdf") return "pdf";
+  if(String(file?.type || "").startsWith("image/")) return "jpg";
+  return "bin";
+}
+
 async function attachReceipt(e){
 
 const file = e.target.files[0];
 if(!file) return;
 
-const item = data[currentIndex];
-if(!item.id){
-  alert("Transaction must be saved before attaching receipt.");
+const fileKind = inferReceiptFileKind(file.name, file.type);
+if(fileKind === "unknown"){
+  console.error("Unsupported receipt file selected", { fileName: file.name, fileType: file.type });
+  alert("Unsupported file type. Please upload JPG, PNG, HEIC, or PDF receipts.");
+  e.target.value = "";
   return;
 }
 
-const fileExt = file.name.split('.').pop();
-const filePath = `receipts/${item.id}.${fileExt}`;
+const item = data[currentIndex];
+if(!item.id){
+  alert("Transaction must be saved before attaching receipt.");
+  e.target.value = "";
+  return;
+}
+
+const safeExt = sanitizeReceiptFileExt(file);
+const filePath = `receipts/${item.id}.${safeExt}`;
 
 const { error: uploadError } = await supabaseClient
   .storage
   .from("receipts")
   .upload(filePath, file, {
-    upsert: true
+    upsert: true,
+    contentType: file.type || undefined
   });
 
 if(uploadError){
   console.error("Upload error:", uploadError);
   alert("Error uploading receipt.");
+  e.target.value = "";
   return;
 }
-
-const { data: publicUrlData } = supabaseClient
-  .storage
-  .from("receipts")
-  .getPublicUrl(filePath);
-
-const publicUrl = publicUrlData.publicUrl;
 
 const { error: updateError } = await supabaseClient
   .from("transactions")
@@ -1860,14 +1895,80 @@ const { error: updateError } = await supabaseClient
 if(updateError){
   console.error("DB update error:", updateError);
   alert("Error saving receipt reference.");
+  e.target.value = "";
   return;
 }
 
 item.receipt_url = filePath;
 
-showCard(); // 🔥 THIS refreshes the UI
-
+showCard(); // refreshes the UI
 alert("Receipt saved successfully.");
+e.target.value = "";
+}
+
+function buildReceiptFallbackMarkup(message, url = ""){
+  const safeMessage = message || "Receipt preview is unavailable.";
+  const openLink = url
+    ? `<div style="margin-top:10px;"><a href="${url}" target="_blank" rel="noopener noreferrer">Open receipt in a new tab</a></div>`
+    : "";
+  return `<div class="receiptFallback">${safeMessage}${openLink}</div>`;
+}
+
+function attachReceiptPreviewHandlers(container, { url, fileKind }){
+  if(!container) return;
+
+  const showFallback = (message) => {
+    console.error("Receipt preview rendering failed", { url, fileKind, message });
+    container.innerHTML = buildReceiptFallbackMarkup(message, url);
+  };
+
+  if(fileKind === "pdf"){
+    const frame = container.querySelector("iframe");
+    if(!frame){
+      showFallback("Unable to render PDF preview.");
+      return;
+    }
+
+    let loaded = false;
+    const timeoutId = setTimeout(() => {
+      if(!loaded) showFallback("PDF preview timed out. Your browser may not support inline PDF for this file.");
+    }, 5000);
+
+    frame.addEventListener("load", () => {
+      loaded = true;
+      clearTimeout(timeoutId);
+    }, { once: true });
+
+    frame.addEventListener("error", () => {
+      clearTimeout(timeoutId);
+      showFallback("Failed to load PDF preview.");
+    }, { once: true });
+
+    return;
+  }
+
+  const img = container.querySelector("img");
+  if(!img){
+    showFallback("Unable to render image preview.");
+    return;
+  }
+
+  img.addEventListener("load", () => {
+    if(!img.naturalWidth || !img.naturalHeight){
+      showFallback("Image loaded but dimensions are invalid.");
+      return;
+    }
+
+    const viewportWidth = container.clientWidth;
+    const renderedWidth = img.clientWidth;
+    if(viewportWidth > 0 && renderedWidth === 0){
+      showFallback("Image loaded but did not render. Try opening the receipt in a new tab.");
+    }
+  }, { once: true });
+
+  img.addEventListener("error", () => {
+    showFallback("Failed to load image preview. The file may be unsupported by this browser (HEIC on some devices).");
+  }, { once: true });
 }
 
 async function openReceiptViewerModal(item, backAction = "", title = "Receipt Preview"){
@@ -1895,9 +1996,10 @@ if(error){
 modalTitle.innerText = title;
 
 const url = signedData.signedUrl;
-const isPDF = url.toLowerCase().includes(".pdf");
+const fileKind = inferReceiptFileKind(item.receipt_url);
+const renderAsPdf = fileKind === "pdf";
 const footerButtons = [
-  `<button class="touchButton" style="background:#111827;color:white;" onclick='openReceiptFullscreen(${JSON.stringify(url)})'>Expand Fullscreen</button>`
+  `<button class="touchButton" style="background:#111827;color:white;" onclick='openReceiptFullscreen(${JSON.stringify(url)}, ${JSON.stringify(fileKind)})'>Expand Fullscreen</button>`
 ];
 
 if(backAction){
@@ -1906,14 +2008,17 @@ if(backAction){
 
 modalContent.innerHTML = `
   <div style="height:100%;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:10px;">
-    <div class="receiptViewport" style="max-height:100%;">
-      ${isPDF ? `<iframe src="${url}" title="Receipt PDF"></iframe>` : `<img src="${url}" alt="Receipt image">`}
+    <div class="receiptViewport" id="receiptPreviewViewport" style="max-height:100%;">
+      ${renderAsPdf ? `<iframe src="${url}" title="Receipt PDF" loading="lazy"></iframe>` : `<img src="${url}" alt="Receipt image" loading="lazy" decoding="async">`}
     </div>
     <div style="display:grid;grid-template-columns:repeat(${footerButtons.length},minmax(0,1fr));gap:8px;">
       ${footerButtons.join("")}
     </div>
   </div>
 `;
+
+const previewViewport = document.getElementById("receiptPreviewViewport");
+attachReceiptPreviewHandlers(previewViewport, { url, fileKind: renderAsPdf ? "pdf" : "image" });
 
 openModal();
 }
@@ -2095,7 +2200,7 @@ const receiptButtons = `
     ${item.receipt_url ? `<button class="compactActionBtn primary touchButton" onclick="viewReceipt()">👁 View</button>` : ""}
     <label class="compactActionBtn upload" for="receiptUploadInput">📎 Add Receipt</label>
     ${item.receipt_url ? `<button class="compactActionBtn danger touchButton" onclick="removeReceipt()">✕ Remove Receipt</button>` : ""}
-    <input id="receiptUploadInput" class="receiptUploadInput" type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
+    <input id="receiptUploadInput" class="receiptUploadInput" type="file" accept="image/*,.pdf,.heic,.heif,image/heic,image/heif" onchange="attachReceipt(event)">
   </div>`;
 
 div.innerHTML = `
@@ -2958,9 +3063,12 @@ function editSplitAmount(index){
   });
 }
 
-function openReceiptFullscreen(url){
+function openReceiptFullscreen(url, fileKind = "image") {
   modalTitle.innerText = "Receipt Viewer";
-  modalContent.innerHTML = `<div class="receiptViewport" style="max-height:100%;height:100%;"><img src="${url}" alt="Receipt expanded"></div>`;
+  const renderAsPdf = fileKind === "pdf";
+  modalContent.innerHTML = `<div class="receiptViewport" id="receiptFullscreenViewport" style="max-height:100%;height:100%;">${renderAsPdf ? `<iframe src="${url}" title="Receipt PDF fullscreen"></iframe>` : `<img src="${url}" alt="Receipt expanded" loading="lazy" decoding="async">`}</div>`;
+  const fullscreenViewport = document.getElementById("receiptFullscreenViewport");
+  attachReceiptPreviewHandlers(fullscreenViewport, { url, fileKind: renderAsPdf ? "pdf" : "image" });
   openModal();
 }
 
