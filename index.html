@@ -448,6 +448,16 @@ margin-top:8px;
 .touchButton { min-height:44px; }
 .touchButton.tapPulse { transform: scale(.98); filter: brightness(.98); }
 
+.swipeNavFeedback {
+  animation: swipeNavSlide 180ms ease;
+}
+
+@keyframes swipeNavSlide {
+  0% { transform: translateX(0); }
+  45% { transform: translateX(var(--swipe-offset, 0)); }
+  100% { transform: translateX(0); }
+}
+
 .keypadOverlay { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 100100; display:none; align-items:flex-end; justify-content:center; }
 .keypadOverlay.open { display:flex; }
 .keypadSheet { width:min(100%, 520px); background:#fff; border-top-left-radius:16px; border-top-right-radius:16px; padding:12px; box-shadow: 0 -12px 30px rgba(0,0,0,.22); transform: translateY(18px); opacity:0; transition: transform .2s ease, opacity .2s ease; }
@@ -650,7 +660,7 @@ margin-top:8px;
   <div id="progressText" class="small"></div>
 </div>
 
-<div class="panel appCard integratedCard">
+<div id="transactionReviewPanel" class="panel appCard integratedCard">
   <section class="uiSection transactionHeaderSection">
     <div class="sectionLabel">Transaction Header</div>
     <div id="currentCategory" class="small"></div>
@@ -753,6 +763,65 @@ const AppState = {
   get currentItem(){ return data[currentIndex]; },
   get isModalOpen(){ return modalOverlay.style.display === "flex"; }
 };
+
+function initSwipeNavigation(){
+  const transactionReviewPanel = document.getElementById("transactionReviewPanel");
+  if(!transactionReviewPanel) return;
+
+  const SWIPE_THRESHOLD = 70;
+  let touchStartX = null;
+  let touchStartY = null;
+
+  function shouldIgnoreSwipeStart(event){
+    if(AppState.isModalOpen) return true;
+    if(event.touches.length !== 1) return true;
+
+    const target = event.target;
+    const interactiveTarget = target.closest("button, input, select, textarea, a, [role='button'], .lineItemCard");
+    return !!interactiveTarget;
+  }
+
+  transactionReviewPanel.addEventListener("touchstart", (event) => {
+    if(shouldIgnoreSwipeStart(event)){
+      touchStartX = null;
+      touchStartY = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+    touchStartX = touch.clientX;
+    touchStartY = touch.clientY;
+  }, { passive: true });
+
+  transactionReviewPanel.addEventListener("touchend", (event) => {
+    if(touchStartX === null || touchStartY === null) return;
+    if(AppState.isModalOpen) return;
+
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - touchStartX;
+    const deltaY = touch.clientY - touchStartY;
+
+    touchStartX = null;
+    touchStartY = null;
+
+    if(Math.abs(deltaX) < SWIPE_THRESHOLD) return;
+    if(Math.abs(deltaX) <= Math.abs(deltaY)) return;
+
+    transactionReviewPanel.style.setProperty("--swipe-offset", deltaX < 0 ? "-14px" : "14px");
+    transactionReviewPanel.classList.remove("swipeNavFeedback");
+    void transactionReviewPanel.offsetWidth;
+    transactionReviewPanel.classList.add("swipeNavFeedback");
+
+    if(deltaX < 0){
+      goNext();
+      return;
+    }
+
+    goBack();
+  }, { passive: true });
+}
+
+initSwipeNavigation();
 
 let modalBackAction = null;
 function setModalBackAction(action){
