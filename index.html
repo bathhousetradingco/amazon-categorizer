@@ -152,11 +152,50 @@ font-size:16px;
   color:#991b1b;
   border:1px solid #fecaca;
   border-radius:999px;
-  padding:8px 12px;
-  font-size:12px;
+  padding:6px 10px;
+  font-size:11px;
   font-weight:700;
   white-space:nowrap;
 }
+.receiptActionRow {
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.compactActionBtn {
+  min-height:34px;
+  padding:7px 10px;
+  font-size:12px;
+  border-radius:999px;
+  font-weight:700;
+  flex:0 0 auto;
+}
+.compactActionBtn.primary { background:#1565c0; color:#fff; }
+.compactActionBtn.danger { background:#b91c1c; color:#fff; }
+.compactActionBtn.upload {
+  border:1px dashed #1565c0;
+  background:#eff6ff;
+  color:#1565c0;
+}
+.navActionRow {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+}
+.navActionRow .navBtn {
+  width:100%;
+  margin:0;
+}
+.actionSection {
+  display:grid;
+  gap:8px;
+}
+.middleActions {
+  display:grid;
+  gap:8px;
+}
+.middleActions .category-btn,
+.actionSection .category-btn { margin-bottom:0; }
 .fileInput { margin-bottom: 12px; background: #fff; }
 .appCard { padding: 12px; }
 .topControls { margin-bottom: 10px; }
@@ -372,6 +411,8 @@ margin-top:8px;
   .modalOverlay { padding: 0; align-items: flex-end; }
   .modalBox { width:100%; height:96vh; border-bottom-left-radius:0; border-bottom-right-radius:0; }
   .splitTotalsCard { grid-template-columns: 1fr; gap:6px; }
+  .currentCategoryRow { align-items:flex-start; }
+  .deletePillBtn { padding:6px 8px; font-size:10px; }
 }
 
 .workflowHeader h3 { margin: 0 0 10px; }
@@ -1875,16 +1916,16 @@ const div=document.getElementById("categoryButtons");
 if(!div) return;
 
 div.innerHTML = `
-  <div class="topActionStack">
-    <div class="categoryPickerActions">
-      <button class="category-btn" style="background:#ff9800;" onclick="openSplitModal()">Split Transaction</button>
-      <button class="category-btn" style="background:#1e3a8a;" onclick="openCategoryModal()">Choose Category</button>
-    </div>
-    <button class="category-btn" style="background:#000; margin-bottom:0;" onclick="askAI()">Ask AI</button>
-    <div style="display:flex; justify-content:space-between; gap:8px;">
+  <div class="actionSection topActionStack">
+    <div class="navActionRow">
       <button class="navBtn" onclick="goBack()">⬅ Back</button>
       <button class="navBtn" onclick="goNext()">Next ➡</button>
     </div>
+    <div class="middleActions categoryPickerActions">
+      <button class="category-btn" style="background:#1e3a8a;" onclick="openCategoryModal()">Choose Category</button>
+      <button class="category-btn" style="background:#ff9800;" onclick="openSplitModal()">Split Transaction</button>
+    </div>
+    <button class="category-btn" style="background:#000;" onclick="askAI()">Ask AI</button>
   </div>
 `;
 }
@@ -3538,9 +3579,15 @@ function showCard(){
   cardMeta.innerHTML =
   `<div style="display:grid;gap:8px;">
     <div>${item.Vendor ? `Vendor: ${item.Vendor}<br>` : ""}${item.Institution ? `Account: ${item.Institution}<br>` : ""}${item.Date ? `Date: ${item.Date}<br>` : ""}Amount: $${item.Amount.toFixed(2)}</div>
-    ${item.receipt_url ? `<button class="viewBtn touchButton" onclick="viewReceipt()">View Receipt</button><button class="removeBtn touchButton" onclick="removeReceipt()">Remove Attachment</button>` : ""}
-    <label class="receiptUploadLabel" for="receiptUploadInput">📎 Upload / Replace Receipt</label>
-    <input id="receiptUploadInput" class="receiptUploadInput" type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
+    <div class="navActionRow">
+      <button class="navBtn" onclick="goBack()">⬅ Back</button>
+      <button class="navBtn" onclick="goNext()">Next ➡</button>
+    </div>
+    <div class="receiptActionRow">
+      ${item.receipt_url ? `<button class="compactActionBtn primary touchButton" onclick="viewReceipt()">👁 View</button><button class="compactActionBtn danger touchButton" onclick="removeReceipt()">✕ Remove</button>` : ""}
+      <label class="compactActionBtn upload" for="receiptUploadInput">📎 Add Receipt</label>
+      <input id="receiptUploadInput" class="receiptUploadInput" type="file" accept="image/*,.pdf" onchange="attachReceipt(event)">
+    </div>
   </div>`;
 
   splitSummary.innerHTML = buildSplitSummaryHTML(item);
