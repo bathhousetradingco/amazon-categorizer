@@ -3653,6 +3653,7 @@ function showCategoryBreakdown(categoryName){
       currentCategoryBreakdownRows.push({
         index: i,
         Date: d.Date,
+        LineItemTitle: d.Title || "",
         VendorDescription: d.Vendor || d.Title || "",
         Category: normalizedCategory || "",
         Amount: Number(d.Amount) || 0,
@@ -3679,6 +3680,7 @@ function showCategoryBreakdown(categoryName){
           currentCategoryBreakdownRows.push({
             index: i,
             Date: d.Date,
+            LineItemTitle: d.Title || "",
             VendorDescription: d.Vendor || d.Title || "",
             Category: splitCategory || "",
             Amount: parseFloat(s.Amount) || 0,
@@ -3731,6 +3733,7 @@ function exportCurrentCategoryBreakdown(){
 
   const rows = currentCategoryBreakdownRows.map((row) => ({
     "Date": toExcelDateValue(row.Date),
+    "Line Item Title": row.LineItemTitle || "",
     "Vendor / Description": row.VendorDescription || "",
     "Category": row.Category || "",
     "Amount": Number(row.Amount) || 0
@@ -3746,7 +3749,7 @@ function exportCurrentCategoryBreakdown(){
       dateCell.z = "yyyy-mm-dd";
     }
 
-    const amountCellAddress = XLSX.utils.encode_cell({ r, c: 3 });
+    const amountCellAddress = XLSX.utils.encode_cell({ r, c: 4 });
     const amountCell = ws[amountCellAddress];
     if(amountCell){
       amountCell.t = "n";
