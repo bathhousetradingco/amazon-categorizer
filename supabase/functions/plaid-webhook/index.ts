@@ -65,7 +65,14 @@ Deno.serve(async (req) => {
 
     if (
       webhookType === "TRANSACTIONS" &&
-      ["INITIAL_UPDATE", "HISTORICAL_UPDATE", "DEFAULT_UPDATE"].includes(webhookCode)
+      [
+        // /transactions/sync webhook
+        "SYNC_UPDATES_AVAILABLE",
+        // legacy /transactions/get webhooks (kept for compatibility)
+        "INITIAL_UPDATE",
+        "HISTORICAL_UPDATE",
+        "DEFAULT_UPDATE",
+      ].includes(webhookCode)
     ) {
       const result = await syncPlaidTransactionsForAccount({
         plaidBase: PLAID_BASE,
