@@ -14,9 +14,9 @@ const PLAID_BASE =
     ? "https://production.plaid.com"
     : "https://sandbox.plaid.com";
 
-/* ================= ✅ FIXED WEBHOOK ================= */
-const WEBHOOK_URL =
-  "https://xbayklklcdohewvnbglq.supabase.co/functions/v1/plaid-webhook";
+/* ================= WEBHOOK ================= */
+const WEBHOOK_URL = Deno.env.get("PLAID_WEBHOOK_URL") ||
+  `${SUPABASE_URL}/functions/v1/plaid-webhook`;
 
 /* ================= CORS ================= */
 const corsHeaders = {
@@ -91,9 +91,8 @@ Deno.serve(async (req) => {
       JSON.stringify({ link_token: plaidData.link_token }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      },
     );
-
   } catch (err: any) {
     console.error("❌ LINK TOKEN ERROR:", err);
 
@@ -102,7 +101,7 @@ Deno.serve(async (req) => {
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      },
     );
   }
 });

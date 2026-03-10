@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { syncPlaidTransactionsForAccount } from "../_shared/plaid-sync.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -100,23 +101,73 @@ Deno.serve(async (req) => {
       // non-fatal
     }
 
-    const { error } = await supabase.from("plaid_accounts").upsert(
-      [
-        {
+    const { data: existingAccount, error: existingError } = await supabase
+      .from("plaid_accounts")
+      .select("id, cursor")
+      .eq("item_id", item_id)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+
+    let syncedAccountId = existingAccount?.id as string | undefined;
+    let syncedCursor = existingAccount?.cursor ?? null;
+
+    if (existingAccount) {
+      const { error: updateError } = await supabase
+        .from("plaid_accounts")
+        .update({
+          user_id: user.id,
+          access_token,
+          institution: institution_name,
+        })
+        .eq("id", existingAccount.id);
+
+      if (updateError) throw updateError;
+    } else {
+      const { data: insertedAccount, error: insertError } = await supabase
+        .from("plaid_accounts")
+        .insert({
           user_id: user.id,
           item_id,
           access_token,
           cursor: null,
           institution: institution_name,
-        },
-      ],
-      { onConflict: "item_id" },
-    );
+        })
+        .select("id, cursor")
+        .single();
 
-    if (error) throw error;
+      if (insertError) throw insertError;
+
+      syncedAccountId = insertedAccount.id;
+      syncedCursor = insertedAccount.cursor;
+    }
+
+    if (!syncedAccountId) {
+      throw new Error("Unable to resolve plaid account row");
+    }
+
+    const syncResult = await syncPlaidTransactionsForAccount({
+      plaidBase: PLAID_BASE,
+      plaidClientId: PLAID_CLIENT_ID,
+      plaidSecret: PLAID_SECRET,
+      supabase,
+      account: {
+        id: syncedAccountId,
+        user_id: user.id,
+        item_id,
+        access_token,
+        cursor: syncedCursor,
+      },
+    });
 
     return new Response(
-      JSON.stringify({ success: true, item_id, institution: institution_name }),
+      JSON.stringify({
+        success: true,
+        item_id,
+        institution: institution_name,
+        imported: syncResult.upserted,
+        removed: syncResult.removed,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err: any) {
