@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const itemId = body.item_id || null;
-    const resetCursor = body.reset_cursor === true;
+    const resetCursor = body.reset_cursor !== false;
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
