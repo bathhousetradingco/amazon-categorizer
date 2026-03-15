@@ -41,6 +41,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const itemId = body.item_id || null;
+    const resetCursor = body.reset_cursor === true;
 
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -68,6 +69,21 @@ Deno.serve(async (req) => {
     const webhookRepairErrors: Array<{ item_id: string; error: string }> = [];
 
     for (const account of accounts) {
+      const accountToSync = resetCursor
+        ? { ...account, cursor: null }
+        : account;
+
+      if (resetCursor) {
+        const { error: cursorResetError } = await supabase
+          .from("plaid_accounts")
+          .update({ cursor: null })
+          .eq("id", account.id);
+
+        if (cursorResetError) {
+          throw cursorResetError;
+        }
+      }
+
       try {
         const webhookResult = await ensurePlaidItemWebhook({
           plaidBase: PLAID_BASE,
@@ -93,7 +109,7 @@ Deno.serve(async (req) => {
         plaidClientId: PLAID_CLIENT_ID,
         plaidSecret: PLAID_SECRET,
         supabase,
-        account,
+        account: accountToSync,
       });
 
       totalUpserted += result.upserted;
@@ -105,6 +121,7 @@ Deno.serve(async (req) => {
         success: true,
         inserted: totalUpserted,
         removed: totalRemoved,
+        reset_cursor: resetCursor,
         webhook_repairs: webhookRepairCount,
         webhook_repair_errors: webhookRepairErrors,
       }),
