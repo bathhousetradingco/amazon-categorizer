@@ -1509,9 +1509,20 @@ async function forcePlaidSync(){
       return;
     }
 
+    if (result.webhook_repair_errors?.length) {
+      console.error("Plaid webhook repair errors:", result.webhook_repair_errors);
+    }
+
     await loadTransactions();
 
-    alert("Transactions synced!");
+    const repairedLabel = typeof result.webhook_repairs === "number"
+      ? ` Webhooks repaired: ${result.webhook_repairs}.`
+      : "";
+    const repairErrorLabel = result.webhook_repair_errors?.length
+      ? ` Webhook repair errors: ${result.webhook_repair_errors.length}.`
+      : "";
+
+    alert(`Transactions synced!${repairedLabel}${repairErrorLabel}`);
 
   } catch(err){
     console.error(err);
@@ -4152,9 +4163,20 @@ const syncRes = await fetch(
         return;
       }
 
+      if (syncData.webhook_repair_errors?.length) {
+        console.error("Plaid webhook repair errors:", syncData.webhook_repair_errors);
+      }
+
       await loadTransactions();
 
-      alert("Bank connected and transactions imported!");
+      const repairedLabel = typeof syncData.webhook_repairs === "number"
+        ? ` Webhooks repaired: ${syncData.webhook_repairs}.`
+        : "";
+      const repairErrorLabel = syncData.webhook_repair_errors?.length
+        ? ` Webhook repair errors: ${syncData.webhook_repair_errors.length}.`
+        : "";
+
+      alert(`Bank connected and transactions imported!${repairedLabel}${repairErrorLabel}`);
     },
 
     onExit: function(err) {

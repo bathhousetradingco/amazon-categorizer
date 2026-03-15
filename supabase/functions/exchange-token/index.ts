@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ensurePlaidItemWebhook } from "../_shared/plaid-webhook.ts";
 import { syncPlaidTransactionsForAccount } from "../_shared/plaid-sync.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -146,6 +147,25 @@ Deno.serve(async (req) => {
       throw new Error("Unable to resolve plaid account row");
     }
 
+    let webhookUpdated = false;
+    let webhookError: string | null = null;
+    try {
+      const webhookResult = await ensurePlaidItemWebhook({
+        plaidBase: PLAID_BASE,
+        plaidClientId: PLAID_CLIENT_ID,
+        plaidSecret: PLAID_SECRET,
+        supabaseUrl: SUPABASE_URL,
+        accessToken: access_token,
+      });
+      webhookUpdated = webhookResult.updated;
+    } catch (err: any) {
+      webhookError = err?.message || "Webhook repair failed";
+      console.error("❌ Failed to repair Plaid webhook during token exchange", {
+        item_id,
+        error: webhookError,
+      });
+    }
+
     const syncResult = await syncPlaidTransactionsForAccount({
       plaidBase: PLAID_BASE,
       plaidClientId: PLAID_CLIENT_ID,
@@ -165,6 +185,8 @@ Deno.serve(async (req) => {
         success: true,
         item_id,
         institution: institution_name,
+        webhook_updated: webhookUpdated,
+        webhook_error: webhookError,
         imported: syncResult.upserted,
         removed: syncResult.removed,
       }),

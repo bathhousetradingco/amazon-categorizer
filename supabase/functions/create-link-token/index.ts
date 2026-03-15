@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolvePlaidWebhookUrl } from "../_shared/plaid-webhook.ts";
 
 /* ================= ENV ================= */
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -15,8 +16,7 @@ const PLAID_BASE =
     : "https://sandbox.plaid.com";
 
 /* ================= WEBHOOK ================= */
-const WEBHOOK_URL = Deno.env.get("PLAID_WEBHOOK_URL") ||
-  `${SUPABASE_URL}/functions/v1/plaid-webhook`;
+const WEBHOOK_URL = resolvePlaidWebhookUrl(SUPABASE_URL);
 
 /* ================= CORS ================= */
 const corsHeaders = {

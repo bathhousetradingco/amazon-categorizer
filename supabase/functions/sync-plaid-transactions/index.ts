@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ensurePlaidItemWebhook } from "../_shared/plaid-webhook.ts";
 import { syncPlaidTransactionsForAccount } from "../_shared/plaid-sync.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -63,8 +64,30 @@ Deno.serve(async (req) => {
 
     let totalUpserted = 0;
     let totalRemoved = 0;
+    let webhookRepairCount = 0;
+    const webhookRepairErrors: Array<{ item_id: string; error: string }> = [];
 
     for (const account of accounts) {
+      try {
+        const webhookResult = await ensurePlaidItemWebhook({
+          plaidBase: PLAID_BASE,
+          plaidClientId: PLAID_CLIENT_ID,
+          plaidSecret: PLAID_SECRET,
+          supabaseUrl: SUPABASE_URL,
+          accessToken: account.access_token,
+        });
+        if (webhookResult.updated) {
+          webhookRepairCount += 1;
+        }
+      } catch (err: any) {
+        const errorMessage = err?.message || "Webhook repair failed";
+        webhookRepairErrors.push({ item_id: account.item_id, error: errorMessage });
+        console.error("❌ Failed to repair Plaid webhook before sync", {
+          item_id: account.item_id,
+          error: errorMessage,
+        });
+      }
+
       const result = await syncPlaidTransactionsForAccount({
         plaidBase: PLAID_BASE,
         plaidClientId: PLAID_CLIENT_ID,
@@ -78,7 +101,13 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, inserted: totalUpserted, removed: totalRemoved }),
+      JSON.stringify({
+        success: true,
+        inserted: totalUpserted,
+        removed: totalRemoved,
+        webhook_repairs: webhookRepairCount,
+        webhook_repair_errors: webhookRepairErrors,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err: any) {
