@@ -3,7 +3,7 @@ import type { ParsedReceiptItem } from "./parser-types.ts";
 
 const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT\s+1\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
 const INST_SV_LINE_PATTERN = /^INST\s+SV\b/i;
-const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*$/;
+const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*[A-Z.]*\s*$/i;
 const SINGLE_LINE_PRICE_PATTERN = /^(.*?)(\d+(?:\.\d{1,2})?)\s+([A-Z.]+)\s*$/i;
 
 export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[]): ParsedReceiptItem[] {
@@ -171,7 +171,7 @@ function applyLabeledInstantSavings(parsedItems: ParsedReceiptItem[], lines: str
 function extractInstantSavingsLabel(line: string): string {
   return String(line || "")
     .replace(/^INST\s+SV\s*/i, "")
-    .replace(/\s+\d+(?:\.\d{1,2})?-\s*$/i, "")
+    .replace(/\s+\d+(?:\.\d{1,2})?-\s*[A-Z.]*\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
 }

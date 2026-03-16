@@ -99,6 +99,45 @@ Deno.test("extractSamsClubParsedItems keeps instant savings on single-line fallb
   ]);
 });
 
+Deno.test("extractSamsClubParsedItems keeps instant savings with trailing tax flag on savings line", () => {
+  const lines = [
+    "0000744575 24CT SHARPI 11.98 T",
+    "0990012260 IYC 4 CF 40 8.48 T",
+    "INST SV 24CT SHARPI 2.50-T",
+  ];
+
+  assertEquals(extractSamsClubParsedItems(lines, ["744575", "990012260"]), [
+    {
+      product_number: "744575",
+      identifier_type: "item_number",
+      receipt_label: "24CT SHARPI",
+      quantity: 1,
+      unit_price: 11.98,
+      total_price: 11.98,
+      line_index: 0,
+      raw_lines: [
+        "0000744575 24CT SHARPI 11.98 T",
+        "INST SV 24CT SHARPI 2.50-T",
+      ],
+      parser_confidence: "medium",
+      instant_savings_discount: 2.5,
+    },
+    {
+      product_number: "990012260",
+      identifier_type: "item_number",
+      receipt_label: "IYC 4 CF 40",
+      quantity: 1,
+      unit_price: 8.48,
+      total_price: 8.48,
+      line_index: 1,
+      raw_lines: [
+        "0990012260 IYC 4 CF 40 8.48 T",
+      ],
+      parser_confidence: "medium",
+    },
+  ]);
+});
+
 Deno.test("extractSamsClubParsedItems does not attach another item's instant savings line", () => {
   const lines = [
     "0000744575 24CT SHARPI 11.98 T",
