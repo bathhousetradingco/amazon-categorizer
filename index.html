@@ -724,6 +724,7 @@ margin-top:8px;
 <div class="panel totalsPanel stickyColumn">
   <h4>Totals & Planning</h4>
   <div id="totals"></div>
+  <button onclick="openQaReviewModal()" class="exportBtn" style="background:#92400e; margin-top:8px;">Review QA</button>
   <button onclick="exportExcel()" class="exportBtn">Export to Excel</button>
 </div>
 
@@ -958,6 +959,7 @@ let activeStartDateFilter = null;
 let activeEndDateFilter = null;
 let activeTransactionTypeFilter = "all";
 let aiContext = null; 
+let aiSuggestionResult = null;
 // null = normal transaction
 // { type: "receipt", index: X } = receipt item mode
 /* ================= LOAD FROM SUPABASE ================= */
@@ -987,6 +989,9 @@ async function loadTransactions() {
 
   Category: r.category || "",
   Splits: r.splits || [],
+  ReviewStatus: r.review_status || "",
+  DeductionStatus: r.deduction_status || "",
+  ReviewNote: r.review_note || "",
 
   receipt_url: r.receipt_url,
 
@@ -1867,9 +1872,12 @@ const { data: insertedRows, error } = await supabaseClient
     merchant_name: vendor,
     amount,
     category: "",
-    splits: []
+    splits: [],
+    review_status: "",
+    deduction_status: "",
+    review_note: ""
   })
-  .select("id, date, name, merchant_name, amount, category, splits, receipt_url")
+  .select("id, date, name, merchant_name, amount, category, splits, receipt_url, review_status, deduction_status, review_note")
   .single();
 
 if (error) {
@@ -1887,6 +1895,9 @@ data.unshift({
   Amount: insertedRows.amount,
   Category: insertedRows.category || "",
   Splits: insertedRows.splits || [],
+  ReviewStatus: insertedRows.review_status || "",
+  DeductionStatus: insertedRows.deduction_status || "",
+  ReviewNote: insertedRows.review_note || "",
   receipt_url: insertedRows.receipt_url || null
 });
 
@@ -3825,7 +3836,10 @@ async function persistReceiptInteractions(item){
 
   const { error } = await Api.updateTransaction(item.id, {
     category: item.Splits?.length ? "SPLIT" : "",
-    splits: item.Splits || []
+    splits: item.Splits || [],
+    review_status: item.ReviewStatus || "",
+    deduction_status: item.DeductionStatus || "",
+    review_note: item.ReviewNote || ""
   });
 
   if(error){
@@ -3860,7 +3874,10 @@ async function applySplit(category, amount, options = {}){
     Amount: parseFloat(amount.toFixed(2)),
     ...(options.sourceProductNumber ? { SourceProductNumber: options.sourceProductNumber } : {}),
     ...(options.sourceMerchant ? { SourceMerchant: options.sourceMerchant } : {}),
-    ...(options.sourceIdentifierType ? { SourceIdentifierType: options.sourceIdentifierType } : {})
+    ...(options.sourceIdentifierType ? { SourceIdentifierType: options.sourceIdentifierType } : {}),
+    ...(options.reviewStatus ? { ReviewStatus: options.reviewStatus } : {}),
+    ...(options.deductionStatus ? { DeductionStatus: options.deductionStatus } : {}),
+    ...(options.reviewNote ? { ReviewNote: options.reviewNote } : {})
   });
   item.Category = "SPLIT";
   SplitState.highlightedIndex = item.Splits.length - 1;
@@ -4122,6 +4139,9 @@ function buildExportRows(){
       "Receipt Attached": !!item.receipt_url ? "Yes" : "No",
       Notes: item.Notes || item.notes || "",
       "Transaction Amount": Number(item.Amount) || 0,
+      "Review Status": item.ReviewStatus || "",
+      "Deduction Status": item.DeductionStatus || "",
+      "Review Note": item.ReviewNote || "",
     };
 
     if(Array.isArray(item.Splits) && item.Splits.length){
@@ -4136,6 +4156,9 @@ function buildExportRows(){
           "Source Product Number": split.SourceProductNumber || "",
           "Source Merchant": split.SourceMerchant || "",
           "Source Identifier Type": split.SourceIdentifierType || "",
+          "Review Status": split.ReviewStatus || item.ReviewStatus || "",
+          "Deduction Status": split.DeductionStatus || item.DeductionStatus || "",
+          "Review Note": split.ReviewNote || item.ReviewNote || "",
           "Tax Treatment": taxMeta.tax_treatment,
           "Schedule C Reference": taxMeta.schedule_c_reference,
           "Tax Note": taxMeta.tax_note,
@@ -4154,6 +4177,9 @@ function buildExportRows(){
       "Source Product Number": "",
       "Source Merchant": "",
       "Source Identifier Type": "",
+      "Review Status": item.ReviewStatus || "",
+      "Deduction Status": item.DeductionStatus || "",
+      "Review Note": item.ReviewNote || "",
       "Tax Treatment": taxMeta.tax_treatment,
       "Schedule C Reference": taxMeta.schedule_c_reference,
       "Tax Note": taxMeta.tax_note,
@@ -4197,6 +4223,9 @@ function buildReviewRows(rows){
       Amount: row.Amount,
       "Transaction Amount": row["Transaction Amount"],
       "Split Transaction": row["Split Transaction"],
+      "Review Status": row["Review Status"],
+      "Deduction Status": row["Deduction Status"],
+      "Review Note": row["Review Note"],
       "Schedule C Reference": row["Schedule C Reference"],
       "Tax Treatment": row["Tax Treatment"],
       "Tax Note": row["Tax Note"],
@@ -4601,6 +4630,85 @@ XLSX.utils.book_append_sheet(wb, reviewWs, "Review Items");
 XLSX.writeFile(wb, `schedule-c-categorizer-export-${new Date().toISOString().slice(0, 10)}.xlsx`, { cellDates: true });
 }
 
+function buildQaReviewRows(){
+  const rows = [];
+
+  data.forEach((item, index) => {
+    const categoryName = normalizeCategoryName(item.Category || "Needs Review");
+    const taxMeta = getCategoryTaxMetadata(categoryName);
+
+    if((!item.Splits || !item.Splits.length) && !item.Category){
+      rows.push({
+        index,
+        issue: "Uncategorized transaction",
+        vendor: item.Vendor || item.Title || "",
+        amount: Number(item.Amount) || 0,
+      });
+    }
+
+    if(item.ReviewStatus && item.ReviewStatus !== "Deductible"){
+      rows.push({
+        index,
+        issue: item.ReviewStatus,
+        vendor: item.Vendor || item.Title || "",
+        amount: Number(item.Amount) || 0,
+      });
+    }
+
+    if((!item.Splits || !item.Splits.length) && taxMeta.tax_treatment === "review"){
+      rows.push({
+        index,
+        issue: "Review-tax category",
+        vendor: item.Vendor || item.Title || "",
+        amount: Number(item.Amount) || 0,
+      });
+    }
+
+    (item.Splits || []).forEach((split) => {
+      const splitCategory = normalizeCategoryName(split.Category || "Needs Review");
+      const splitTaxMeta = getCategoryTaxMetadata(splitCategory);
+      const splitReviewStatus = String(split.ReviewStatus || "").trim();
+      if(splitReviewStatus && splitReviewStatus !== "Deductible"){
+        rows.push({
+          index,
+          issue: `Split: ${splitReviewStatus}`,
+          vendor: `${item.Vendor || item.Title || ""} • ${splitCategory}`,
+          amount: Number(split.Amount) || 0,
+        });
+      } else if(splitTaxMeta.tax_treatment === "review"){
+        rows.push({
+          index,
+          issue: "Split: review-tax category",
+          vendor: `${item.Vendor || item.Title || ""} • ${splitCategory}`,
+          amount: Number(split.Amount) || 0,
+        });
+      }
+    });
+  });
+
+  return rows;
+}
+
+function openQaReviewModal(){
+  const rows = buildQaReviewRows();
+  modalTitle.innerText = "QA Review";
+
+  if(!rows.length){
+    modalContent.innerHTML = `<div style="padding:10px;" class="small">No current QA review items.</div>`;
+    openModal();
+    return;
+  }
+
+  modalContent.innerHTML = rows.map((row) => `
+    <div class="modalItem" onclick="jumpToItem(${row.index})">
+      <strong>${escapeHtml(row.issue)}</strong><br>
+      ${escapeHtml(row.vendor)}<br>
+      <span class="small">${Utils.money(row.amount)}</span>
+    </div>
+  `).join("");
+  openModal();
+}
+
 async function connectBank() {
 
   const res = await fetch(
@@ -4791,6 +4899,7 @@ async function submitAIRequest(){
     );
 
     const result = await response.json();
+    aiSuggestionResult = result;
 
     if(!response.ok){
       throw new Error(result.error || "AI request failed");
@@ -4857,6 +4966,7 @@ async function applyAISuggestion(category){
     const amount = aiContext.amount;
     const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === String(selectedItem));
     const resolved = SplitState.detectedResolvedProducts?.[selectedItem] || null;
+    const suggestion = aiSuggestionResult;
     aiContext = null;
 
     if(needsDetectedItemNameConfirmation(selectedItem, resolved)){
@@ -4874,8 +4984,12 @@ async function applyAISuggestion(category){
     const success = await applySplit(category, amount, {
       sourceProductNumber: selectedItem,
       sourceMerchant: SplitState.detectedMerchant || "misc",
-      sourceIdentifierType: parsed?.identifier_type || "unknown"
+      sourceIdentifierType: parsed?.identifier_type || "unknown",
+      reviewStatus: suggestion?.deduction_status || "",
+      deductionStatus: suggestion?.deduction_status || "",
+      reviewNote: [suggestion?.reasoning, suggestion?.tax_consideration].filter(Boolean).join(" | ")
     });
+    aiSuggestionResult = null;
     if(success) openDetectedReceiptItemsModal();
     return;
   }
@@ -4887,6 +5001,9 @@ async function applyAISuggestion(category){
 
   item.Category = category;
   item.Splits = [];
+  item.ReviewStatus = aiSuggestionResult?.deduction_status || "";
+  item.DeductionStatus = aiSuggestionResult?.deduction_status || "";
+  item.ReviewNote = [aiSuggestionResult?.reasoning, aiSuggestionResult?.tax_consideration].filter(Boolean).join(" | ");
 
   updateTotals();
   updateProgress();
@@ -4896,11 +5013,15 @@ async function applyAISuggestion(category){
       .from("transactions")
       .update({
         category: category,
-        splits: []
+        splits: [],
+        review_status: item.ReviewStatus || "",
+        deduction_status: item.DeductionStatus || "",
+        review_note: item.ReviewNote || ""
       })
       .eq("id", item.id);
   }
 
+  aiSuggestionResult = null;
   closeModal();
   goNext();
 }
