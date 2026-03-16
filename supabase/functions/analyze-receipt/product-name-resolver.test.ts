@@ -100,3 +100,10 @@ Deno.test("isPlausibleSamsClubMatch rejects unrelated search hits", () => {
     false,
   );
 });
+
+Deno.test("isPlausibleSamsClubMatch rejects brand-only overlap", () => {
+  assertEquals(
+    isPlausibleSamsClubMatch("MM PURE OO", "Member's Mark Women's Favorite Soft Full-Zip Jacket"),
+    false,
+  );
+});

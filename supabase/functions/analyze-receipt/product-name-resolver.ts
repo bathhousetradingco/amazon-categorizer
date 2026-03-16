@@ -102,9 +102,6 @@ export async function resolveProductNames(
       continue;
     }
 
-    if (merchant === "sams_club") {
-      unresolvedForSearch.push({ itemNumber });
-    }
   }
 
   if (merchant === "sams_club" && unresolvedForSearch.length) {
@@ -213,8 +210,14 @@ export function isPlausibleSamsClubMatch(
 
   const overlap = receiptTokens.filter((token) => normalizedCandidate.includes(token));
   const overlapRatio = overlap.length / receiptTokens.length;
+  const distinctiveReceiptTokens = receiptTokens.filter((token) => !SAM_SEARCH_NOISE_TOKENS.has(token));
+  const distinctiveOverlap = distinctiveReceiptTokens.filter((token) => normalizedCandidate.includes(token));
 
-  return overlapRatio >= 0.5 || overlap.length >= 2;
+  if (!distinctiveOverlap.length) return false;
+
+  return overlapRatio >= 0.75 ||
+    distinctiveOverlap.length >= 2 ||
+    (distinctiveReceiptTokens.length === 1 && distinctiveOverlap.length === 1);
 }
 
 async function loadVerifiedLookups(
@@ -283,7 +286,9 @@ async function searchSamsClubByItemNumber(
   itemNumber: string,
   receiptLabel?: string,
 ): Promise<SearchResolution | null> {
-  const serpApiResolution = await searchSamsClubBySerpApi(itemNumber);
+  if (!cleanLookupLabel(receiptLabel)) return null;
+
+  const serpApiResolution = await searchSamsClubBySerpApi(itemNumber, receiptLabel);
   if (serpApiResolution?.product_name) {
     return serpApiResolution;
   }
@@ -306,41 +311,57 @@ async function searchSamsClubByItemNumber(
   return null;
 }
 
-async function searchSamsClubBySerpApi(itemNumber: string): Promise<SearchResolution | null> {
+async function searchSamsClubBySerpApi(
+  itemNumber: string,
+  receiptLabel?: string,
+): Promise<SearchResolution | null> {
   const serpApiKey = getSerpApiKey();
   if (!serpApiKey) return null;
 
   try {
-    const url = new URL("https://serpapi.com/search.json");
-    url.searchParams.set("engine", "google_shopping");
-    url.searchParams.set("q", `${itemNumber} sams club`);
-    url.searchParams.set("num", "5");
-    url.searchParams.set("api_key", serpApiKey);
+    for (const query of buildSamsClubSerpApiQueries(itemNumber, receiptLabel)) {
+      const url = new URL("https://serpapi.com/search.json");
+      url.searchParams.set("engine", "google_shopping");
+      url.searchParams.set("q", query);
+      url.searchParams.set("num", "5");
+      url.searchParams.set("api_key", serpApiKey);
 
-    const response = await fetchWithTimeout(url, {}, 10000);
-    if (!response.ok) return null;
+      const response = await fetchWithTimeout(url, {}, 10000);
+      if (!response.ok) continue;
 
-    const payload = await response.json().catch(() => null);
-    const shoppingResults = Array.isArray(payload?.shopping_results) ? payload.shopping_results : [];
-    const organicResults = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
-    const candidate = [...shoppingResults, ...organicResults].find((entry) => {
-      const source = String(entry?.source || entry?.merchant || entry?.seller || "");
-      const link = String(entry?.link || entry?.product_link || entry?.serpapi_link || "");
-      return /sam'?s club/i.test(source) || /samsclub\.com/i.test(link);
-    }) || shoppingResults[0] || organicResults[0] || null;
+      const payload = await response.json().catch(() => null);
+      const shoppingResults = Array.isArray(payload?.shopping_results) ? payload.shopping_results : [];
+      const organicResults = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+      const entries = [...shoppingResults, ...organicResults];
 
-    const title = cleanLookupLabel(candidate?.title);
-    const sourceUrl = normalizeSearchResultUrl(String(candidate?.link || candidate?.product_link || ""));
-    if (!title) return null;
+      for (const entry of entries) {
+        const title = cleanLookupLabel(entry?.title);
+        const sourceUrl = normalizeSearchResultUrl(String(entry?.link || entry?.product_link || ""));
+        if (!title) continue;
+        if (receiptLabel && !isPlausibleSamsClubMatch(receiptLabel, title)) continue;
 
-    return {
-      product_name: title,
-      source_url: sourceUrl || null,
-    };
+        return {
+          product_name: title,
+          source_url: sourceUrl || null,
+        };
+      }
+    }
+
+    return null;
   } catch (error) {
     console.warn("SerpApi Sam's Club lookup failed", { itemNumber, error });
     return null;
   }
+}
+
+function buildSamsClubSerpApiQueries(itemNumber: string, receiptLabel?: string): string[] {
+  const expandedLabel = expandSamsReceiptLabel(receiptLabel);
+
+  return [
+    expandedLabel ? `${itemNumber} ${expandedLabel} sams club` : "",
+    expandedLabel ? `"${itemNumber}" "${expandedLabel}" "sam's club"` : "",
+    `${itemNumber} sams club`,
+  ].filter(Boolean);
 }
 
 function buildSamsClubSearchQueries(itemNumber: string, receiptLabel?: string): string[] {
@@ -441,3 +462,11 @@ function getSerpApiKey(): string {
     return "";
   }
 }
+
+const SAM_SEARCH_NOISE_TOKENS = new Set([
+  "club",
+  "mark",
+  "member",
+  "members",
+  "sams",
+]);
