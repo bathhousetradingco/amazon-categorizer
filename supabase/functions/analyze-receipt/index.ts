@@ -3,7 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchWithTimeout } from "../_shared/fetch.ts";
 import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from "../_shared/http.ts";
 import { dedupeItemNumbers, extractItemNumbersFromLineItems, isLikelyLineItem } from "./line-item-parser.ts";
-import { extractSamsClubParsedItems } from "./sams-club-parser.ts";
+import { resolveProductNames } from "./product-name-resolver.ts";
+import { parseReceiptByMerchant } from "./receipt-parser.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -26,9 +27,10 @@ Deno.serve(async (req) => {
     }
 
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const transactionContext = await getUserTransactionContext(serviceClient, transactionId, user.id);
     const receiptPath = payloadReceiptUrl
       ? normalizeReceiptPath(payloadReceiptUrl)
-      : await getUserReceiptPath(serviceClient, transactionId, user.id);
+      : transactionContext.receipt_url;
 
     const signedUrl = await createReceiptSignedUrl(serviceClient, receiptPath);
     const extraction = await extractReceiptData(signedUrl);
@@ -44,25 +46,41 @@ Deno.serve(async (req) => {
       ...lineItemNumbers,
       ...modelItemNumbers,
     ]);
-    const parsedItems = extractSamsClubParsedItems(lines, itemNumbers);
+    const parsedReceipt = parseReceiptByMerchant({
+      lines,
+      candidateItemNumbers: itemNumbers,
+      transactionName: transactionContext.name,
+      merchantName: transactionContext.merchant_name,
+    });
+    const resolvedProducts = await resolveProductNames(
+      serviceClient,
+      parsedReceipt.merchant,
+      parsedReceipt.item_numbers,
+      parsedReceipt.parsed_items,
+    );
 
     const matchingLines = lines.filter((line) => isLikelyLineItem(line));
 
     const debug = {
+      merchant: parsedReceipt.merchant,
       provider: extraction.provider,
       raw_receipt_text: extraction.fullText,
       total_lines_detected: lines.length,
       lines_matching_item_number_pattern: matchingLines,
-      item_numbers_found: itemNumbers,
-      parsed_items: parsedItems,
+      item_numbers_found: parsedReceipt.item_numbers,
+      parsed_items: parsedReceipt.parsed_items,
+      parser_debug: parsedReceipt.debug,
+      resolved_products: resolvedProducts,
       model_item_numbers: extraction.modelItemNumbers,
       filtered_model_item_numbers: modelItemNumbers,
     };
 
     return jsonResponse({
       success: true,
-      item_numbers: itemNumbers,
-      parsed_items: parsedItems,
+      merchant: parsedReceipt.merchant,
+      item_numbers: parsedReceipt.item_numbers,
+      parsed_items: parsedReceipt.parsed_items,
+      resolved_products: resolvedProducts,
       debug,
     });
   } catch (error) {
@@ -114,14 +132,17 @@ function normalizeReceiptPath(value: string): string {
   }
 }
 
-async function getUserReceiptPath(
+async function getUserTransactionContext(
   serviceClient: any,
   transactionId: string,
   userId: string,
-): Promise<string> {
-  const { data, error }: { data: { receipt_url?: string | null } | null; error: any } = await serviceClient
+): Promise<{ receipt_url: string; name?: string | null; merchant_name?: string | null }> {
+  const { data, error }: {
+    data: { receipt_url?: string | null; name?: string | null; merchant_name?: string | null } | null;
+    error: any;
+  } = await serviceClient
     .from("transactions")
-    .select("receipt_url")
+    .select("receipt_url, name, merchant_name")
     .eq("id", transactionId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -129,7 +150,11 @@ async function getUserReceiptPath(
   if (error) throw new HttpError(500, "Failed to load transaction", error);
   if (!data?.receipt_url) throw new HttpError(404, "No receipt attached");
 
-  return data.receipt_url;
+  return {
+    receipt_url: data.receipt_url,
+    name: data.name ?? null,
+    merchant_name: data.merchant_name ?? null,
+  };
 }
 
 async function createReceiptSignedUrl(
@@ -255,4 +280,3 @@ function filterModelItemNumbers(values: string[], lines: string[]): string[] {
 
   return dedupeItemNumbers(values).filter((value) => likelyItemNumbers.has(value));
 }
-

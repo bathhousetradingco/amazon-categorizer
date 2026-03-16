@@ -1,16 +1,9 @@
 import { extractLineItemNumber, normalizeProductNumber } from "./line-item-parser.ts";
+import type { ParsedReceiptItem } from "./parser-types.ts";
 
 const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT\s+1\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
 const INST_SV_LINE_PATTERN = /^INST\s+SV\b/i;
 const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*$/;
-
-export type ParsedReceiptItem = {
-  product_number: string;
-  quantity: number;
-  unit_price: number;
-  total_price: number;
-  instant_savings_discount?: number;
-};
 
 export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[]): ParsedReceiptItem[] {
   const parsedItems: ParsedReceiptItem[] = [];
@@ -35,9 +28,14 @@ export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[
 
     const parsedItem: ParsedReceiptItem = {
       product_number: normalizedProductNumber,
+      identifier_type: "item_number",
       quantity,
       unit_price: unitPrice,
       total_price: totalPrice,
+      receipt_label: extractReceiptLabel(line),
+      line_index: i,
+      raw_lines: [line, nextLine, String(lines[i + 2] || "").trim()].filter(Boolean),
+      parser_confidence: "high",
     };
 
     const instantSavingsLine = String(lines[i + 2] || "").trim();
@@ -61,4 +59,18 @@ function parseInstantSavingsAmount(line: string): number {
 
   const parsed = Number.parseFloat(match[1]);
   return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function extractReceiptLabel(line: string): string {
+  const text = String(line || "").trim();
+  if (!text) return "";
+
+  const withoutItemNumber = text.replace(/^.*?(?:^|\D)\d{9,12}(?=\D|$)\s*/, "");
+  const withoutTrailingPrice = withoutItemNumber.replace(/\s+\d+(?:\.\d{1,2})\s*[A-Z.]*\s*$/i, "");
+  const cleaned = withoutTrailingPrice
+    .replace(/\s+/g, " ")
+    .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "")
+    .trim();
+
+  return cleaned;
 }

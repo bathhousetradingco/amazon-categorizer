@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildAskAiPrompt, normalizeCategories } from "./prompt.ts";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -55,7 +56,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { userInput, categories } = await req.json();
+    const { userInput, categories, transactionContext, receiptItemContext } = await req.json();
 
     if (!userInput || !Array.isArray(categories)) {
       return new Response(JSON.stringify({ error: "Missing userInput or categories" }), {
@@ -64,26 +65,30 @@ Deno.serve(async (req) => {
       });
     }
 
-    const prompt = `
-You are helping categorize a small business transaction for Bathhouse Trading Co.
-
-User context:
-"${userInput}"
-
-Choose ONE category from this list ONLY:
-${categories.map((c: string) => `- ${c}`).join("\n")}
-
-Return STRICT JSON ONLY:
-{
-  "category": "...",
-  "reasoning": "...",
-  "confidence": "High|Medium|Low"
-}
-
-Rules:
-- category MUST match exactly one of the provided categories
-- if unsure: "Needs Review"
-`;
+    const normalizedCategories = normalizeCategories(categories);
+    const prompt = buildAskAiPrompt(
+      {
+        user_input: String(userInput),
+        transaction: transactionContext && typeof transactionContext === "object"
+          ? {
+            title: String(transactionContext.title || "").trim() || null,
+            vendor: String(transactionContext.vendor || "").trim() || null,
+            amount: Number(transactionContext.amount),
+            institution: String(transactionContext.institution || "").trim() || null,
+            current_category: String(transactionContext.current_category || "").trim() || null,
+          }
+          : undefined,
+        receipt_item: receiptItemContext && typeof receiptItemContext === "object"
+          ? {
+            item_number: String(receiptItemContext.item_number || "").trim() || null,
+            product_name: String(receiptItemContext.product_name || "").trim() || null,
+            receipt_label: String(receiptItemContext.receipt_label || "").trim() || null,
+            amount: Number(receiptItemContext.amount),
+          }
+          : undefined,
+      },
+      normalizedCategories,
+    );
 
     const openaiRes = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",

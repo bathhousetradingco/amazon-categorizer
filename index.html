@@ -1443,6 +1443,128 @@ const categoryAliases = {
   "Line Items": "Sales Tax Paid"
 
 };
+
+const categoryTaxMetadata = {
+  "COGS - Ingredients": {
+    tax_treatment: "cogs",
+    schedule_c_reference: "Schedule C Part III - Cost of Goods Sold",
+    tax_note: "Direct materials that become part of inventory.",
+  },
+  "COGS - Packaging": {
+    tax_treatment: "cogs",
+    schedule_c_reference: "Schedule C Part III - Cost of Goods Sold",
+    tax_note: "Packaging that stays with inventory at sale.",
+  },
+  "COGS - Resale Inventory": {
+    tax_treatment: "cogs",
+    schedule_c_reference: "Schedule C Part III - Cost of Goods Sold",
+    tax_note: "Finished goods purchased for resale.",
+  },
+  "COGS - Production Supplies": {
+    tax_treatment: "review",
+    schedule_c_reference: "Review - COGS vs Line 22 Supplies",
+    tax_note: "Indirect production consumables may need accountant review before filing.",
+  },
+  "COGS - Shipping from Suppliers": {
+    tax_treatment: "cogs",
+    schedule_c_reference: "Schedule C Part III - Cost of Goods Sold",
+    tax_note: "Freight-in commonly attaches to inventory cost.",
+  },
+  "Shipping Supplies": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 22 or Line 27a review",
+    tax_note: "Customer-order shipping materials may be treated as supplies or other expense.",
+  },
+  "Shipping to Customers": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 27a Other Expenses",
+    tax_note: "Postage and delivery expense typically exported as other expense.",
+  },
+  "Advertising & Marketing": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 8 - Advertising",
+    tax_note: "Maps cleanly to advertising expense.",
+  },
+  "Commissions & Merchant Fees": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 10 - Commissions and fees",
+    tax_note: "Processor and marketplace fees.",
+  },
+  "Software & Subscriptions": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 27a - Other Expenses",
+    tax_note: "Software subscriptions should usually remain itemized as other expenses.",
+  },
+  "Insurance": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 15 - Insurance",
+    tax_note: "Business and product liability coverage.",
+  },
+  "Utilities": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 25 - Utilities",
+    tax_note: "Utilities used in the business.",
+  },
+  "Office Supplies": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 18 - Office expense",
+    tax_note: "Office consumables and admin supplies.",
+  },
+  "Equipment": {
+    tax_treatment: "review",
+    schedule_c_reference: "Review - current expense vs depreciation",
+    tax_note: "Assets may require capitalization, depreciation, or Section 179 treatment.",
+  },
+  "Meals": {
+    tax_treatment: "review",
+    schedule_c_reference: "Schedule C Line 24b - Meals",
+    tax_note: "Deductibility may be limited and substantiation is required.",
+  },
+  "Professional Services": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 17 - Legal and professional services",
+    tax_note: "CPA, legal, and outside professional support.",
+  },
+  "Fuel": {
+    tax_treatment: "review",
+    schedule_c_reference: "Review - vehicle expense support required",
+    tax_note: "Fuel often needs mileage/method support before it belongs on Schedule C line 9.",
+  },
+  "Taxes & Licenses": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 23 - Taxes and licenses",
+    tax_note: "Business taxes, filing fees, and licenses other than federal income tax.",
+  },
+  "Sales Tax Paid": {
+    tax_treatment: "review",
+    schedule_c_reference: "Review - usually fold into underlying expense or inventory cost",
+    tax_note: "Standalone sales tax buckets often need consolidation before filing.",
+  },
+  "Interest Expense": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 16b - Other interest",
+    tax_note: "Business credit card or loan interest, if properly separated from principal.",
+  },
+  "Needs Review": {
+    tax_treatment: "review",
+    schedule_c_reference: "Review required before export",
+    tax_note: "Not ready for tax filing.",
+  },
+};
+
+function normalizeCategoryName(name){
+  const normalized = String(name || "").trim();
+  return categoryAliases[normalized] || normalized || "Needs Review";
+}
+
+function getCategoryTaxMetadata(name){
+  const normalized = normalizeCategoryName(name);
+  return categoryTaxMetadata[normalized] || {
+    tax_treatment: "review",
+    schedule_c_reference: "Review required before export",
+    tax_note: "No tax mapping has been assigned yet.",
+  };
+}
 /* ================= SEARCH ================= */
 
 function openSearchModal(){
@@ -2407,8 +2529,10 @@ const SplitState = {
   manualAmount: 0,
   manualCategory: null,
   highlightedIndex: null,
+  detectedMerchant: "misc",
   detectedItemNumbers: [],
   detectedParsedItems: [],
+  detectedResolvedProducts: {},
   detectedLineItemPrices: {},
   detectedReceiptTax: null,
   detectedReceiptSubtotal: null,
@@ -2416,6 +2540,7 @@ const SplitState = {
   receiptMathValidation: null,
   receiptItemDrafts: {},
   receiptItemEditorOpen: {},
+  receiptNameDrafts: {},
   selectedDetectedItem: null,
   receiptExpanded: false,
   keypad: {
@@ -2491,6 +2616,7 @@ function parseReceiptTotals(rawReceiptText){
 }
 
 function validateReceiptMath(parsedItems, receiptTotals, options = {}){
+  const merchant = String(options.merchant || "misc");
   const itemNumbers = Array.isArray(options.itemNumbers) ? options.itemNumbers : [];
   const lineItemPrices = options.lineItemPrices && typeof options.lineItemPrices === "object"
     ? options.lineItemPrices
@@ -2501,6 +2627,13 @@ function validateReceiptMath(parsedItems, receiptTotals, options = {}){
   const effectiveParsedItems = [
     ...(parsedItems || []).filter((entry) => String(entry?.product_number || "").trim())
   ];
+
+  if(merchant === "walmart"){
+    effectiveParsedItems.forEach((entry) => {
+      if(!Number(entry?.quantity)) entry.quantity = 1;
+      if(!Number(entry?.unit_price) && Number(entry?.total_price)) entry.unit_price = Number(entry.total_price);
+    });
+  }
 
   itemNumbers.forEach((num) => {
     const normalized = String(num || "").trim();
@@ -2728,6 +2861,7 @@ async function analyzeSplitReceipt(){
     const { response, result } = await invokeEdgeFunction("analyze-receipt", payload);
 
     const rawReceiptText = String(result?.debug?.raw_receipt_text || "");
+    const detectedMerchant = String(result?.merchant || result?.debug?.merchant || "misc").trim() || "misc";
     const totalLinesDetected = Number(result?.debug?.total_lines_detected || 0);
     const matchingLines = Array.isArray(result?.debug?.lines_matching_item_number_pattern)
       ? result.debug.lines_matching_item_number_pattern
@@ -2735,10 +2869,14 @@ async function analyzeSplitReceipt(){
     const itemNumbers = Array.isArray(result?.item_numbers)
       ? result.item_numbers.map((value) => String(value).trim()).filter(Boolean)
       : [];
+    const resolvedProducts = result?.resolved_products && typeof result.resolved_products === "object"
+      ? result.resolved_products
+      : {};
     const parsedItems = Array.isArray(result?.parsed_items)
       ? result.parsed_items
         .map((entry) => ({
           product_number: String(entry?.product_number || "").trim(),
+          receipt_label: String(entry?.receipt_label || "").trim(),
           quantity: Number(entry?.quantity || 0),
           unit_price: Number(entry?.unit_price || 0),
           total_price: Number(entry?.total_price || 0)
@@ -2756,6 +2894,7 @@ async function analyzeSplitReceipt(){
     }, {});
     const receiptTotals = parseReceiptTotals(rawReceiptText);
     const receiptMathValidation = validateReceiptMath(parsedItems, receiptTotals, {
+      merchant: detectedMerchant,
       itemNumbers,
       lineItemPrices: parsedLineItemPrices
     });
@@ -2765,6 +2904,7 @@ async function analyzeSplitReceipt(){
     console.groupEnd();
 
     console.log("TOTAL LINES DETECTED:", totalLinesDetected);
+    console.log("RECEIPT MERCHANT:", detectedMerchant);
     console.log("LINES MATCHING ITEM NUMBER PATTERN:", matchingLines);
     console.log("ITEM NUMBERS FOUND:", itemNumbers);
     console.log("PARSED PURCHASE LINES:", parsedItems);
@@ -2827,7 +2967,9 @@ async function analyzeSplitReceipt(){
     }
 
     SplitState.detectedItemNumbers = itemNumbers;
+    SplitState.detectedMerchant = detectedMerchant;
     SplitState.detectedParsedItems = parsedItems;
+    SplitState.detectedResolvedProducts = resolvedProducts;
     SplitState.detectedLineItemPrices = parsedLineItemPrices;
     SplitState.detectedReceiptTax = receiptTotals.tax;
     SplitState.detectedReceiptSubtotal = receiptTotals.subtotal;
@@ -2856,10 +2998,12 @@ function openDetectedReceiptItemsModal(){
   const parsedItemsByProduct = new Map(
     (SplitState.detectedParsedItems || []).map((entry) => [entry.product_number, entry])
   );
+  const resolvedProducts = SplitState.detectedResolvedProducts || {};
   const lineItemPrices = SplitState.detectedLineItemPrices || {};
   const subtotal = SplitState.detectedReceiptSubtotal;
   const tax = SplitState.detectedReceiptTax;
   const receiptTotal = SplitState.detectedReceiptTotal;
+  const merchant = String(SplitState.detectedMerchant || "misc").replace(/_/g, " ");
 
   const getDetectedItemAmount = (itemNumber) => {
     const parsed = parsedItemsByProduct.get(itemNumber);
@@ -2885,6 +3029,7 @@ function openDetectedReceiptItemsModal(){
       const parsed = parsedItemsByProduct.get(num) || (Number.isFinite(lineItemPrices[num])
         ? { quantity: 1, unit_price: lineItemPrices[num], total_price: lineItemPrices[num] }
         : null);
+      const resolved = resolvedProducts?.[num] || null;
       const amount = getDetectedItemAmount(num);
       const assigned = getAssignedForItem(num);
       const assignedCategories = (item.Splits || []).filter((split) => String(split?.SourceProductNumber || "") === String(num)).map((split) => split?.Category).filter(Boolean);
@@ -2892,17 +3037,25 @@ function openDetectedReceiptItemsModal(){
       const purchaseLine = parsed
         ? `${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}`
         : null;
+      const displayName = resolved?.product_name || parsed?.receipt_label || "Name unavailable";
+      const nameMeta = resolved?.source
+        ? `${String(resolved.source).replace(/_/g, " ")}${resolved?.confidence ? ` • ${resolved.confidence}` : ""}`
+        : (parsed?.receipt_label ? "receipt label" : "");
+      const canConfirmResolvedName = Boolean(displayName && displayName !== "Name unavailable");
       return `
         <div class="splitItemRow">
           <div><span class="currentCategoryBadge" style="margin-top:0;">${displayCategory}</span></div>
           <div class="splitItemMeta">
-            <strong><code>${num}</code></strong>
+            <strong>${displayName}</strong>
+            <div class="small"><code>${num}</code></div>
             <div class="small">${amount ? Utils.money(amount) : "No total price detected"}</div>
           </div>
-          <div class="small">${purchaseLine || "Quantity/price details unavailable"}</div>
+          <div class="small">${purchaseLine || "Quantity/price details unavailable"}${nameMeta ? `<br>${nameMeta}` : ""}</div>
           <div class="splitItemActions">
             <button class="touchButton" style="background:#1e3a8a;color:#fff;" onclick="openDetectedItemCategoryModal('${escapeForSingleQuote(num)}')" ${amount ? "" : "disabled"}>Choose Category</button>
             <button class="touchButton" style="background:#000;color:#fff;" onclick="askAIForDetectedItem('${escapeForSingleQuote(num)}')">Ask AI</button>
+            <button class="touchButton" style="background:#0f766e;color:#fff;" onclick="confirmDetectedItemName('${escapeForSingleQuote(num)}')" ${canConfirmResolvedName ? "" : "disabled"}>Confirm Name</button>
+            <button class="touchButton" style="background:#7c3aed;color:#fff;" onclick="openDetectedItemNameModal('${escapeForSingleQuote(num)}')">Edit Name</button>
             ${assigned > 0 ? `<button class="touchButton" style="background:#0f766e;color:#fff;" disabled>Assigned ${Utils.money(assigned)}</button>` : ""}
           </div>
         </div>
@@ -2922,6 +3075,7 @@ function openDetectedReceiptItemsModal(){
     <div class="splitModalLayout" style="padding:8px;">
       <div class="lineItemsScroller" style="display:grid;gap:10px;">
         <h3 style="margin:0;">Detected Items:</h3>
+        <div class="small">Merchant parser: <strong>${merchant}</strong></div>
         ${listHtml}
         ${totalsHtml}
       </div>
@@ -2943,6 +3097,137 @@ function openDetectedItemCategoryModal(itemNumber){
   openModal();
 }
 
+function openDetectedItemNameModal(itemNumber){
+  setModalBackAction(() => openDetectedReceiptItemsModal());
+  const normalized = String(itemNumber || "").trim();
+  if(!normalized) return;
+
+  const resolved = SplitState.detectedResolvedProducts?.[normalized] || null;
+  const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
+  const suggestedName = SplitState.receiptNameDrafts?.[normalized]
+    || resolved?.product_name
+    || parsed?.receipt_label
+    || "";
+
+  modalTitle.innerText = `Edit Product Name • ${normalized}`;
+  modalContent.innerHTML = `
+    <div style="padding:10px;display:grid;gap:10px;">
+      <div class="small">Use this when the detected name is wrong or too vague. Saving here creates a verified mapping for future receipts.</div>
+      <div class="small"><strong>Current name:</strong> ${resolved?.product_name || parsed?.receipt_label || "Unknown"}</div>
+      <label class="small" for="detectedItemNameInput">Verified product name</label>
+      <input id="detectedItemNameInput" type="text" value="${escapeHtml(suggestedName)}" placeholder="Enter the correct product name">
+      <label class="small" for="detectedItemReasonInput">Reason (optional)</label>
+      <input id="detectedItemReasonInput" type="text" placeholder="Example: receipt label was abbreviated">
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;">
+        <button class="touchButton" onclick="openDetectedReceiptItemsModal()" style="background:#6b7280;color:#fff;">Cancel</button>
+        <button class="touchButton" onclick="saveDetectedItemName('${escapeForSingleQuote(normalized)}')" style="background:#0f766e;color:#fff;">Save Name</button>
+      </div>
+    </div>
+  `;
+
+  openModal();
+}
+
+async function confirmDetectedItemName(itemNumber){
+  const normalized = String(itemNumber || "").trim();
+  const resolved = SplitState.detectedResolvedProducts?.[normalized] || null;
+  const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
+  const productName = String(resolved?.product_name || parsed?.receipt_label || "").trim();
+
+  if(!normalized || !productName){
+    alert("No product name available to confirm.");
+    return;
+  }
+
+  await saveVerifiedProductName({
+    merchant: SplitState.detectedMerchant || "any",
+    itemNumber: normalized,
+    newProductName: productName,
+    previousProductName: resolved?.product_name || "",
+    reason: "Confirmed from receipt analysis",
+  });
+}
+
+async function saveDetectedItemName(itemNumber){
+  const normalized = String(itemNumber || "").trim();
+  const nameInput = document.getElementById("detectedItemNameInput");
+  const reasonInput = document.getElementById("detectedItemReasonInput");
+  const newProductName = String(nameInput?.value || "").trim();
+  const reason = String(reasonInput?.value || "").trim();
+  const previousProductName = String(SplitState.detectedResolvedProducts?.[normalized]?.product_name || "").trim();
+
+  if(!normalized || !newProductName){
+    alert("Enter a product name before saving.");
+    return;
+  }
+
+  SplitState.receiptNameDrafts[normalized] = newProductName;
+  await saveVerifiedProductName({
+    merchant: SplitState.detectedMerchant || "any",
+    itemNumber: normalized,
+    newProductName,
+    previousProductName,
+    reason,
+  });
+}
+
+async function saveVerifiedProductName({ merchant, itemNumber, newProductName, previousProductName, reason }){
+  const normalizedMerchant = String(merchant || "any").trim() || "any";
+  const normalized = String(itemNumber || "").trim();
+  const cleanName = String(newProductName || "").replace(/\s+/g, " ").trim();
+  const oldName = String(previousProductName || "").replace(/\s+/g, " ").trim();
+  const cleanReason = String(reason || "").replace(/\s+/g, " ").trim();
+
+  if(!normalized || !cleanName){
+    alert("Missing product lookup values.");
+    return false;
+  }
+
+  try {
+    const { error: lookupError } = await supabaseClient
+      .from("product_lookup")
+      .upsert({
+        merchant: normalizedMerchant,
+        item_number: normalized,
+        product_name: cleanName,
+        verified_by_user: true
+      }, { onConflict: "merchant,item_number" });
+
+    if(lookupError) throw lookupError;
+
+    const { error: auditError } = await supabaseClient
+      .from("product_lookup_audit")
+      .insert({
+        merchant: normalizedMerchant,
+        item_number: normalized,
+        previous_product_name: oldName || null,
+        new_product_name: cleanName,
+        reason: cleanReason || null
+      });
+
+    if(auditError) console.warn("Product lookup audit insert failed", auditError);
+
+    const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
+    SplitState.detectedResolvedProducts = {
+      ...(SplitState.detectedResolvedProducts || {}),
+      [normalized]: {
+        product_name: cleanName,
+        source: "verified_lookup",
+        confidence: "high",
+        ...(parsed?.receipt_label ? { receipt_label: parsed.receipt_label } : {})
+      }
+    };
+
+    alert("Verified product name saved.");
+    openDetectedReceiptItemsModal();
+    return true;
+  } catch(error){
+    console.error("Failed to save verified product name", error);
+    alert("Unable to save verified product name.");
+    return false;
+  }
+}
+
 async function applyDetectedItemCategory(itemNumber, category){
   const normalized = String(itemNumber || "").trim();
   if(!normalized){
@@ -2962,7 +3247,11 @@ async function applyDetectedItemCategory(itemNumber, category){
     return;
   }
 
-  const success = await applySplit(category, parseFloat(amount.toFixed(2)), { sourceProductNumber: normalized });
+  const success = await applySplit(category, parseFloat(amount.toFixed(2)), {
+    sourceProductNumber: normalized,
+    sourceMerchant: SplitState.detectedMerchant || "misc",
+    sourceIdentifierType: parsed?.identifier_type || "unknown"
+  });
   if(success){
     openDetectedReceiptItemsModal();
   }
@@ -3491,7 +3780,9 @@ async function applySplit(category, amount, options = {}){
   item.Splits.push({
     Category: category,
     Amount: parseFloat(amount.toFixed(2)),
-    ...(options.sourceProductNumber ? { SourceProductNumber: options.sourceProductNumber } : {})
+    ...(options.sourceProductNumber ? { SourceProductNumber: options.sourceProductNumber } : {}),
+    ...(options.sourceMerchant ? { SourceMerchant: options.sourceMerchant } : {}),
+    ...(options.sourceIdentifierType ? { SourceIdentifierType: options.sourceIdentifierType } : {})
   });
   item.Category = "SPLIT";
   SplitState.highlightedIndex = item.Splits.length - 1;
@@ -3739,6 +4030,94 @@ function toExportFileSlug(categoryName){
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "category";
+}
+
+function buildExportRows(){
+  const rows = [];
+
+  data.forEach((item) => {
+    const base = {
+      Date: toExcelDateValue(item.Date),
+      Vendor: item.Vendor || "",
+      Description: item.Title || "",
+      Institution: item.Institution || "",
+      "Receipt Attached": !!item.receipt_url ? "Yes" : "No",
+      Notes: item.Notes || item.notes || "",
+      "Transaction Amount": Number(item.Amount) || 0,
+    };
+
+    if(Array.isArray(item.Splits) && item.Splits.length){
+      item.Splits.forEach((split) => {
+        const categoryName = normalizeCategoryName(split.Category || "Needs Review");
+        const taxMeta = getCategoryTaxMetadata(categoryName);
+        rows.push({
+          ...base,
+          Category: categoryName,
+          Amount: Number(split.Amount) || 0,
+          "Split Transaction": "Yes",
+          "Source Product Number": split.SourceProductNumber || "",
+          "Source Merchant": split.SourceMerchant || "",
+          "Source Identifier Type": split.SourceIdentifierType || "",
+          "Tax Treatment": taxMeta.tax_treatment,
+          "Schedule C Reference": taxMeta.schedule_c_reference,
+          "Tax Note": taxMeta.tax_note,
+        });
+      });
+      return;
+    }
+
+    const categoryName = normalizeCategoryName(item.Category || "Needs Review");
+    const taxMeta = getCategoryTaxMetadata(categoryName);
+    rows.push({
+      ...base,
+      Category: categoryName,
+      Amount: Number(item.Amount) || 0,
+      "Split Transaction": "No",
+      "Source Product Number": "",
+      "Source Merchant": "",
+      "Source Identifier Type": "",
+      "Tax Treatment": taxMeta.tax_treatment,
+      "Schedule C Reference": taxMeta.schedule_c_reference,
+      "Tax Note": taxMeta.tax_note,
+    });
+  });
+
+  return rows;
+}
+
+function buildSummaryRows(rows, key){
+  const totalsByKey = {};
+
+  rows.forEach((row) => {
+    const bucket = String(row[key] || "Unassigned");
+    totalsByKey[bucket] = (totalsByKey[bucket] || 0) + (Number(row.Amount) || 0);
+  });
+
+  return Object.keys(totalsByKey)
+    .sort((left, right) => left.localeCompare(right))
+    .map((bucket) => ({
+      [key]: bucket,
+      Amount: Number(totalsByKey[bucket].toFixed(2)),
+    }));
+}
+
+function formatWorksheetNumbers(ws, amountColumnIndexes = []){
+  const range = XLSX.utils.decode_range(ws["!ref"] || "A1:A1");
+
+  for(let r = 1; r <= range.e.r; r++){
+    const dateCellAddress = XLSX.utils.encode_cell({ r, c: 0 });
+    const dateCell = ws[dateCellAddress];
+    if(dateCell && dateCell.t === "d") dateCell.z = "yyyy-mm-dd";
+
+    amountColumnIndexes.forEach((columnIndex) => {
+      const amountCellAddress = XLSX.utils.encode_cell({ r, c: columnIndex });
+      const amountCell = ws[amountCellAddress];
+      if(amountCell){
+        amountCell.t = "n";
+        amountCell.z = "0.00";
+      }
+    });
+  }
 }
 
 function exportCurrentCategoryBreakdown(){
@@ -4096,10 +4475,21 @@ progressText.innerText=`${done} of ${total} categorized (${percent}%)`;
 /* Export */
 
 function exportExcel(){
-const ws=XLSX.utils.json_to_sheet(data);
-const wb=XLSX.utils.book_new();
-XLSX.utils.book_append_sheet(wb,ws,"Categorized");
-XLSX.writeFile(wb,"Categorized.xlsx");
+const exportRows = buildExportRows();
+const detailWs = XLSX.utils.json_to_sheet(exportRows);
+formatWorksheetNumbers(detailWs, [6, 8]);
+
+const summaryByCategoryWs = XLSX.utils.json_to_sheet(buildSummaryRows(exportRows, "Category"));
+formatWorksheetNumbers(summaryByCategoryWs, [1]);
+
+const summaryByTaxWs = XLSX.utils.json_to_sheet(buildSummaryRows(exportRows, "Schedule C Reference"));
+formatWorksheetNumbers(summaryByTaxWs, [1]);
+
+const wb = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb, detailWs, "Detail");
+XLSX.utils.book_append_sheet(wb, summaryByCategoryWs, "By Category");
+XLSX.utils.book_append_sheet(wb, summaryByTaxWs, "By Tax Bucket");
+XLSX.writeFile(wb, `schedule-c-categorizer-export-${new Date().toISOString().slice(0, 10)}.xlsx`, { cellDates: true });
 }
 
 async function connectBank() {
@@ -4190,8 +4580,14 @@ const syncRes = await fetch(
 }
 
 async function askAI(){
+  const resolvedProduct = aiContext?.type === "detected-receipt-item"
+    ? (SplitState.detectedResolvedProducts?.[aiContext.itemNumber] || null)
+    : null;
   const contextPrompt = aiContext?.type === "detected-receipt-item"
-    ? `<div class="small" style="margin-bottom:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);">Line item <strong>${aiContext.itemNumber}</strong>${Number.isFinite(aiContext.amount) ? ` (${Utils.money(aiContext.amount)})` : ""}</div>`
+    ? `<div class="small" style="margin-bottom:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);">
+        Line item <strong>${resolvedProduct?.product_name || aiContext.itemNumber}</strong>
+        <br><code>${aiContext.itemNumber}</code>${Number.isFinite(aiContext.amount) ? ` • ${Utils.money(aiContext.amount)}` : ""}
+      </div>`
     : "";
 
   // STEP 1: Ask user for context FIRST
@@ -4256,7 +4652,31 @@ async function submitAIRequest(){
         headers: await getAuthHeaders(),
  body: JSON.stringify({
   userInput: userInput,
-  categories: categories.map(c => c.name)
+  categories: categories.map(c => {
+    const taxMeta = getCategoryTaxMetadata(c.name);
+    return {
+      name: c.name,
+      description: stripHtml(c.description || ""),
+      tax_treatment: taxMeta.tax_treatment,
+      schedule_c_reference: taxMeta.schedule_c_reference,
+      tax_note: taxMeta.tax_note
+    };
+  }),
+  transactionContext: {
+    title: item?.Title || "",
+    vendor: item?.Vendor || "",
+    amount: Number(item?.Amount || 0),
+    institution: item?.Institution || "",
+    current_category: item?.Category || ""
+  },
+  receiptItemContext: aiContext?.type === "detected-receipt-item"
+    ? {
+      item_number: aiContext.itemNumber,
+      product_name: SplitState.detectedResolvedProducts?.[aiContext.itemNumber]?.product_name || "",
+      receipt_label: (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === String(aiContext.itemNumber))?.receipt_label || "",
+      amount: Number(aiContext.amount || 0)
+    }
+    : null
 })
       }
     );
@@ -4282,6 +4702,8 @@ async function submitAIRequest(){
          ${result.reasoning}
 <br><br>
 Confidence: <strong>${result.confidence}</strong>
+${result.tax_consideration ? `<br><br><strong>Tax consideration:</strong><br>${result.tax_consideration}` : ""}
+${result.follow_up_question ? `<br><br><strong>If still unsure:</strong><br>${result.follow_up_question}` : ""}
         </div>
 
         <button onclick="applyAISuggestion('${result.category}')" style="
@@ -4323,6 +4745,7 @@ async function applyAISuggestion(category){
   if(aiContext?.type === "detected-receipt-item"){
     const selectedItem = aiContext.itemNumber;
     const amount = aiContext.amount;
+    const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === String(selectedItem));
     aiContext = null;
 
     if(!selectedItem || !Number.isFinite(amount) || amount <= 0){
@@ -4331,7 +4754,11 @@ async function applyAISuggestion(category){
       return;
     }
 
-    const success = await applySplit(category, amount, { sourceProductNumber: selectedItem });
+    const success = await applySplit(category, amount, {
+      sourceProductNumber: selectedItem,
+      sourceMerchant: SplitState.detectedMerchant || "misc",
+      sourceIdentifierType: parsed?.identifier_type || "unknown"
+    });
     if(success) openDetectedReceiptItemsModal();
     return;
   }
@@ -4359,6 +4786,21 @@ async function applyAISuggestion(category){
 
   closeModal();
   goNext();
+}
+
+function stripHtml(value){
+  const container = document.createElement("div");
+  container.innerHTML = String(value || "");
+  return (container.textContent || container.innerText || "").replace(/\s+/g, " ").trim();
+}
+
+function escapeHtml(value){
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 async function selectCategory(category){
