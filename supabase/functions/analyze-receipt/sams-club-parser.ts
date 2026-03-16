@@ -116,11 +116,6 @@ function parseStandaloneSamsClubItem(input: {
     parser_confidence: "medium",
   };
 
-  const instantSavingsAmount = parseInstantSavingsAmount(String(input.nextLine || ""));
-  if (Number.isFinite(instantSavingsAmount)) {
-    parsedItem.instant_savings_discount = instantSavingsAmount;
-  }
-
   return parsedItem;
 }
 

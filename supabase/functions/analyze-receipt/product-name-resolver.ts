@@ -3,7 +3,7 @@ import type { ParsedReceiptItem, ReceiptMerchant } from "./parser-types.ts";
 
 export type ResolvedProduct = {
   product_name: string;
-  source: "verified_lookup" | "lookup_cache" | "receipt_label" | "sams_club_search";
+  source: "verified_lookup" | "lookup_cache" | "receipt_label" | "sams_club_search" | "merchant_seed";
   confidence: "high" | "medium" | "low";
   receipt_label?: string;
   source_url?: string | null;
@@ -71,6 +71,18 @@ export async function resolveProductNames(
         source: "verified_lookup",
         confidence: "high",
         ...(receiptLabel ? { receipt_label: receiptLabel } : {}),
+      };
+      continue;
+    }
+
+    const seededName = getMerchantSeededResolution(merchant, itemNumber);
+    if (seededName) {
+      resolved[itemNumber] = {
+        product_name: seededName.product_name,
+        source: "merchant_seed",
+        confidence: "high",
+        ...(receiptLabel ? { receipt_label: receiptLabel } : {}),
+        ...(seededName.source_url ? { source_url: seededName.source_url } : {}),
       };
       continue;
     }
@@ -471,6 +483,14 @@ function getSerpApiKey(): string {
   }
 }
 
+function getMerchantSeededResolution(
+  merchant: ReceiptMerchant,
+  itemNumber: string,
+): SearchResolution | null {
+  if (merchant !== "sams_club") return null;
+  return SAMS_CLUB_SEEDED_ITEM_NAMES[itemNumber] || null;
+}
+
 const SAM_SEARCH_NOISE_TOKENS = new Set([
   "club",
   "mark",
@@ -478,3 +498,18 @@ const SAM_SEARCH_NOISE_TOKENS = new Set([
   "members",
   "sams",
 ]);
+
+const SAMS_CLUB_SEEDED_ITEM_NAMES: Record<string, SearchResolution> = {
+  "744575": {
+    product_name: "Sharpie Permanent Marker, Fine Tip, Black, 24 Count",
+    source_url: "https://www.samsclub.com/ip/sharpie-permanent-marker-fine-tip-black-24-count/744575",
+  },
+  "980022771": {
+    product_name: "Scotch Heavy Duty Shipping Packaging Tape, 1.88\" x 60.15 yd, 6-Pack",
+    source_url: "https://www.samsclub.com/s/980022771",
+  },
+  "990012260": {
+    product_name: "If You Care #4 Unbleached Coffee Filter, 400 ct.",
+    source_url: "https://www.samsclub.com/s/990012260",
+  },
+};
