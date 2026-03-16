@@ -437,14 +437,21 @@ function normalizeSearchResultUrl(value: string): string {
 
 function expandSamsReceiptLabel(value: unknown): string {
   return cleanLookupLabel(value)
+    .replace(/\bIYC\b/gi, "If You Care")
     .replace(/\bFG\b/gi, "Folgers")
     .replace(/\bMM\b/gi, "Member's Mark")
+    .replace(/\bCHARMIN\b/gi, "Charmin")
     .replace(/\bOO\b/gi, "Olive Oil")
-    .replace(/\bSHARPI\b/gi, "Sharpie")
-    .replace(/\bCARB\b/gi, "Carbona")
+    .replace(/\bSHARPI\b/gi, "Sharpie Permanent Markers")
+    .replace(/\b24CT\b/gi, "24 Count")
+    .replace(/\b4\s+CF\s+40\b/gi, "#4 Coffee Filters 400 ct")
+    .replace(/\bCF\b/gi, "Coffee Filters")
+    .replace(/\bCARB\s+MIN\s+WT\b/gi, "Carbonated Mineral Water")
+    .replace(/\bCARB\b/gi, "Carbonated")
     .replace(/\bMIN\b/gi, "Mineral")
     .replace(/\bWT\b/gi, "Water")
     .replace(/\bB\b$/i, "Black Silk")
+    .replace(/\s+/g, " ")
     .trim();
 }
 

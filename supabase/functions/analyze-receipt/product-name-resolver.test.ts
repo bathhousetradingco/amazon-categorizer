@@ -72,6 +72,20 @@ Deno.test("buildSamsClubSearchQuery expands abbreviated Sam's receipt labels", (
   );
 });
 
+Deno.test("buildSamsClubSearchQuery expands Sam's shorthand for coffee filters", () => {
+  assertEquals(
+    buildSamsClubSearchQuery("990012260", "IYC 4 CF 40"),
+    'site:samsclub.com 990012260 If You Care #4 Coffee Filters 400 ct',
+  );
+});
+
+Deno.test("buildSamsClubSearchQuery expands Sam's shorthand for Sharpie packs", () => {
+  assertEquals(
+    buildSamsClubSearchQuery("744575", "24CT SHARPI"),
+    "site:samsclub.com 744575 24 Count Sharpie Permanent Markers",
+  );
+});
+
 Deno.test("extractSamsClubSearchResult parses a DuckDuckGo result title and url", () => {
   const html = `
     <div class="results">
