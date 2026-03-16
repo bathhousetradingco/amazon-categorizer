@@ -1,13 +1,78 @@
-import type { ReceiptParserResult } from "./parser-types.ts";
+import type { ParsedReceiptItem, ReceiptParserResult } from "./parser-types.ts";
 
-export function parseMiscReceipt(): ReceiptParserResult {
+type ParseMiscReceiptInput = {
+  lines: string[];
+  transactionName?: string | null;
+  merchantName?: string | null;
+};
+
+export function parseMiscReceipt(input: ParseMiscReceiptInput): ReceiptParserResult {
+  const totalAmount = detectMiscReceiptTotal(input.lines);
+  const receiptLabel = buildMiscReceiptLabel(input);
+  const hasDetectedTotal = Number.isFinite(totalAmount) && (totalAmount as number) > 0;
+
+  const parsedItems: ParsedReceiptItem[] = hasDetectedTotal
+    ? [{
+      product_number: "misc-receipt-total",
+      identifier_type: "unknown",
+      quantity: 1,
+      unit_price: totalAmount as number,
+      total_price: totalAmount as number,
+      receipt_label: receiptLabel,
+      line_index: 0,
+      raw_lines: input.lines.slice(0, 5),
+      parser_confidence: "medium",
+    }]
+    : [];
+
   return {
     merchant: "misc",
-    item_numbers: [],
-    parsed_items: [],
+    item_numbers: parsedItems.length ? ["misc-receipt-total"] : [],
+    parsed_items: parsedItems,
     debug: {
-      parser_status: "stub",
-      parser_message: "No merchant-specific parser matched this receipt.",
+      parser_status: parsedItems.length ? "generic-fallback" : "stub",
+      parser_message: parsedItems.length
+        ? "Used generic misc receipt fallback item."
+        : "No merchant-specific parser matched this receipt.",
+      detected_total: totalAmount,
+      detected_label: receiptLabel,
     },
   };
+}
+
+function buildMiscReceiptLabel(input: ParseMiscReceiptInput): string {
+  const merchant = String(input.merchantName || "").trim();
+  const transaction = String(input.transactionName || "").trim();
+  const firstContentLine = input.lines
+    .map((line) => String(line || "").trim())
+    .find((line) => line.length >= 3 && !/\d+\.\d{2}/.test(line));
+
+  return merchant || transaction || firstContentLine || "Misc receipt";
+}
+
+function detectMiscReceiptTotal(lines: string[]): number | null {
+  const normalizedLines = (lines || [])
+    .map((line) => String(line || "").trim())
+    .filter(Boolean);
+
+  for (let i = normalizedLines.length - 1; i >= 0; i--) {
+    const line = normalizedLines[i];
+    if (!/\bTOTAL\b/i.test(line) || /\bSUB\s*TOTAL\b/i.test(line)) continue;
+    const amount = parseTrailingAmount(line);
+    if (Number.isFinite(amount)) return amount;
+  }
+
+  for (let i = normalizedLines.length - 1; i >= 0; i--) {
+    const amount = parseTrailingAmount(normalizedLines[i]);
+    if (Number.isFinite(amount)) return amount;
+  }
+
+  return null;
+}
+
+function parseTrailingAmount(line: string): number | null {
+  const match = String(line || "").match(/(\d+\.\d{2})\s*$/);
+  if (!match) return null;
+  const parsed = Number.parseFloat(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
 }

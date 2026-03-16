@@ -33,5 +33,9 @@ export function parseReceiptByMerchant(input: ParseReceiptInput): ReceiptParserR
     return parseWalmartReceipt(input.lines, input.candidateItemNumbers);
   }
 
-  return parseMiscReceipt();
+  return parseMiscReceipt({
+    lines: input.lines,
+    transactionName: input.transactionName,
+    merchantName: input.merchantName,
+  });
 }

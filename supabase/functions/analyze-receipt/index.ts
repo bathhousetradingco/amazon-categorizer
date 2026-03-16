@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
       : transactionContext.receipt_url;
 
     const signedUrl = await createReceiptSignedUrl(serviceClient, receiptPath);
-    const extraction = await extractReceiptData(signedUrl);
+    const extraction = await extractReceiptData(signedUrl, receiptPath);
 
     const lines = String(extraction.fullText || "")
       .split("\n")
@@ -168,7 +168,10 @@ async function createReceiptSignedUrl(
   return data.signedUrl;
 }
 
-async function extractReceiptData(signedUrl: string): Promise<{ fullText: string; modelItemNumbers: string[]; provider: string }> {
+async function extractReceiptData(
+  signedUrl: string,
+  receiptPath: string,
+): Promise<{ fullText: string; modelItemNumbers: string[]; provider: string }> {
   if (!OPENAI_API_KEY) {
     throw new HttpError(500, "OPENAI_API_KEY is not configured");
   }
@@ -196,7 +199,7 @@ async function extractReceiptData(signedUrl: string): Promise<{ fullText: string
         role: "user",
         content: [
           { type: "input_text", text: prompt },
-          { type: "input_image", image_url: signedUrl },
+          buildReceiptInputPart(signedUrl, receiptPath),
         ],
       }],
     }),
@@ -222,6 +225,29 @@ async function extractReceiptData(signedUrl: string): Promise<{ fullText: string
     modelItemNumbers,
     provider: "openai:gpt-4.1-mini",
   };
+}
+
+function buildReceiptInputPart(signedUrl: string, receiptPath: string) {
+  if (isPdfReceipt(receiptPath)) {
+    return {
+      type: "input_file",
+      file_url: signedUrl,
+      filename: extractFilename(receiptPath) || "receipt.pdf",
+    };
+  }
+
+  return { type: "input_image", image_url: signedUrl };
+}
+
+function isPdfReceipt(receiptPath: string): boolean {
+  return /\.pdf(?:$|[?#])/i.test(String(receiptPath || "").trim());
+}
+
+function extractFilename(path: string): string {
+  const normalized = String(path || "").trim().replace(/^\/+/, "");
+  if (!normalized) return "";
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] || "";
 }
 
 async function safeJson(response: Response) {
