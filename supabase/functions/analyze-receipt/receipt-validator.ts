@@ -120,7 +120,7 @@ function validateDefaultMath(
 
     const safeUnitPriceCents = unitPriceCents as number;
     const safeParsedLineTotalCents = parsedLineTotalCents as number;
-    const expectedLineTotalCents = Math.round(quantity * unitPriceCents);
+    const expectedLineTotalCents = Math.round(quantity * safeUnitPriceCents);
     const differenceCents = safeParsedLineTotalCents - expectedLineTotalCents;
     const discountCents = toCents(entry?.instant_savings_discount) || 0;
 
@@ -152,12 +152,13 @@ function validateDefaultMath(
   const totalDifferenceCents = Number.isFinite(expectedTotalCents) && Number.isFinite(parsedReceiptTotalCents)
     ? expectedTotalCents - (parsedReceiptTotalCents as number)
     : null;
+  const safeExpectedTotalCents = Number.isFinite(expectedTotalCents) ? (expectedTotalCents as number) : null;
 
   const summary: ReceiptMathSummary = {
     computedSubtotalCents,
     parsedSubtotalCents,
     parsedTaxCents,
-    expectedTotalCents,
+    expectedTotalCents: safeExpectedTotalCents,
     parsedReceiptTotalCents,
     subtotalDifferenceCents,
     totalDifferenceCents,
