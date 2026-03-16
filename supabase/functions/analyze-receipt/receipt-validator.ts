@@ -152,10 +152,10 @@ function validateDefaultMath(
   const subtotalDifferenceCents = Number.isFinite(parsedSubtotalCents)
     ? computedSubtotalCents - (parsedSubtotalCents as number)
     : null;
-  const totalDifferenceCents = Number.isFinite(expectedTotalCents) && Number.isFinite(safeParsedReceiptTotalCents)
-    ? (expectedTotalCents as number) - safeParsedReceiptTotalCents
+  const totalDifferenceCents = expectedTotalCents !== null && safeParsedReceiptTotalCents !== null
+    ? expectedTotalCents - safeParsedReceiptTotalCents
     : null;
-  const safeExpectedTotalCents = Number.isFinite(expectedTotalCents) ? (expectedTotalCents as number) : null;
+  const safeExpectedTotalCents = expectedTotalCents !== null ? expectedTotalCents : null;
 
   const summary: ReceiptMathSummary = {
     computedSubtotalCents,
