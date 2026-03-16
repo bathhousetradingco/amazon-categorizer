@@ -2537,6 +2537,8 @@ const SplitState = {
   detectedReceiptTax: null,
   detectedReceiptSubtotal: null,
   detectedReceiptTotal: null,
+  detectedUnassignedDiscount: 0,
+  detectedTransactionId: null,
   receiptMathValidation: null,
   receiptItemDrafts: {},
   receiptItemEditorOpen: {},
@@ -2613,6 +2615,36 @@ function parseReceiptTotals(rawReceiptText){
 
   totals.tax = foundTax ? centsToAmount(taxSumCents) : null;
   return totals;
+}
+
+function parseReceiptInstantSavingsTotal(rawReceiptText){
+  const lines = String(rawReceiptText || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return lines.reduce((sum, line) => {
+    if(!/^INST\s+SV\b/i.test(line)) return sum;
+    const match = line.match(/(\d+\.\d{2})-\s*[A-Z.]*\s*$/i);
+    if(!match) return sum;
+    const amount = Number(match[1]);
+    return Number.isFinite(amount) ? sum + amount : sum;
+  }, 0);
+}
+
+function getAssignedReceiptDiscount(){
+  return (SplitState.detectedParsedItems || []).reduce((sum, parsed) => {
+    const discount = Number(parsed?.instant_savings_discount);
+    return Number.isFinite(discount) ? sum + discount : sum;
+  }, 0);
+}
+
+function getEffectiveReceiptDiscount(item){
+  const currentItem = data[currentIndex];
+  if(!item || !currentItem || item !== currentItem) return 0;
+  if(String(SplitState.detectedTransactionId || "") !== String(currentItem.id || "")) return 0;
+  const discount = Number(SplitState.detectedUnassignedDiscount || 0);
+  return Number.isFinite(discount) && discount > 0 ? parseFloat(discount.toFixed(2)) : 0;
 }
 
 function validateReceiptMath(parsedItems, receiptTotals, options = {}){
@@ -2723,7 +2755,8 @@ function validateReceiptMath(parsedItems, receiptTotals, options = {}){
 
 function calculateSplitStats(item){
   const allocated = (item.Splits || []).reduce((sum, s) => sum + Math.round(parseFloat(s.Amount || 0) * 100), 0) / 100;
-  const remaining = parseFloat((item.Amount - allocated).toFixed(2));
+  const receiptDiscount = getEffectiveReceiptDiscount(item);
+  const remaining = parseFloat((item.Amount - allocated - receiptDiscount).toFixed(2));
   return { allocated, remaining };
 }
 
@@ -2768,10 +2801,12 @@ function syncDetectedTaxSplit(item, taxAmount){
 
 function renderSplitTotals(item){
   const { allocated, remaining } = calculateSplitStats(item);
+  const receiptDiscount = getEffectiveReceiptDiscount(item);
   const remainingClass = Math.abs(remaining) < 0.01 ? "done zeroFlash" : remaining <= item.Amount * 0.2 ? "nearDone" : "";
   return `
     <div id="remainingBar" class="splitTotalsCard">
       <div class="splitMetric">Total<strong>$${item.Amount.toFixed(2)}</strong></div>
+      ${receiptDiscount > 0 ? `<div class="splitMetric">Discounts<strong>-${Utils.money(receiptDiscount).replace("$", "$")}</strong></div>` : ""}
       <div class="splitMetric">Allocated<strong>$${allocated.toFixed(2)}</strong></div>
       <div class="splitMetric remaining ${remainingClass}">Remaining<strong>$${remaining.toFixed(2)}</strong></div>
     </div>
@@ -2893,6 +2928,9 @@ async function analyzeSplitReceipt(){
       return acc;
     }, {});
     const receiptTotals = parseReceiptTotals(rawReceiptText);
+    const detectedInstantSavingsTotal = parseReceiptInstantSavingsTotal(rawReceiptText);
+    const assignedInstantSavingsTotal = getAssignedReceiptDiscount();
+    const unassignedReceiptDiscount = Math.max(0, parseFloat((detectedInstantSavingsTotal - assignedInstantSavingsTotal).toFixed(2)));
     const receiptMathValidation = validateReceiptMath(parsedItems, receiptTotals, {
       merchant: detectedMerchant,
       itemNumbers,
@@ -2974,6 +3012,8 @@ async function analyzeSplitReceipt(){
     SplitState.detectedReceiptTax = receiptTotals.tax;
     SplitState.detectedReceiptSubtotal = receiptTotals.subtotal;
     SplitState.detectedReceiptTotal = receiptTotals.receiptTotal;
+    SplitState.detectedUnassignedDiscount = unassignedReceiptDiscount;
+    SplitState.detectedTransactionId = item.id || null;
     SplitState.receiptMathValidation = receiptMathValidation;
 
     const taxSplitChanged = syncDetectedTaxSplit(item, receiptTotals.tax);
@@ -3003,6 +3043,7 @@ function openDetectedReceiptItemsModal(){
   const subtotal = SplitState.detectedReceiptSubtotal;
   const tax = SplitState.detectedReceiptTax;
   const receiptTotal = SplitState.detectedReceiptTotal;
+  const receiptDiscount = getEffectiveReceiptDiscount(item);
   const merchant = String(SplitState.detectedMerchant || "misc").replace(/_/g, " ");
 
   const getNetDetectedItemAmount = (parsed, fallback) => {
@@ -3071,6 +3112,7 @@ function openDetectedReceiptItemsModal(){
     ? `<div class="small" style="display:grid;gap:4px;padding-top:4px;">
         ${Number.isFinite(subtotal) ? `<div><strong>Subtotal =</strong> ${subtotal.toFixed(2)}</div>` : ""}
         ${Number.isFinite(tax) ? `<div><strong>Tax =</strong> ${tax.toFixed(2)}</div>` : ""}
+        ${receiptDiscount > 0 ? `<div><strong>Discounts =</strong> -${receiptDiscount.toFixed(2)}</div>` : ""}
         ${Number.isFinite(receiptTotal) ? `<div><strong>Total Receipt =</strong> ${receiptTotal.toFixed(2)}</div>` : ""}
       </div>`
     : "";
