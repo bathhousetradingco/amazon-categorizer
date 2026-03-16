@@ -3330,6 +3330,12 @@ async function applyDetectedItemCategory(itemNumber, category){
 
 function askAIForDetectedItem(itemNumber){
   const normalized = String(itemNumber || "").trim();
+  const resolved = SplitState.detectedResolvedProducts?.[normalized] || null;
+  if(needsDetectedItemNameConfirmation(normalized, resolved)){
+    alert("Confirm or edit the product name before asking AI to categorize this item.");
+    openDetectedItemNameModal(normalized);
+    return;
+  }
   const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
   const fallback = SplitState.detectedLineItemPrices?.[normalized];
   const amount = Number.isFinite(parsed?.total_price)
@@ -3835,7 +3841,8 @@ async function applySplit(category, amount, options = {}){
   if (!item.Splits) item.Splits = [];
 
   let total = item.Splits.reduce((sum, s) => sum + Math.round(parseFloat(s.Amount) * 100), 0) / 100;
-  const remaining = parseFloat((item.Amount - total).toFixed(2));
+  const receiptDiscount = getEffectiveReceiptDiscount(item);
+  const remaining = parseFloat((item.Amount - total - receiptDiscount).toFixed(2));
 
   if(amount > remaining + 0.01){
     alert("Amount exceeds remaining balance.");
@@ -4849,7 +4856,14 @@ async function applyAISuggestion(category){
     const selectedItem = aiContext.itemNumber;
     const amount = aiContext.amount;
     const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === String(selectedItem));
+    const resolved = SplitState.detectedResolvedProducts?.[selectedItem] || null;
     aiContext = null;
+
+    if(needsDetectedItemNameConfirmation(selectedItem, resolved)){
+      alert("Confirm or edit the product name before applying an AI category suggestion.");
+      openDetectedItemNameModal(selectedItem);
+      return;
+    }
 
     if(!selectedItem || !Number.isFinite(amount) || amount <= 0){
       alert("Missing detected item amount for AI assignment.");
