@@ -1,8 +1,9 @@
+import { fetchWithTimeout } from "../_shared/fetch.ts";
 import type { ParsedReceiptItem, ReceiptMerchant } from "./parser-types.ts";
 
 export type ResolvedProduct = {
   product_name: string;
-  source: "verified_lookup" | "lookup_cache" | "receipt_label";
+  source: "verified_lookup" | "lookup_cache" | "receipt_label" | "sams_club_search";
   confidence: "high" | "medium" | "low";
   receipt_label?: string;
   source_url?: string | null;
@@ -24,6 +25,11 @@ type CacheLookupRow = {
   brand?: string | null;
   category?: string | null;
   last_checked_at?: string | null;
+};
+
+type SearchResolution = {
+  product_name: string;
+  source_url?: string | null;
 };
 
 export async function resolveProductNames(
@@ -52,6 +58,7 @@ export async function resolveProductNames(
   );
 
   const cacheByItemNumber = chooseBestCacheRows(cacheRows);
+  const unresolvedForSearch: Array<{ itemNumber: string; receiptLabel?: string }> = [];
   const resolved: Record<string, ResolvedProduct> = {};
 
   for (const itemNumber of normalizedItemNumbers) {
@@ -88,6 +95,29 @@ export async function resolveProductNames(
         source: "receipt_label",
         confidence: "low",
         receipt_label: receiptLabel,
+      };
+      if (merchant === "sams_club") {
+        unresolvedForSearch.push({ itemNumber, receiptLabel });
+      }
+      continue;
+    }
+
+    if (merchant === "sams_club") {
+      unresolvedForSearch.push({ itemNumber });
+    }
+  }
+
+  if (merchant === "sams_club" && unresolvedForSearch.length) {
+    const searchResolutions = await enrichSamsClubNames(serviceClient, unresolvedForSearch);
+
+    for (const [itemNumber, resolution] of searchResolutions.entries()) {
+      const receiptLabel = receiptLabels[itemNumber];
+      resolved[itemNumber] = {
+        product_name: resolution.product_name,
+        source: "sams_club_search",
+        confidence: "medium",
+        ...(receiptLabel ? { receipt_label: receiptLabel } : {}),
+        ...(resolution.source_url ? { source_url: resolution.source_url } : {}),
       };
     }
   }
@@ -133,6 +163,38 @@ export function chooseBestCacheRows(rows: CacheLookupRow[]): Map<string, Require
   return result;
 }
 
+export function buildSamsClubSearchQuery(itemNumber: string, receiptLabel?: string): string {
+  const parts = [
+    "site:samsclub.com",
+    itemNumber,
+    cleanLookupLabel(receiptLabel).replace(/\bFG\b/gi, "Folgers").replace(/\bB\b$/i, "Black Silk"),
+  ].filter(Boolean);
+
+  return parts.join(" ");
+}
+
+export function extractSamsClubSearchResult(html: string): SearchResolution | null {
+  const text = String(html || "");
+  if (!text) return null;
+
+  const linkMatch = text.match(/<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+  if (!linkMatch) return null;
+
+  const sourceUrl = decodeHtml(linkMatch[1]);
+  const rawTitle = stripHtml(decodeHtml(linkMatch[2]));
+  const cleanedTitle = rawTitle
+    .replace(/\s*[|:-]\s*Sam'?s Club.*$/i, "")
+    .replace(/\s*[|:-]\s*Buy Now.*$/i, "")
+    .trim();
+
+  if (!cleanedTitle) return null;
+
+  return {
+    product_name: cleanedTitle,
+    source_url: sourceUrl,
+  };
+}
+
 async function loadVerifiedLookups(
   serviceClient: any,
   merchant: ReceiptMerchant,
@@ -173,10 +235,76 @@ async function loadCacheLookups(
   return Array.isArray(data) ? data : [];
 }
 
+async function enrichSamsClubNames(
+  serviceClient: any,
+  items: Array<{ itemNumber: string; receiptLabel?: string }>,
+): Promise<Map<string, SearchResolution>> {
+  const results = new Map<string, SearchResolution>();
+
+  for (const item of items) {
+    try {
+      const query = buildSamsClubSearchQuery(item.itemNumber, item.receiptLabel);
+      const response = await fetchWithTimeout(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; BathhouseCategorizer/1.0)",
+        },
+      }, 10000);
+
+      if (!response.ok) continue;
+      const html = await response.text();
+      const resolution = extractSamsClubSearchResult(html);
+      if (!resolution?.product_name) continue;
+
+      results.set(item.itemNumber, resolution);
+      await upsertLookupCache(serviceClient, item.itemNumber, resolution);
+    } catch (error) {
+      console.warn("Sam's Club search enrichment failed", { itemNumber: item.itemNumber, error });
+    }
+  }
+
+  return results;
+}
+
+async function upsertLookupCache(
+  serviceClient: any,
+  itemNumber: string,
+  resolution: SearchResolution,
+) {
+  const cleanName = cleanLookupLabel(resolution.product_name);
+  if (!cleanName) return;
+
+  const { error } = await serviceClient
+    .from("product_lookup_cache")
+    .upsert({
+      sku: itemNumber,
+      clean_name: cleanName,
+      source: "duckduckgo_samsclub",
+      source_url: resolution.source_url || null,
+      last_checked_at: new Date().toISOString(),
+    }, { onConflict: "sku" });
+
+  if (error) {
+    console.warn("Failed to upsert product lookup cache", { itemNumber, error });
+  }
+}
+
 function normalizeLookupKey(value: unknown): string {
   return String(value || "").replace(/\D/g, "").replace(/^0+/, "");
 }
 
 function cleanLookupLabel(value: unknown): string {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function decodeHtml(value: string): string {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function stripHtml(value: string): string {
+  return String(value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }

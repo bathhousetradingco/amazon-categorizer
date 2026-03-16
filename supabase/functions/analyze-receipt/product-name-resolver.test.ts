@@ -1,5 +1,10 @@
 import { assertEquals } from "jsr:@std/assert";
-import { buildReceiptLabelMap, chooseBestCacheRows } from "./product-name-resolver.ts";
+import {
+  buildReceiptLabelMap,
+  buildSamsClubSearchQuery,
+  chooseBestCacheRows,
+  extractSamsClubSearchResult,
+} from "./product-name-resolver.ts";
 
 Deno.test("buildReceiptLabelMap keeps the first non-empty receipt label per item number", () => {
   assertEquals(
@@ -56,5 +61,27 @@ Deno.test("chooseBestCacheRows prefers the freshest clean cache row per normaliz
     source_url: "https://example.com/newer",
     brand: "Sharpie",
     category: "Office",
+  });
+});
+
+Deno.test("buildSamsClubSearchQuery expands abbreviated Sam's receipt labels", () => {
+  assertEquals(
+    buildSamsClubSearchQuery("990008301", "FG 40.3OZ B"),
+    "site:samsclub.com 990008301 Folgers 40.3OZ Black Silk",
+  );
+});
+
+Deno.test("extractSamsClubSearchResult parses a DuckDuckGo result title and url", () => {
+  const html = `
+    <div class="results">
+      <a class="result__a" href="https://www.samsclub.com/p/folgers-dark-roast-ground-coffee-black-silk-40-3-oz/prod123">
+        Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz. | Sam's Club
+      </a>
+    </div>
+  `;
+
+  assertEquals(extractSamsClubSearchResult(html), {
+    product_name: "Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz.",
+    source_url: "https://www.samsclub.com/p/folgers-dark-roast-ground-coffee-black-silk-40-3-oz/prod123",
   });
 });
