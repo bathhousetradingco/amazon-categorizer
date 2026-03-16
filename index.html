@@ -3139,9 +3139,26 @@ function openDetectedReceiptItemsModal(){
 function openDetectedItemCategoryModal(itemNumber){
   setModalBackAction(() => openDetectedReceiptItemsModal());
   SplitState.selectedDetectedItem = itemNumber;
+  const normalized = String(itemNumber || "").trim();
+  const resolved = SplitState.detectedResolvedProducts?.[normalized] || null;
+  if(needsDetectedItemNameConfirmation(normalized, resolved)){
+    alert("Confirm or edit the product name before choosing a category for this line item.");
+    openDetectedItemNameModal(normalized);
+    return;
+  }
   modalTitle.innerText = `Choose Category • ${itemNumber}`;
   modalContent.innerHTML = generateCategoryButtonsForAction("applyDetectedItemCategory", [itemNumber]);
   openModal();
+}
+
+function needsDetectedItemNameConfirmation(itemNumber, resolved){
+  const normalized = String(itemNumber || "").trim();
+  const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
+  const source = String(resolved?.source || "").trim();
+  const productName = String(resolved?.product_name || parsed?.receipt_label || "").trim();
+
+  if(!productName || productName === "Name unavailable") return true;
+  return source !== "verified_lookup";
 }
 
 function openDetectedItemNameModal(itemNumber){
@@ -3279,6 +3296,13 @@ async function applyDetectedItemCategory(itemNumber, category){
   const normalized = String(itemNumber || "").trim();
   if(!normalized){
     alert("Missing detected item number.");
+    return;
+  }
+
+  const resolved = SplitState.detectedResolvedProducts?.[normalized] || null;
+  if(needsDetectedItemNameConfirmation(normalized, resolved)){
+    alert("Confirm or edit the product name before assigning a category.");
+    openDetectedItemNameModal(normalized);
     return;
   }
 
@@ -4148,6 +4172,32 @@ function buildSummaryRows(rows, key){
     }));
 }
 
+function buildReviewRows(rows){
+  return rows
+    .filter((row) => {
+      const category = String(row.Category || "");
+      const taxTreatment = String(row["Tax Treatment"] || "");
+      const scheduleRef = String(row["Schedule C Reference"] || "");
+      return category === "Needs Review"
+        || taxTreatment === "review"
+        || /review/i.test(scheduleRef);
+    })
+    .map((row) => ({
+      Date: row.Date,
+      Vendor: row.Vendor,
+      Description: row.Description,
+      Category: row.Category,
+      Amount: row.Amount,
+      "Transaction Amount": row["Transaction Amount"],
+      "Split Transaction": row["Split Transaction"],
+      "Schedule C Reference": row["Schedule C Reference"],
+      "Tax Treatment": row["Tax Treatment"],
+      "Tax Note": row["Tax Note"],
+      "Source Merchant": row["Source Merchant"],
+      "Source Product Number": row["Source Product Number"],
+    }));
+}
+
 function formatWorksheetNumbers(ws, amountColumnIndexes = []){
   const range = XLSX.utils.decode_range(ws["!ref"] || "A1:A1");
 
@@ -4532,10 +4582,15 @@ formatWorksheetNumbers(summaryByCategoryWs, [1]);
 const summaryByTaxWs = XLSX.utils.json_to_sheet(buildSummaryRows(exportRows, "Schedule C Reference"));
 formatWorksheetNumbers(summaryByTaxWs, [1]);
 
+const reviewRows = buildReviewRows(exportRows);
+const reviewWs = XLSX.utils.json_to_sheet(reviewRows.length ? reviewRows : [{ Note: "No review items." }]);
+if(reviewRows.length) formatWorksheetNumbers(reviewWs, [4, 5]);
+
 const wb = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb, detailWs, "Detail");
 XLSX.utils.book_append_sheet(wb, summaryByCategoryWs, "By Category");
 XLSX.utils.book_append_sheet(wb, summaryByTaxWs, "By Tax Bucket");
+XLSX.utils.book_append_sheet(wb, reviewWs, "Review Items");
 XLSX.writeFile(wb, `schedule-c-categorizer-export-${new Date().toISOString().slice(0, 10)}.xlsx`, { cellDates: true });
 }
 
