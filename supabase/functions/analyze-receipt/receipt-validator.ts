@@ -118,11 +118,13 @@ function validateDefaultMath(
       return;
     }
 
+    const safeUnitPriceCents = unitPriceCents as number;
+    const safeParsedLineTotalCents = parsedLineTotalCents as number;
     const expectedLineTotalCents = Math.round(quantity * unitPriceCents);
-    const differenceCents = parsedLineTotalCents - expectedLineTotalCents;
+    const differenceCents = safeParsedLineTotalCents - expectedLineTotalCents;
     const discountCents = toCents(entry?.instant_savings_discount) || 0;
 
-    computedSubtotalCents += parsedLineTotalCents - discountCents;
+    computedSubtotalCents += safeParsedLineTotalCents - discountCents;
 
     lineItemDiagnostics.push({
       index,
@@ -141,14 +143,14 @@ function validateDefaultMath(
   const parsedTaxCents = toCents(receiptTotals?.tax);
   const parsedReceiptTotalCents = toCents(receiptTotals?.receiptTotal);
   const expectedTotalCents = Number.isFinite(parsedTaxCents)
-    ? computedSubtotalCents + parsedTaxCents
+    ? computedSubtotalCents + (parsedTaxCents as number)
     : null;
 
   const subtotalDifferenceCents = Number.isFinite(parsedSubtotalCents)
-    ? computedSubtotalCents - parsedSubtotalCents
+    ? computedSubtotalCents - (parsedSubtotalCents as number)
     : null;
   const totalDifferenceCents = Number.isFinite(expectedTotalCents) && Number.isFinite(parsedReceiptTotalCents)
-    ? expectedTotalCents - parsedReceiptTotalCents
+    ? expectedTotalCents - (parsedReceiptTotalCents as number)
     : null;
 
   const summary: ReceiptMathSummary = {
@@ -177,5 +179,5 @@ function toCents(value: unknown): number | null {
 }
 
 function centsToAmount(cents: number | null): number | null {
-  return Number.isFinite(cents) ? cents / 100 : null;
+  return Number.isFinite(cents) ? (cents as number) / 100 : null;
 }
