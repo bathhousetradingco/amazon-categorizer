@@ -283,6 +283,11 @@ async function searchSamsClubByItemNumber(
   itemNumber: string,
   receiptLabel?: string,
 ): Promise<SearchResolution | null> {
+  const serpApiResolution = await searchSamsClubBySerpApi(itemNumber);
+  if (serpApiResolution?.product_name) {
+    return serpApiResolution;
+  }
+
   const queries = buildSamsClubSearchQueries(itemNumber, receiptLabel);
 
   for (const query of queries) {
@@ -299,6 +304,43 @@ async function searchSamsClubByItemNumber(
   }
 
   return null;
+}
+
+async function searchSamsClubBySerpApi(itemNumber: string): Promise<SearchResolution | null> {
+  const serpApiKey = getSerpApiKey();
+  if (!serpApiKey) return null;
+
+  try {
+    const url = new URL("https://serpapi.com/search.json");
+    url.searchParams.set("engine", "google_shopping");
+    url.searchParams.set("q", `${itemNumber} sams club`);
+    url.searchParams.set("num", "5");
+    url.searchParams.set("api_key", serpApiKey);
+
+    const response = await fetchWithTimeout(url, {}, 10000);
+    if (!response.ok) return null;
+
+    const payload = await response.json().catch(() => null);
+    const shoppingResults = Array.isArray(payload?.shopping_results) ? payload.shopping_results : [];
+    const organicResults = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+    const candidate = [...shoppingResults, ...organicResults].find((entry) => {
+      const source = String(entry?.source || entry?.merchant || entry?.seller || "");
+      const link = String(entry?.link || entry?.product_link || entry?.serpapi_link || "");
+      return /sam'?s club/i.test(source) || /samsclub\.com/i.test(link);
+    }) || shoppingResults[0] || organicResults[0] || null;
+
+    const title = cleanLookupLabel(candidate?.title);
+    const sourceUrl = normalizeSearchResultUrl(String(candidate?.link || candidate?.product_link || ""));
+    if (!title) return null;
+
+    return {
+      product_name: title,
+      source_url: sourceUrl || null,
+    };
+  } catch (error) {
+    console.warn("SerpApi Sam's Club lookup failed", { itemNumber, error });
+    return null;
+  }
 }
 
 function buildSamsClubSearchQueries(itemNumber: string, receiptLabel?: string): string[] {
@@ -390,4 +432,12 @@ function normalizeComparisonText(value: unknown): string {
     .replace(/[^a-z0-9.\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function getSerpApiKey(): string {
+  try {
+    return Deno.env.get("SERPAPI_KEY") || Deno.env.get("SERPAPI_API_KEY") || "";
+  } catch {
+    return "";
+  }
 }
