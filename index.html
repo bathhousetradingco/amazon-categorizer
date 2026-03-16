@@ -3005,15 +3005,20 @@ function openDetectedReceiptItemsModal(){
   const receiptTotal = SplitState.detectedReceiptTotal;
   const merchant = String(SplitState.detectedMerchant || "misc").replace(/_/g, " ");
 
-  const getDetectedItemAmount = (itemNumber) => {
-    const parsed = parsedItemsByProduct.get(itemNumber);
+  const getNetDetectedItemAmount = (parsed, fallback) => {
     if(parsed && Number.isFinite(parsed.total_price) && parsed.total_price > 0){
-      return parseFloat(parsed.total_price.toFixed(2));
+      const discount = Number.isFinite(parsed.instant_savings_discount) ? parsed.instant_savings_discount : 0;
+      const net = parsed.total_price - discount;
+      return net > 0 ? parseFloat(net.toFixed(2)) : 0;
     }
-    const fallback = lineItemPrices[itemNumber];
     return Number.isFinite(fallback) && fallback > 0
       ? parseFloat(fallback.toFixed(2))
       : null;
+  };
+
+  const getDetectedItemAmount = (itemNumber) => {
+    const parsed = parsedItemsByProduct.get(itemNumber);
+    return getNetDetectedItemAmount(parsed, lineItemPrices[itemNumber]);
   };
 
   const getAssignedForItem = (itemNumber) => {
@@ -3035,7 +3040,7 @@ function openDetectedReceiptItemsModal(){
       const assignedCategories = (item.Splits || []).filter((split) => String(split?.SourceProductNumber || "") === String(num)).map((split) => split?.Category).filter(Boolean);
       const displayCategory = assignedCategories.length ? assignedCategories[assignedCategories.length - 1] : "Uncategorized";
       const purchaseLine = parsed
-        ? `${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}`
+        ? `${parsed.quantity} @ ${Utils.money(parsed.unit_price)} = ${Utils.money(parsed.total_price)}${Number.isFinite(parsed.instant_savings_discount) ? ` less ${Utils.money(parsed.instant_savings_discount)} instant savings` : ""}`
         : null;
       const displayName = resolved?.product_name || parsed?.receipt_label || "Name unavailable";
       const nameMeta = resolved?.source
@@ -3238,7 +3243,7 @@ async function applyDetectedItemCategory(itemNumber, category){
   const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
   const fallback = SplitState.detectedLineItemPrices?.[normalized];
   const amount = Number.isFinite(parsed?.total_price)
-    ? parsed.total_price
+    ? parseFloat((parsed.total_price - (Number.isFinite(parsed?.instant_savings_discount) ? parsed.instant_savings_discount : 0)).toFixed(2))
     : (Number.isFinite(fallback) ? fallback : null);
 
   if(!Number.isFinite(amount) || amount <= 0){
@@ -3262,7 +3267,7 @@ function askAIForDetectedItem(itemNumber){
   const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
   const fallback = SplitState.detectedLineItemPrices?.[normalized];
   const amount = Number.isFinite(parsed?.total_price)
-    ? parsed.total_price
+    ? parseFloat((parsed.total_price - (Number.isFinite(parsed?.instant_savings_discount) ? parsed.instant_savings_discount : 0)).toFixed(2))
     : (Number.isFinite(fallback) ? fallback : null);
 
   aiContext = {
