@@ -199,6 +199,24 @@ export function extractSamsClubSearchResult(html: string): SearchResolution | nu
   return null;
 }
 
+export function isPlausibleSamsClubMatch(
+  receiptLabel: string | undefined,
+  candidateName: string | undefined,
+): boolean {
+  const expandedReceipt = normalizeComparisonText(expandSamsReceiptLabel(receiptLabel));
+  const normalizedCandidate = normalizeComparisonText(candidateName);
+
+  if (!expandedReceipt || !normalizedCandidate) return false;
+
+  const receiptTokens = expandedReceipt.split(" ").filter((token) => token.length >= 3);
+  if (!receiptTokens.length) return false;
+
+  const overlap = receiptTokens.filter((token) => normalizedCandidate.includes(token));
+  const overlapRatio = overlap.length / receiptTokens.length;
+
+  return overlapRatio >= 0.5 || overlap.length >= 2;
+}
+
 async function loadVerifiedLookups(
   serviceClient: any,
   merchant: ReceiptMerchant,
@@ -249,6 +267,7 @@ async function enrichSamsClubNames(
     try {
       const resolution = await searchSamsClubByItemNumber(item.itemNumber, item.receiptLabel);
       if (!resolution?.product_name) continue;
+      if (item.receiptLabel && !isPlausibleSamsClubMatch(item.receiptLabel, resolution.product_name)) continue;
 
       results.set(item.itemNumber, resolution);
       await upsertLookupCache(serviceClient, item.itemNumber, resolution);
@@ -362,5 +381,13 @@ function expandSamsReceiptLabel(value: unknown): string {
     .replace(/\bMIN\b/gi, "Mineral")
     .replace(/\bWT\b/gi, "Water")
     .replace(/\bB\b$/i, "Black Silk")
+    .trim();
+}
+
+function normalizeComparisonText(value: unknown): string {
+  return cleanLookupLabel(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9.\s]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }

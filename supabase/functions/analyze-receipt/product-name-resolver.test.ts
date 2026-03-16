@@ -2,6 +2,7 @@ import { assertEquals } from "jsr:@std/assert";
 import {
   buildReceiptLabelMap,
   buildSamsClubSearchQuery,
+  isPlausibleSamsClubMatch,
   chooseBestCacheRows,
   extractSamsClubSearchResult,
 } from "./product-name-resolver.ts";
@@ -84,4 +85,18 @@ Deno.test("extractSamsClubSearchResult parses a DuckDuckGo result title and url"
     product_name: "Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz.",
     source_url: "https://www.samsclub.com/p/folgers-dark-roast-ground-coffee-black-silk-40-3-oz/prod123",
   });
+});
+
+Deno.test("isPlausibleSamsClubMatch accepts meaningful Sam's title expansions", () => {
+  assertEquals(
+    isPlausibleSamsClubMatch("FG 40.3OZ B", "Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz."),
+    true,
+  );
+});
+
+Deno.test("isPlausibleSamsClubMatch rejects unrelated search hits", () => {
+  assertEquals(
+    isPlausibleSamsClubMatch("MM 25 SUGAR", "Meow Mix, Original Choice Flavor Adult Dry Cat Food"),
+    false,
+  );
 });
