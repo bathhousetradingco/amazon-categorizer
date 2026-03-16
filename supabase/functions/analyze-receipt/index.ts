@@ -199,7 +199,7 @@ async function extractReceiptData(
         role: "user",
         content: [
           { type: "input_text", text: prompt },
-          buildReceiptInputPart(signedUrl, receiptPath),
+          await buildReceiptInputPart(signedUrl, receiptPath),
         ],
       }],
     }),
@@ -227,12 +227,13 @@ async function extractReceiptData(
   };
 }
 
-function buildReceiptInputPart(signedUrl: string, receiptPath: string) {
+async function buildReceiptInputPart(signedUrl: string, receiptPath: string) {
   if (isPdfReceipt(receiptPath)) {
+    const fileData = await fetchReceiptAsDataUrl(signedUrl, receiptPath);
     return {
       type: "input_file",
-      file_url: signedUrl,
       filename: extractFilename(receiptPath) || "receipt.pdf",
+      file_data: fileData,
     };
   }
 
@@ -248,6 +249,31 @@ function extractFilename(path: string): string {
   if (!normalized) return "";
   const parts = normalized.split("/");
   return parts[parts.length - 1] || "";
+}
+
+async function fetchReceiptAsDataUrl(signedUrl: string, receiptPath: string): Promise<string> {
+  const response = await fetchWithTimeout(signedUrl, {}, 30000);
+  if (!response.ok) {
+    throw new HttpError(500, "Failed to load PDF receipt for OCR", {
+      status: response.status,
+    });
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const mimeType = isPdfReceipt(receiptPath) ? "application/pdf" : "application/octet-stream";
+  return `data:${mimeType};base64,${encodeBase64(bytes)}`;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
 }
 
 async function safeJson(response: Response) {
