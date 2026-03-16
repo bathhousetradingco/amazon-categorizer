@@ -4,12 +4,13 @@ import type { ParsedReceiptItem } from "./parser-types.ts";
 const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT\s+1\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
 const INST_SV_LINE_PATTERN = /^INST\s+SV\b/i;
 const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*$/;
+const SINGLE_LINE_PRICE_PATTERN = /^(.*?)(\d+(?:\.\d{1,2})?)\s+([A-Z.]+)\s*$/i;
 
 export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[]): ParsedReceiptItem[] {
   const parsedItems: ParsedReceiptItem[] = [];
   const anchors = new Set(itemNumbers);
 
-  for (let i = 0; i < lines.length - 1; i++) {
+  for (let i = 0; i < lines.length; i++) {
     const line = String(lines[i] || "").trim();
     const number = extractLineItemNumber(line);
     if (!number) continue;
@@ -19,7 +20,16 @@ export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[
 
     const nextLine = String(lines[i + 1] || "").trim();
     const purchaseMatch = nextLine.match(PURCHASE_INFO_PATTERN);
-    if (!purchaseMatch) continue;
+    if (!purchaseMatch) {
+      const standaloneItem = parseStandaloneSamsClubItem({
+        line,
+        normalizedProductNumber,
+        lineIndex: i,
+        nextLine,
+      });
+      if (standaloneItem) parsedItems.push(standaloneItem);
+      continue;
+    }
 
     const quantity = Number.parseInt(purchaseMatch[1], 10);
     const unitPrice = Number.parseFloat(purchaseMatch[2]);
@@ -73,4 +83,40 @@ function extractReceiptLabel(line: string): string {
     .trim();
 
   return cleaned;
+}
+
+function parseStandaloneSamsClubItem(input: {
+  line: string;
+  normalizedProductNumber: string;
+  lineIndex: number;
+  nextLine?: string;
+}): ParsedReceiptItem | null {
+  const lineWithoutItemNumber = String(input.line || "").trim().replace(/^.*?(?:^|\D)\d{9,12}(?=\D|$)\s*/, "");
+  const priceMatch = lineWithoutItemNumber.match(SINGLE_LINE_PRICE_PATTERN);
+  if (!priceMatch) return null;
+
+  const unitPrice = Number.parseFloat(priceMatch[2]);
+  if (!Number.isFinite(unitPrice)) return null;
+
+  const receiptLabel = extractReceiptLabel(input.line);
+  if (!receiptLabel) return null;
+
+  const parsedItem: ParsedReceiptItem = {
+    product_number: input.normalizedProductNumber,
+    identifier_type: "item_number",
+    quantity: 1,
+    unit_price: unitPrice,
+    total_price: unitPrice,
+    receipt_label: receiptLabel,
+    line_index: input.lineIndex,
+    raw_lines: [input.line, String(input.nextLine || "").trim()].filter(Boolean),
+    parser_confidence: "medium",
+  };
+
+  const instantSavingsAmount = parseInstantSavingsAmount(String(input.nextLine || ""));
+  if (Number.isFinite(instantSavingsAmount)) {
+    parsedItem.instant_savings_discount = instantSavingsAmount;
+  }
+
+  return parsedItem;
 }
