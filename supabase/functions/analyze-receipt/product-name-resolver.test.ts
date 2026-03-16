@@ -74,7 +74,7 @@ Deno.test("buildSamsClubSearchQuery expands abbreviated Sam's receipt labels", (
 Deno.test("extractSamsClubSearchResult parses a DuckDuckGo result title and url", () => {
   const html = `
     <div class="results">
-      <a class="result__a" href="https://www.samsclub.com/p/folgers-dark-roast-ground-coffee-black-silk-40-3-oz/prod123">
+      <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.samsclub.com%2Fp%2Ffolgers-dark-roast-ground-coffee-black-silk-40-3-oz%2Fprod123">
         Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz. | Sam's Club
       </a>
     </div>

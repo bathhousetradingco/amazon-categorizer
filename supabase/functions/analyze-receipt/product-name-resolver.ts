@@ -167,7 +167,7 @@ export function buildSamsClubSearchQuery(itemNumber: string, receiptLabel?: stri
   const parts = [
     "site:samsclub.com",
     itemNumber,
-    cleanLookupLabel(receiptLabel).replace(/\bFG\b/gi, "Folgers").replace(/\bB\b$/i, "Black Silk"),
+    expandSamsReceiptLabel(receiptLabel),
   ].filter(Boolean);
 
   return parts.join(" ");
@@ -177,22 +177,26 @@ export function extractSamsClubSearchResult(html: string): SearchResolution | nu
   const text = String(html || "");
   if (!text) return null;
 
-  const linkMatch = text.match(/<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
-  if (!linkMatch) return null;
+  const matches = text.matchAll(/<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi);
+  for (const match of matches) {
+    const sourceUrl = normalizeSearchResultUrl(decodeHtml(match[1] || ""));
+    if (!/samsclub\.com/i.test(sourceUrl)) continue;
 
-  const sourceUrl = decodeHtml(linkMatch[1]);
-  const rawTitle = stripHtml(decodeHtml(linkMatch[2]));
-  const cleanedTitle = rawTitle
-    .replace(/\s*[|:-]\s*Sam'?s Club.*$/i, "")
-    .replace(/\s*[|:-]\s*Buy Now.*$/i, "")
-    .trim();
+    const rawTitle = stripHtml(decodeHtml(match[2] || ""));
+    const cleanedTitle = rawTitle
+      .replace(/\s*[|:-]\s*Sam'?s Club.*$/i, "")
+      .replace(/\s*[|:-]\s*Buy Now.*$/i, "")
+      .trim();
 
-  if (!cleanedTitle) return null;
+    if (!cleanedTitle) continue;
 
-  return {
-    product_name: cleanedTitle,
-    source_url: sourceUrl,
-  };
+    return {
+      product_name: cleanedTitle,
+      source_url: sourceUrl,
+    };
+  }
+
+  return null;
 }
 
 async function loadVerifiedLookups(
@@ -243,16 +247,7 @@ async function enrichSamsClubNames(
 
   for (const item of items) {
     try {
-      const query = buildSamsClubSearchQuery(item.itemNumber, item.receiptLabel);
-      const response = await fetchWithTimeout(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; BathhouseCategorizer/1.0)",
-        },
-      }, 10000);
-
-      if (!response.ok) continue;
-      const html = await response.text();
-      const resolution = extractSamsClubSearchResult(html);
+      const resolution = await searchSamsClubByItemNumber(item.itemNumber, item.receiptLabel);
       if (!resolution?.product_name) continue;
 
       results.set(item.itemNumber, resolution);
@@ -263,6 +258,39 @@ async function enrichSamsClubNames(
   }
 
   return results;
+}
+
+async function searchSamsClubByItemNumber(
+  itemNumber: string,
+  receiptLabel?: string,
+): Promise<SearchResolution | null> {
+  const queries = buildSamsClubSearchQueries(itemNumber, receiptLabel);
+
+  for (const query of queries) {
+    const response = await fetchWithTimeout(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; BathhouseCategorizer/1.0)",
+      },
+    }, 10000);
+
+    if (!response.ok) continue;
+    const html = await response.text();
+    const resolution = extractSamsClubSearchResult(html);
+    if (resolution?.product_name) return resolution;
+  }
+
+  return null;
+}
+
+function buildSamsClubSearchQueries(itemNumber: string, receiptLabel?: string): string[] {
+  const expandedLabel = expandSamsReceiptLabel(receiptLabel);
+
+  return [
+    `site:samsclub.com ${itemNumber}`,
+    buildSamsClubSearchQuery(itemNumber, receiptLabel),
+    expandedLabel ? `site:samsclub.com "${expandedLabel}" "${itemNumber}"` : "",
+    expandedLabel ? `site:samsclub.com ${expandedLabel}` : "",
+  ].filter(Boolean);
 }
 
 async function upsertLookupCache(
@@ -293,7 +321,7 @@ function normalizeLookupKey(value: unknown): string {
 }
 
 function cleanLookupLabel(value: unknown): string {
-  return String(value || "").replace(/\s+/g, " ").trim();
+  return decodeHtml(String(value || "").replace(/\s+/g, " ").trim());
 }
 
 function decodeHtml(value: string): string {
@@ -301,10 +329,38 @@ function decodeHtml(value: string): string {
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, "\"")
     .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
 }
 
 function stripHtml(value: string): string {
   return String(value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeSearchResultUrl(value: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const normalizedRaw = raw.startsWith("//") ? `https:${raw}` : raw;
+    const url = new URL(normalizedRaw, "https://duckduckgo.com");
+    const uddg = url.searchParams.get("uddg");
+    if (uddg) return decodeURIComponent(uddg);
+    return url.toString();
+  } catch {
+    return raw;
+  }
+}
+
+function expandSamsReceiptLabel(value: unknown): string {
+  return cleanLookupLabel(value)
+    .replace(/\bFG\b/gi, "Folgers")
+    .replace(/\bMM\b/gi, "Member's Mark")
+    .replace(/\bOO\b/gi, "Olive Oil")
+    .replace(/\bCARB\b/gi, "Carbona")
+    .replace(/\bMIN\b/gi, "Mineral")
+    .replace(/\bWT\b/gi, "Water")
+    .replace(/\bB\b$/i, "Black Silk")
+    .trim();
 }
