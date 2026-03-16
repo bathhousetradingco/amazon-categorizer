@@ -4749,6 +4749,7 @@ async function submitAIRequest(){
          ${result.reasoning}
 <br><br>
 Confidence: <strong>${result.confidence}</strong>
+${result.deduction_status ? `<br><br><strong>Deduction status:</strong><br>${result.deduction_status}` : ""}
 ${result.tax_consideration ? `<br><br><strong>Tax consideration:</strong><br>${result.tax_consideration}` : ""}
 ${result.follow_up_question ? `<br><br><strong>If still unsure:</strong><br>${result.follow_up_question}` : ""}
         </div>

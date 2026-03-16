@@ -44,4 +44,6 @@ Deno.test("buildAskAiPrompt includes transaction and receipt context", () => {
   assertMatch(prompt, /Bathhouse Trading Co/);
   assertMatch(prompt, /Item number: 990008301/);
   assertMatch(prompt, /COGS - Packaging/);
+  assertMatch(prompt, /deduction_status/);
+  assertMatch(prompt, /paper plates, cups, napkins/);
 });
