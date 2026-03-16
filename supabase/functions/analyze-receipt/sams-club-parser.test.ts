@@ -54,7 +54,6 @@ Deno.test("extractSamsClubParsedItems falls back to single-line Sam's item rows 
       line_index: 0,
       raw_lines: [
         "0990293734 CHARMIN 31.48 T",
-        "0980022771 HD SHIPPING 21.47 T",
       ],
       parser_confidence: "medium",
     },
@@ -77,7 +76,8 @@ Deno.test("extractSamsClubParsedItems falls back to single-line Sam's item rows 
 Deno.test("extractSamsClubParsedItems keeps instant savings on single-line fallback items", () => {
   const lines = [
     "0000744575 24CT SHARPI 11.98 T",
-    "INST SV 2.50-",
+    "0990012260 IYC 4 CF 40 8.48 T",
+    "INST SV 24CT SHARPI 2.50-",
   ];
 
   assertEquals(extractSamsClubParsedItems(lines, ["744575"]), [
@@ -91,7 +91,7 @@ Deno.test("extractSamsClubParsedItems keeps instant savings on single-line fallb
       line_index: 0,
       raw_lines: [
         "0000744575 24CT SHARPI 11.98 T",
-        "INST SV 2.50-",
+        "INST SV 24CT SHARPI 2.50-",
       ],
       parser_confidence: "medium",
       instant_savings_discount: 2.5,

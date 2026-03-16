@@ -440,6 +440,7 @@ function expandSamsReceiptLabel(value: unknown): string {
     .replace(/\bFG\b/gi, "Folgers")
     .replace(/\bMM\b/gi, "Member's Mark")
     .replace(/\bOO\b/gi, "Olive Oil")
+    .replace(/\bSHARPI\b/gi, "Sharpie")
     .replace(/\bCARB\b/gi, "Carbona")
     .replace(/\bMIN\b/gi, "Mineral")
     .replace(/\bWT\b/gi, "Water")

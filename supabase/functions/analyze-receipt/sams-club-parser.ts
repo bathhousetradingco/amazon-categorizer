@@ -56,10 +56,10 @@ export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[
       }
     }
 
-    console.log("Parsed Item:", parsedItem);
     parsedItems.push(parsedItem);
   }
 
+  applyLabeledInstantSavings(parsedItems, lines);
   return parsedItems;
 }
 
@@ -109,7 +109,10 @@ function parseStandaloneSamsClubItem(input: {
     total_price: unitPrice,
     receipt_label: receiptLabel,
     line_index: input.lineIndex,
-    raw_lines: [input.line, String(input.nextLine || "").trim()].filter(Boolean),
+    raw_lines: [
+      input.line,
+      ...(INST_SV_LINE_PATTERN.test(String(input.nextLine || "").trim()) ? [String(input.nextLine || "").trim()] : []),
+    ].filter(Boolean),
     parser_confidence: "medium",
   };
 
@@ -119,4 +122,53 @@ function parseStandaloneSamsClubItem(input: {
   }
 
   return parsedItem;
+}
+
+function applyLabeledInstantSavings(parsedItems: ParsedReceiptItem[], lines: string[]) {
+  for (let index = 0; index < lines.length; index++) {
+    const line = String(lines[index] || "").trim();
+    if (!INST_SV_LINE_PATTERN.test(line)) continue;
+
+    const amount = parseInstantSavingsAmount(line);
+    if (!Number.isFinite(amount)) continue;
+
+    const savingsLabel = extractInstantSavingsLabel(line);
+    if (!savingsLabel) continue;
+
+    const matchedItem = [...parsedItems]
+      .reverse()
+      .find((item) => {
+        const itemIndex = Number(item.line_index ?? -1);
+        if (!Number.isFinite(itemIndex) || itemIndex >= index) return false;
+        return labelsOverlap(item.receipt_label, savingsLabel);
+      });
+
+    if (!matchedItem || Number.isFinite(matchedItem.instant_savings_discount)) continue;
+    matchedItem.instant_savings_discount = amount;
+    matchedItem.raw_lines = [...new Set([...(matchedItem.raw_lines || []), line])];
+  }
+}
+
+function extractInstantSavingsLabel(line: string): string {
+  return String(line || "")
+    .replace(/^INST\s+SV\s*/i, "")
+    .replace(/\s+\d+(?:\.\d{1,2})?-\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function labelsOverlap(left: string | undefined, right: string | undefined): boolean {
+  const leftTokens = tokenizeLabel(left);
+  const rightTokens = tokenizeLabel(right);
+  if (!leftTokens.length || !rightTokens.length) return false;
+
+  return leftTokens.some((token) => rightTokens.includes(token));
+}
+
+function tokenizeLabel(value: string | undefined): string[] {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 3);
 }
