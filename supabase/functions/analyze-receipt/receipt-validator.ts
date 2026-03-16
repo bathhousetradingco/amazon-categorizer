@@ -145,12 +145,15 @@ function validateDefaultMath(
   const expectedTotalCents = Number.isFinite(parsedTaxCents)
     ? computedSubtotalCents + (parsedTaxCents as number)
     : null;
+  const safeParsedReceiptTotalCents = Number.isFinite(parsedReceiptTotalCents)
+    ? (parsedReceiptTotalCents as number)
+    : null;
 
   const subtotalDifferenceCents = Number.isFinite(parsedSubtotalCents)
     ? computedSubtotalCents - (parsedSubtotalCents as number)
     : null;
-  const totalDifferenceCents = Number.isFinite(expectedTotalCents) && Number.isFinite(parsedReceiptTotalCents)
-    ? expectedTotalCents - (parsedReceiptTotalCents as number)
+  const totalDifferenceCents = Number.isFinite(expectedTotalCents) && Number.isFinite(safeParsedReceiptTotalCents)
+    ? (expectedTotalCents as number) - safeParsedReceiptTotalCents
     : null;
   const safeExpectedTotalCents = Number.isFinite(expectedTotalCents) ? (expectedTotalCents as number) : null;
 
@@ -159,7 +162,7 @@ function validateDefaultMath(
     parsedSubtotalCents,
     parsedTaxCents,
     expectedTotalCents: safeExpectedTotalCents,
-    parsedReceiptTotalCents,
+    parsedReceiptTotalCents: safeParsedReceiptTotalCents,
     subtotalDifferenceCents,
     totalDifferenceCents,
   };
