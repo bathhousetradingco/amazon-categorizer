@@ -4633,35 +4633,22 @@ XLSX.writeFile(wb, `schedule-c-categorizer-export-${new Date().toISOString().sli
 function buildQaReviewRows(){
   const rows = [];
 
-  data.forEach((item, index) => {
+  getVisibleIndexes().forEach((index) => {
+    const item = data[index];
     const categoryName = normalizeCategoryName(item.Category || "Needs Review");
     const taxMeta = getCategoryTaxMetadata(categoryName);
+    const issues = [];
 
     if((!item.Splits || !item.Splits.length) && !item.Category){
-      rows.push({
-        index,
-        issue: "Uncategorized transaction",
-        vendor: item.Vendor || item.Title || "",
-        amount: Number(item.Amount) || 0,
-      });
+      issues.push("Uncategorized transaction");
     }
 
     if(item.ReviewStatus && item.ReviewStatus !== "Deductible"){
-      rows.push({
-        index,
-        issue: item.ReviewStatus,
-        vendor: item.Vendor || item.Title || "",
-        amount: Number(item.Amount) || 0,
-      });
+      issues.push(item.ReviewStatus);
     }
 
     if((!item.Splits || !item.Splits.length) && taxMeta.tax_treatment === "review"){
-      rows.push({
-        index,
-        issue: "Review-tax category",
-        vendor: item.Vendor || item.Title || "",
-        amount: Number(item.Amount) || 0,
-      });
+      issues.push("Review-tax category");
     }
 
     (item.Splits || []).forEach((split) => {
@@ -4669,21 +4656,28 @@ function buildQaReviewRows(){
       const splitTaxMeta = getCategoryTaxMetadata(splitCategory);
       const splitReviewStatus = String(split.ReviewStatus || "").trim();
       if(splitReviewStatus && splitReviewStatus !== "Deductible"){
-        rows.push({
-          index,
-          issue: `Split: ${splitReviewStatus}`,
-          vendor: `${item.Vendor || item.Title || ""} • ${splitCategory}`,
-          amount: Number(split.Amount) || 0,
-        });
+        issues.push(`Split: ${splitReviewStatus} (${splitCategory})`);
       } else if(splitTaxMeta.tax_treatment === "review"){
-        rows.push({
-          index,
-          issue: "Split: review-tax category",
-          vendor: `${item.Vendor || item.Title || ""} • ${splitCategory}`,
-          amount: Number(split.Amount) || 0,
-        });
+        issues.push(`Split: review-tax category (${splitCategory})`);
       }
     });
+
+    const uniqueIssues = [...new Set(issues)];
+    if(!uniqueIssues.length) return;
+
+    rows.push({
+      index,
+      issue: uniqueIssues.join(" • "),
+      issueCount: uniqueIssues.length,
+      vendor: item.Vendor || item.Title || "",
+      amount: Number(item.Amount) || 0,
+      date: item.Date || "",
+    });
+  });
+
+  rows.sort((left, right) => {
+    if(right.issueCount !== left.issueCount) return right.issueCount - left.issueCount;
+    return String(left.date || "").localeCompare(String(right.date || ""));
   });
 
   return rows;
@@ -4699,13 +4693,19 @@ function openQaReviewModal(){
     return;
   }
 
-  modalContent.innerHTML = rows.map((row) => `
+  modalContent.innerHTML = `
+    <div style="padding:10px;" class="small">
+      Reviewing <strong>${rows.length}</strong> transaction${rows.length === 1 ? "" : "s"} within the current filter scope.
+    </div>
+    ${rows.map((row) => `
     <div class="modalItem" onclick="jumpToItem(${row.index})">
       <strong>${escapeHtml(row.issue)}</strong><br>
+      ${row.date ? `<span class="small">${escapeHtml(row.date)}</span><br>` : ""}
       ${escapeHtml(row.vendor)}<br>
       <span class="small">${Utils.money(row.amount)}</span>
     </div>
-  `).join("");
+  `).join("")}
+  `;
   openModal();
 }
 
