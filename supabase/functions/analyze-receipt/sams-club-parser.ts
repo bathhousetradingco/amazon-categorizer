@@ -26,6 +26,7 @@ export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[
         normalizedProductNumber,
         lineIndex: i,
         nextLine,
+        nextNextLine: String(lines[i + 2] || "").trim(),
       });
       if (standaloneItem) parsedItems.push(standaloneItem);
       continue;
@@ -90,6 +91,7 @@ function parseStandaloneSamsClubItem(input: {
   normalizedProductNumber: string;
   lineIndex: number;
   nextLine?: string;
+  nextNextLine?: string;
 }): ParsedReceiptItem | null {
   const lineWithoutItemNumber = String(input.line || "").trim().replace(/^.*?(?:^|\D)\d{9,12}(?=\D|$)\s*/, "");
   const priceMatch = lineWithoutItemNumber.match(SINGLE_LINE_PRICE_PATTERN);
@@ -111,12 +113,34 @@ function parseStandaloneSamsClubItem(input: {
     line_index: input.lineIndex,
     raw_lines: [
       input.line,
-      ...(INST_SV_LINE_PATTERN.test(String(input.nextLine || "").trim()) ? [String(input.nextLine || "").trim()] : []),
     ].filter(Boolean),
     parser_confidence: "medium",
   };
 
+  const savingsLine = findMatchingInstantSavingsLine(
+    receiptLabel,
+    String(input.nextLine || "").trim(),
+    String(input.nextNextLine || "").trim(),
+  );
+  const instantSavingsAmount = parseInstantSavingsAmount(savingsLine);
+  if (Number.isFinite(instantSavingsAmount)) {
+    parsedItem.instant_savings_discount = instantSavingsAmount;
+    parsedItem.raw_lines = [...new Set([...(parsedItem.raw_lines || []), savingsLine])];
+  }
+
   return parsedItem;
+}
+
+function findMatchingInstantSavingsLine(
+  receiptLabel: string,
+  nextLine: string,
+  nextNextLine: string,
+): string {
+  const candidates = [nextLine, nextNextLine].filter(Boolean);
+  return candidates.find((line) => {
+    if (!INST_SV_LINE_PATTERN.test(line)) return false;
+    return labelsOverlap(receiptLabel, extractInstantSavingsLabel(line));
+  }) || "";
 }
 
 function applyLabeledInstantSavings(parsedItems: ParsedReceiptItem[], lines: string[]) {
