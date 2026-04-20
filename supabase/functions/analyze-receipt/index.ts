@@ -5,6 +5,7 @@ import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from
 import { dedupeItemNumbers, extractItemNumbersFromLineItems, isLikelyLineItem } from "./line-item-parser.ts";
 import { resolveProductNames } from "./product-name-resolver.ts";
 import { parseReceiptByMerchant } from "./receipt-parser.ts";
+import { parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -110,68 +111,6 @@ async function requireUser(req: Request) {
 
   if (error || !user) throw new HttpError(401, "Unauthorized");
   return user;
-}
-
-function parseReceiptTotals(rawReceiptText: string) {
-  const totals: { tax: number | null; subtotal: number | null; receiptTotal: number | null } = {
-    tax: null,
-    subtotal: null,
-    receiptTotal: null,
-  };
-  const lines = String(rawReceiptText || "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  let taxSumCents = 0;
-  let foundTax = false;
-
-  for (const line of lines) {
-    const trailingAmountCents = parseTrailingCurrencyToCents(line);
-
-    if (/\bSUB\s*TOTAL\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
-      totals.subtotal = centsToAmount(trailingAmountCents);
-    }
-
-    if (/\bTAX\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
-      taxSumCents += trailingAmountCents as number;
-      foundTax = true;
-    }
-
-    if (/\bTOTAL\b/i.test(line) && !/\bSUB\s*TOTAL\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
-      totals.receiptTotal = centsToAmount(trailingAmountCents);
-    }
-  }
-
-  totals.tax = foundTax ? centsToAmount(taxSumCents) : null;
-  return totals;
-}
-
-function parseReceiptInstantSavingsTotal(rawReceiptText: string): number {
-  const lines = String(rawReceiptText || "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  return lines.reduce((sum, line) => {
-    if (!/^INST\s+SV\b/i.test(line)) return sum;
-    const match = line.match(/(\d+\.\d{2})-\s*[A-Z.]*\s*$/i);
-    if (!match) return sum;
-    const amount = Number(match[1]);
-    return Number.isFinite(amount) ? sum + amount : sum;
-  }, 0);
-}
-
-function parseTrailingCurrencyToCents(line: string): number | null {
-  const match = String(line || "").trim().match(/(\d+\.\d{2})\s*[A-Z]?\s*$/i);
-  if (!match) return null;
-
-  const amount = Number(match[1]);
-  return Number.isFinite(amount) ? Math.round(amount * 100) : null;
-}
-
-function centsToAmount(cents: number | null): number | null {
-  return Number.isFinite(cents) ? (cents as number) / 100 : null;
 }
 
 function normalizeReceiptPath(value: string): string {

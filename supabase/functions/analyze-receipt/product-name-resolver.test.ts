@@ -6,7 +6,10 @@ import {
   isSamsClubSearchSource,
   isSearchableSamsClubReceiptLabel,
   chooseBestCacheRows,
+  extractSamsClubCatalogSearchResolution,
+  extractSamsClubProductPageName,
   extractSamsClubSearchResult,
+  normalizeSamsClubProductTitle,
 } from "./product-name-resolver.ts";
 
 Deno.test("buildReceiptLabelMap keeps the first non-empty receipt label per item number", () => {
@@ -120,6 +123,58 @@ Deno.test("isSamsClubSearchSource requires Sam's Club source evidence", () => {
   assertEquals(isSamsClubSearchSource("Sam's Club", "Folgers Coffee", ""), true);
   assertEquals(isSamsClubSearchSource("", "Folgers Coffee | Sam's Club", ""), true);
   assertEquals(isSamsClubSearchSource("Amazon", "Folgers Coffee", "https://www.amazon.com/item"), false);
+});
+
+Deno.test("extractSamsClubCatalogSearchResolution prefers exact item ids from catalog API payloads", () => {
+  const payload = [
+    {
+      itemId: "44346411",
+      itemName: "Unrelated TV Stand",
+      itemPageUrl: "https://www.samsclub.com/p/tv/prod1",
+      variantItems: [
+        {
+          variantItemId: "990008301",
+          variantItemName: "Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz.",
+        },
+      ],
+    },
+  ];
+
+  assertEquals(extractSamsClubCatalogSearchResolution(payload, "990008301", "FG 40.3OZ B"), {
+    product_name: "Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz.",
+    source_url: "https://www.samsclub.com/p/tv/prod1",
+    provider: "sams_ads_catalog",
+  });
+});
+
+Deno.test("extractSamsClubCatalogSearchResolution rejects non-exact unrelated catalog names", () => {
+  const payload = [{ itemId: "111111111", itemName: "Member's Mark Women's Favorite Soft Full-Zip Jacket" }];
+  assertEquals(extractSamsClubCatalogSearchResolution(payload, "222222222", "MM PURE OO"), null);
+});
+
+Deno.test("extractSamsClubProductPageName reads product JSON-LD before title fallback", () => {
+  const html = `
+    <html>
+      <head>
+        <title>Fallback Title | Sam's Club</title>
+        <script type="application/ld+json">
+          {"@type":"Product","name":"Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz. | Sam's Club"}
+        </script>
+      </head>
+    </html>
+  `;
+
+  assertEquals(
+    extractSamsClubProductPageName(html),
+    "Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz.",
+  );
+});
+
+Deno.test("normalizeSamsClubProductTitle removes Sam's title suffixes", () => {
+  assertEquals(
+    normalizeSamsClubProductTitle("Sharpie Permanent Markers, 24 Count | Sam's Club"),
+    "Sharpie Permanent Markers, 24 Count",
+  );
 });
 
 Deno.test("isPlausibleSamsClubMatch accepts meaningful Sam's title expansions", () => {

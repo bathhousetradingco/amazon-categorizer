@@ -30,7 +30,16 @@ type CacheLookupRow = {
 type SearchResolution = {
   product_name: string;
   source_url?: string | null;
-  provider?: "serpapi_samsclub" | "duckduckgo_samsclub";
+  provider?: "sams_ads_catalog" | "serpapi_samsclub" | "duckduckgo_samsclub";
+};
+
+type SamsAdsCatalogConfig = {
+  apiUrl: string;
+  advertiserId: string;
+  accessToken: string;
+  consumerId?: string;
+  keyVersion?: string;
+  authSignature?: string;
 };
 
 export async function resolveProductNames(
@@ -198,6 +207,146 @@ export function extractSamsClubSearchResult(html: string): SearchResolution | nu
   return null;
 }
 
+export function extractSamsClubCatalogSearchResolution(
+  payload: unknown,
+  itemNumber: string,
+  receiptLabel?: string,
+): SearchResolution | null {
+  const targetItemNumber = normalizeLookupKey(itemNumber);
+  const rawEntries = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as any)?.items)
+    ? (payload as any).items
+    : Array.isArray((payload as any)?.data)
+    ? (payload as any).data
+    : [];
+
+  const candidates: Array<SearchResolution & { itemId?: string }> = [];
+
+  for (const entry of rawEntries) {
+    candidates.push(...buildSamsCatalogCandidates(entry));
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate.product_name) continue;
+    const candidateItemNumber = normalizeLookupKey(candidate.itemId);
+    const isExactItemId = Boolean(candidateItemNumber && candidateItemNumber === targetItemNumber);
+    if (!isExactItemId && receiptLabel && !isPlausibleSamsClubMatch(receiptLabel, candidate.product_name)) continue;
+
+    return {
+      product_name: candidate.product_name,
+      source_url: candidate.source_url || null,
+      provider: "sams_ads_catalog",
+    };
+  }
+
+  return null;
+}
+
+function buildSamsCatalogCandidates(entry: any): Array<SearchResolution & { itemId?: string }> {
+  const candidates: Array<SearchResolution & { itemId?: string }> = [];
+
+  const addCandidate = (itemId: unknown, name: unknown, url: unknown) => {
+    const productName = cleanLookupLabel(name);
+    if (!productName) return;
+
+    candidates.push({
+      itemId: String(itemId || ""),
+      product_name: productName,
+      source_url: String(url || "") || null,
+      provider: "sams_ads_catalog",
+    });
+  };
+
+  addCandidate(entry?.itemId, entry?.itemName, entry?.itemPageUrl);
+
+  for (const variant of Array.isArray(entry?.variantItems) ? entry.variantItems : []) {
+    addCandidate(
+      variant?.variantItemId,
+      variant?.variantItemName,
+      variant?.variantItemPageUrl || entry?.itemPageUrl,
+    );
+  }
+
+  return candidates;
+}
+
+export function extractSamsClubProductPageName(html: string): string {
+  const text = String(html || "");
+  if (!text) return "";
+
+  const jsonLdName = extractJsonLdProductNames(text)
+    .map(normalizeSamsClubProductTitle)
+    .find(Boolean);
+  if (jsonLdName) return jsonLdName;
+
+  const metaTitle = extractMetaContent(text, "property", "og:title") ||
+    extractMetaContent(text, "name", "twitter:title");
+  const normalizedMetaTitle = normalizeSamsClubProductTitle(metaTitle);
+  if (normalizedMetaTitle) return normalizedMetaTitle;
+
+  const titleMatch = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return normalizeSamsClubProductTitle(stripHtml(decodeHtml(titleMatch?.[1] || "")));
+}
+
+function extractJsonLdProductNames(html: string): string[] {
+  const names: string[] = [];
+  const scripts = html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+
+  for (const script of scripts) {
+    const rawJson = decodeHtml(stripHtml(script[1] || ""));
+    const parsed = tryParseJson(rawJson);
+    collectJsonLdProductNames(parsed, names);
+  }
+
+  return names;
+}
+
+function collectJsonLdProductNames(value: unknown, names: string[]) {
+  if (!value) return;
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectJsonLdProductNames(entry, names));
+    return;
+  }
+
+  if (typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+  const graph = record["@graph"];
+  if (graph) collectJsonLdProductNames(graph, names);
+
+  const typeValue = record["@type"];
+  const types = Array.isArray(typeValue) ? typeValue : [typeValue];
+  const isProduct = types.some((type) => String(type || "").toLowerCase() === "product");
+  if (isProduct && record.name) {
+    names.push(cleanLookupLabel(record.name));
+  }
+}
+
+function extractMetaContent(html: string, attrName: string, attrValue: string): string {
+  const escapedValue = attrValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`<meta\\b(?=[^>]*\\b${attrName}=["']${escapedValue}["'])(?=[^>]*\\bcontent=["']([^"']+)["'])[^>]*>`, "i");
+  const match = html.match(pattern);
+  return decodeHtml(match?.[1] || "");
+}
+
+function tryParseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeSamsClubProductTitle(value: unknown): string {
+  return cleanLookupLabel(value)
+    .replace(/\s*[|:-]\s*Sam'?s Club.*$/i, "")
+    .replace(/\s*[|:-]\s*Buy Now.*$/i, "")
+    .replace(/\s+\|\s+SamsClub\.com.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function isSearchableSamsClubReceiptLabel(receiptLabel: string | undefined): boolean {
   const cleaned = cleanLookupLabel(receiptLabel);
   if (!cleaned) return false;
@@ -309,9 +458,14 @@ async function searchSamsClubByItemNumber(
 ): Promise<SearchResolution | null> {
   if (!isSearchableSamsClubReceiptLabel(receiptLabel)) return null;
 
+  const adsCatalogResolution = await searchSamsClubByAdvertisingCatalog(itemNumber, receiptLabel);
+  if (adsCatalogResolution?.product_name) {
+    return refineSamsClubResolutionWithProductPage(adsCatalogResolution, receiptLabel);
+  }
+
   const serpApiResolution = await searchSamsClubBySerpApi(itemNumber, receiptLabel);
   if (serpApiResolution?.product_name) {
-    return serpApiResolution;
+    return refineSamsClubResolutionWithProductPage(serpApiResolution, receiptLabel);
   }
 
   const queries = buildSamsClubSearchQueries(itemNumber, receiptLabel);
@@ -326,10 +480,94 @@ async function searchSamsClubByItemNumber(
     if (!response.ok) continue;
     const html = await response.text();
     const resolution = extractSamsClubSearchResult(html);
-    if (resolution?.product_name) return resolution;
+    if (resolution?.product_name) return refineSamsClubResolutionWithProductPage(resolution, receiptLabel);
   }
 
   return null;
+}
+
+async function searchSamsClubByAdvertisingCatalog(
+  itemNumber: string,
+  receiptLabel?: string,
+): Promise<SearchResolution | null> {
+  const config = getSamsAdsCatalogConfig();
+  if (!config) return null;
+
+  const itemIdResolution = await invokeSamsAdsCatalogSearch(config, { searchItemIds: [itemNumber] }, itemNumber, receiptLabel);
+  if (itemIdResolution?.product_name) return itemIdResolution;
+
+  const searchText = expandSamsReceiptLabel(receiptLabel);
+  if (!searchText) return null;
+
+  return invokeSamsAdsCatalogSearch(config, { searchText }, itemNumber, receiptLabel);
+}
+
+async function invokeSamsAdsCatalogSearch(
+  config: SamsAdsCatalogConfig,
+  searchInput: { searchItemIds?: string[]; searchText?: string },
+  itemNumber: string,
+  receiptLabel?: string,
+): Promise<SearchResolution | null> {
+  try {
+    const response = await fetchWithTimeout(config.apiUrl, {
+      method: "POST",
+      headers: buildSamsAdsCatalogHeaders(config),
+      body: JSON.stringify({
+        advertiserId: Number(config.advertiserId) || config.advertiserId,
+        ...searchInput,
+      }),
+    }, 10000);
+
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    return extractSamsClubCatalogSearchResolution(payload, itemNumber, receiptLabel);
+  } catch (error) {
+    console.warn("Sam's Club advertising catalog lookup failed", { itemNumber, error });
+    return null;
+  }
+}
+
+function buildSamsAdsCatalogHeaders(config: SamsAdsCatalogConfig): HeadersInit {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${config.accessToken}`,
+    "Content-Type": "application/json",
+    "wm_qos.correlation_id": crypto.randomUUID(),
+    "wm_consumer.intimestamp": Date.now().toString(),
+  };
+
+  if (config.consumerId) headers["wm_consumer.id"] = config.consumerId;
+  if (config.keyVersion) headers["wm_sec.key_version"] = config.keyVersion;
+  if (config.authSignature) headers["wm_sec.auth_signature"] = config.authSignature;
+
+  return headers;
+}
+
+async function refineSamsClubResolutionWithProductPage(
+  resolution: SearchResolution,
+  receiptLabel?: string,
+): Promise<SearchResolution> {
+  const sourceUrl = String(resolution.source_url || "");
+  if (!/samsclub\.com/i.test(sourceUrl)) return resolution;
+
+  try {
+    const response = await fetchWithTimeout(sourceUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; BathhouseCategorizer/1.0)",
+      },
+    }, 10000);
+
+    if (!response.ok) return resolution;
+    const productName = extractSamsClubProductPageName(await response.text());
+    if (!productName) return resolution;
+    if (receiptLabel && !isPlausibleSamsClubMatch(receiptLabel, productName)) return resolution;
+
+    return {
+      ...resolution,
+      product_name: productName,
+    };
+  } catch {
+    return resolution;
+  }
 }
 
 async function searchSamsClubBySerpApi(
@@ -509,6 +747,26 @@ function getSerpApiKey(): string {
     return Deno.env.get("SERPAPI_KEY") || Deno.env.get("SERPAPI_API_KEY") || "";
   } catch {
     return "";
+  }
+}
+
+function getSamsAdsCatalogConfig(): SamsAdsCatalogConfig | null {
+  try {
+    const advertiserId = Deno.env.get("SAMS_ADS_ADVERTISER_ID") || "";
+    const accessToken = Deno.env.get("SAMS_ADS_ACCESS_TOKEN") || "";
+    if (!advertiserId || !accessToken) return null;
+
+    return {
+      apiUrl: Deno.env.get("SAMS_ADS_ITEM_SEARCH_URL") ||
+        "https://developer.api.us.walmart.com/api-proxy/service/sp/api-sams/v1/api/v1/itemSearch",
+      advertiserId,
+      accessToken,
+      consumerId: Deno.env.get("SAMS_ADS_CONSUMER_ID") || undefined,
+      keyVersion: Deno.env.get("SAMS_ADS_KEY_VERSION") || undefined,
+      authSignature: Deno.env.get("SAMS_ADS_AUTH_SIGNATURE") || undefined,
+    };
+  } catch {
+    return null;
   }
 }
 
