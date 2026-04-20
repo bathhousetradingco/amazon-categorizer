@@ -1501,6 +1501,105 @@ async function convertReceiptImageToJpeg(file){
   }
 }
 
+function receiptPathBaseName(path){
+  return String(path || "receipt").split("/").pop()?.replace(/\.[^.]+$/, "").trim() || "receipt";
+}
+
+async function createReceiptSignedUrl(path, expiresIn = 60){
+  const { data: signedData, error } = await supabaseClient
+    .storage
+    .from("receipts")
+    .createSignedUrl(path, expiresIn);
+
+  if(error || !signedData?.signedUrl){
+    throw new Error("Unable to load attached receipt.");
+  }
+
+  return signedData.signedUrl;
+}
+
+async function fetchAttachedReceiptBlob(path){
+  const signedUrl = await createReceiptSignedUrl(path, 60);
+  const response = await fetch(signedUrl);
+  if(!response.ok){
+    throw new Error("Unable to read attached receipt.");
+  }
+  return response.blob();
+}
+
+async function repairAttachedReceiptForAnalysis(item){
+  if(!item?.id || !item?.receipt_url) return false;
+  if(inferReceiptFileKind(item.receipt_url) === "pdf") return false;
+
+  let blob;
+  try{
+    blob = await fetchAttachedReceiptBlob(item.receipt_url);
+  }catch(error){
+    console.warn("Unable to inspect attached receipt before analysis", error);
+    return false;
+  }
+
+  const headerBytes = new Uint8Array(await blob.slice(0, 64).arrayBuffer());
+  const headerMimeType = sniffReceiptFileMimeType(headerBytes);
+  if(headerMimeType === "application/pdf" || isSupportedReceiptImageMimeType(headerMimeType)){
+    return false;
+  }
+
+  const shouldTryConversion = headerMimeType === "image/heic"
+    || headerMimeType === "image/heif"
+    || isBrowserConvertibleReceiptMimeType(blob.type)
+    || inferReceiptFileKind(item.receipt_url, blob.type) === "image";
+  if(!shouldTryConversion) return false;
+
+  const previousReceiptUrl = item.receipt_url;
+  const sourceFile = new File(
+    [blob],
+    `${receiptPathBaseName(previousReceiptUrl)}.${receiptFileExtForMimeType(blob.type) || "heic"}`,
+    { type: blob.type || headerMimeType || "image/heic" }
+  );
+
+  let preparedReceipt;
+  try{
+    preparedReceipt = await convertReceiptImageToJpeg(sourceFile);
+  }catch(error){
+    console.error("Attached receipt conversion failed", error);
+    throw new Error("The attached receipt is HEIC/HEIF even though its name may end in .jpeg. Export it from Preview as JPEG or PNG, then attach that exported file.");
+  }
+
+  const filePath = `receipts/${item.id}.jpg`;
+  const { error: uploadError } = await supabaseClient
+    .storage
+    .from("receipts")
+    .upload(filePath, preparedReceipt.file, {
+      upsert: true,
+      contentType: "image/jpeg"
+    });
+
+  if(uploadError){
+    console.error("Receipt repair upload failed", uploadError);
+    throw new Error("Unable to replace the attached HEIC receipt with a JPEG copy.");
+  }
+
+  if(previousReceiptUrl !== filePath){
+    const { error: updateError } = await supabaseClient
+      .from("transactions")
+      .update({ receipt_url: filePath })
+      .eq("id", item.id);
+
+    if(updateError){
+      console.error("Receipt repair DB update failed", updateError);
+      await supabaseClient.storage.from("receipts").remove([filePath]);
+      throw new Error("Unable to update the transaction to use the converted JPEG receipt.");
+    }
+
+    const { error: cleanupError } = await supabaseClient.storage.from("receipts").remove([previousReceiptUrl]);
+    if(cleanupError) console.warn("Unable to remove replaced receipt file", cleanupError);
+    item.receipt_url = filePath;
+  }
+
+  return true;
+}
+
 async function attachReceipt(e){
 
 const file = e.target.files[0];
@@ -1651,12 +1750,10 @@ if(!item.receipt_url){
   return;
 }
 
-const { data: signedData, error } = await supabaseClient
-  .storage
-  .from("receipts")
-  .createSignedUrl(item.receipt_url, 60);
-
-if(error){
+let url;
+try{
+  url = await createReceiptSignedUrl(item.receipt_url, 60);
+}catch(error){
   console.error(error);
   alert("Unable to load receipt.");
   return;
@@ -1664,7 +1761,6 @@ if(error){
 
 modalTitle.innerText = title;
 
-const url = signedData.signedUrl;
 const fileKind = inferReceiptFileKind(item.receipt_url);
 const renderAsPdf = fileKind === "pdf";
 const footerButtons = [
@@ -2401,9 +2497,12 @@ async function analyzeSplitReceipt(){
 
   try {
     modalTitle.innerText = "Analyzing Receipt";
-    modalContent.innerHTML = `<div class="small" style="padding:14px;">Extracting item numbers…</div>`;
+    modalContent.innerHTML = `<div class="small" style="padding:14px;">Preparing receipt image…</div>`;
     setModalBackAction(() => openSplitModal());
     openModal();
+
+    const repairedReceipt = await repairAttachedReceiptForAnalysis(item);
+    modalContent.innerHTML = `<div class="small" style="padding:14px;">${repairedReceipt ? "Converted receipt to JPEG. Extracting item numbers…" : "Extracting item numbers…"}</div>`;
 
     const payload = {
       transaction_id: item.id,
