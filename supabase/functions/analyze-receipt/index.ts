@@ -5,6 +5,7 @@ import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from
 import { dedupeItemNumbers, extractItemNumbersFromLineItems, isLikelyLineItem } from "./line-item-parser.ts";
 import { normalizeModelReceiptItems } from "./model-line-items.ts";
 import { resolveProductNames } from "./product-name-resolver.ts";
+import { extractFilename, inferReceiptMimeType, isPdfReceipt } from "./receipt-file.ts";
 import { parseReceiptByMerchant } from "./receipt-parser.ts";
 import { parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
 import { validateReceiptMathByMerchant } from "./receipt-validator.ts";
@@ -193,6 +194,7 @@ async function extractReceiptData(
   if (!OPENAI_API_KEY) {
     throw new HttpError(500, "OPENAI_API_KEY is not configured");
   }
+  const receiptInputPart = await buildReceiptInputPart(signedUrl, receiptPath);
 
   const prompt = [
     "You are extracting purchase receipt data from an image or PDF.",
@@ -224,7 +226,7 @@ async function extractReceiptData(
         role: "user",
         content: [
           { type: "input_text", text: prompt },
-          await buildReceiptInputPart(signedUrl, receiptPath),
+          receiptInputPart,
         ],
       }],
     }),
@@ -232,7 +234,8 @@ async function extractReceiptData(
 
   const json = await safeJson(response);
   if (!response.ok) {
-    throw new HttpError(422, "OCR request failed", {
+    const openAiMessage = extractOpenAiErrorMessage(json);
+    throw new HttpError(422, openAiMessage ? `OCR request failed: ${openAiMessage}` : "OCR request failed", {
       status: response.status,
       body: json,
     });
@@ -255,40 +258,32 @@ async function extractReceiptData(
 }
 
 async function buildReceiptInputPart(signedUrl: string, receiptPath: string) {
-  if (isPdfReceipt(receiptPath)) {
-    const fileData = await fetchReceiptAsDataUrl(signedUrl, receiptPath);
+  const { dataUrl, mimeType } = await fetchReceiptAsDataUrl(signedUrl, receiptPath);
+  if (isPdfReceipt(receiptPath, mimeType)) {
     return {
       type: "input_file",
       filename: extractFilename(receiptPath) || "receipt.pdf",
-      file_data: fileData,
+      file_data: dataUrl,
     };
   }
 
-  return { type: "input_image", image_url: signedUrl };
+  return { type: "input_image", image_url: dataUrl };
 }
 
-function isPdfReceipt(receiptPath: string): boolean {
-  return /\.pdf(?:$|[?#])/i.test(String(receiptPath || "").trim());
-}
-
-function extractFilename(path: string): string {
-  const normalized = String(path || "").trim().replace(/^\/+/, "");
-  if (!normalized) return "";
-  const parts = normalized.split("/");
-  return parts[parts.length - 1] || "";
-}
-
-async function fetchReceiptAsDataUrl(signedUrl: string, receiptPath: string): Promise<string> {
+async function fetchReceiptAsDataUrl(signedUrl: string, receiptPath: string): Promise<{ dataUrl: string; mimeType: string }> {
   const response = await fetchWithTimeout(signedUrl, {}, 30000);
   if (!response.ok) {
-    throw new HttpError(500, "Failed to load PDF receipt for OCR", {
+    throw new HttpError(500, "Failed to load receipt file for OCR", {
       status: response.status,
     });
   }
 
   const bytes = new Uint8Array(await response.arrayBuffer());
-  const mimeType = isPdfReceipt(receiptPath) ? "application/pdf" : "application/octet-stream";
-  return `data:${mimeType};base64,${encodeBase64(bytes)}`;
+  const mimeType = inferReceiptMimeType(receiptPath, response.headers.get("content-type"));
+  return {
+    dataUrl: `data:${mimeType};base64,${encodeBase64(bytes)}`,
+    mimeType,
+  };
 }
 
 function encodeBase64(bytes: Uint8Array): string {
@@ -309,6 +304,13 @@ async function safeJson(response: Response) {
   } catch {
     return null;
   }
+}
+
+function extractOpenAiErrorMessage(payload: any): string {
+  const error = payload?.error;
+  if (!error) return "";
+
+  return String(error?.message || error?.code || error?.type || "").trim();
 }
 
 function extractResponseText(payload: any): string {
