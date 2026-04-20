@@ -89,7 +89,7 @@ Deno.test("extractSamsClubParsedItems parses receipt quantity math from Sam's re
 Deno.test("extractSamsClubParsedItems returns empty when purchase line format does not match", () => {
   const lines = [
     "0000744575 ITEM",
-    "11.98",
+    "NOT A PURCHASE LINE",
   ];
 
   assertEquals(extractSamsClubParsedItems(lines, ["744575"]), []);
@@ -125,6 +125,68 @@ Deno.test("extractSamsClubParsedItems falls back to single-line Sam's item rows 
       line_index: 1,
       raw_lines: [
         "0980022771 HD SHIPPING 21.47 T",
+      ],
+      parser_confidence: "medium",
+    },
+  ]);
+});
+
+Deno.test("extractSamsClubParsedItems keeps product size numbers out of single-line prices", () => {
+  const lines = [
+    "098006417 MM 25 SUGAR",
+    "14.98 Y",
+    "0990282589 MM OLIVE OI",
+    "2 AT FOR 18.98 37.96 Y",
+  ];
+
+  assertEquals(extractSamsClubParsedItems(lines, ["98006417", "990282589"]), [
+    {
+      product_number: "980066417",
+      identifier_type: "item_number",
+      receipt_label: "MM 25 SUGAR",
+      quantity: 1,
+      unit_price: 14.98,
+      total_price: 14.98,
+      line_index: 0,
+      raw_lines: [
+        "098006417 MM 25 SUGAR",
+        "14.98 Y",
+      ],
+      parser_confidence: "medium",
+    },
+    {
+      product_number: "990282589",
+      identifier_type: "item_number",
+      receipt_label: "MM OLIVE OI",
+      quantity: 2,
+      unit_price: 18.98,
+      total_price: 37.96,
+      line_index: 2,
+      raw_lines: [
+        "0990282589 MM OLIVE OI",
+        "2 AT FOR 18.98 37.96 Y",
+      ],
+      parser_confidence: "high",
+    },
+  ]);
+});
+
+Deno.test("extractSamsClubParsedItems parses product size numbers when price stays on the item row", () => {
+  const lines = [
+    "098006417 MM 25 SUGAR 14.98 Y",
+  ];
+
+  assertEquals(extractSamsClubParsedItems(lines, ["98006417"]), [
+    {
+      product_number: "980066417",
+      identifier_type: "item_number",
+      receipt_label: "MM 25 SUGAR",
+      quantity: 1,
+      unit_price: 14.98,
+      total_price: 14.98,
+      line_index: 0,
+      raw_lines: [
+        "098006417 MM 25 SUGAR 14.98 Y",
       ],
       parser_confidence: "medium",
     },

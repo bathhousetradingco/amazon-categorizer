@@ -2,6 +2,7 @@ import { detectReceiptMerchant } from "./merchant-detector.ts";
 import { parseMiscReceipt } from "./misc-receipt-parser.ts";
 import type { ParsedReceiptItem, ReceiptParserResult } from "./parser-types.ts";
 import { extractSamsClubParsedItems } from "./sams-club-parser.ts";
+import { dedupeItemNumbers } from "./line-item-parser.ts";
 import { parseWalmartReceipt } from "./walmart-parser.ts";
 
 type ParseReceiptInput = {
@@ -20,10 +21,14 @@ export function parseReceiptByMerchant(input: ParseReceiptInput): ReceiptParserR
   });
 
   if (merchant === "sams_club") {
+    const parsedItems = extractSamsClubParsedItems(input.lines, input.candidateItemNumbers);
     return {
       merchant,
-      item_numbers: input.candidateItemNumbers,
-      parsed_items: extractSamsClubParsedItems(input.lines, input.candidateItemNumbers),
+      item_numbers: dedupeItemNumbers([
+        ...input.candidateItemNumbers,
+        ...parsedItems.map((item) => item.product_number),
+      ]),
+      parsed_items: parsedItems,
       debug: {
         parser_status: "implemented",
       },

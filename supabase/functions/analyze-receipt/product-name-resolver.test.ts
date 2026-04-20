@@ -11,6 +11,7 @@ import {
   extractSamsClubProductPageName,
   extractSamsClubSearchResult,
   normalizeSamsClubProductTitle,
+  resolveProductNames,
 } from "./product-name-resolver.ts";
 
 Deno.test("buildReceiptLabelMap keeps the first non-empty receipt label per item number", () => {
@@ -68,6 +69,26 @@ Deno.test("chooseBestCacheRows prefers the freshest clean cache row per normaliz
     source_url: "https://example.com/newer",
     brand: "Sharpie",
     category: "Office",
+  });
+});
+
+Deno.test("resolveProductNames uses built-in verified Sam's lookup for cane sugar", async () => {
+  const serviceClient = buildLookupStubClient();
+  const resolved = await resolveProductNames(serviceClient, "sams_club", ["980066417"], [
+    {
+      product_number: "980066417",
+      quantity: 1,
+      unit_price: 14.98,
+      total_price: 14.98,
+      receipt_label: "MM 25 SUGAR",
+    },
+  ]);
+
+  assertEquals(resolved["980066417"], {
+    product_name: "Member's Mark Premium Cane Sugar, 25 lbs.",
+    source: "verified_lookup",
+    confidence: "high",
+    receipt_label: "MM 25 SUGAR",
   });
 });
 
@@ -154,6 +175,43 @@ Deno.test("extractSamsClubDirectSearchResolution resolves exact item ids from Sa
   assertEquals(extractSamsClubDirectSearchResolution(html, "0990395985", "MM AVO OIL"), {
     product_name: "Member's Mark Avocado Oil Glass Bottle, 34 fl. oz.",
     source_url: "https://www.samsclub.com/ip/members-mark-avocado-oil-glass-bottle-34-fl-oz/17133350002",
+    provider: "samsclub_direct",
+  });
+});
+
+Deno.test("extractSamsClubDirectSearchResolution prefers exact item id over plausible nearby products", () => {
+  const html = `
+    <html>
+      <head>
+        <script id="__NEXT_DATA__" type="application/json">
+          {
+            "props": {
+              "pageProps": {
+                "initialData": {
+                  "items": [
+                    {
+                      "itemId": "111111111",
+                      "productName": "Member's Mark Premium Cane Sugar Packets",
+                      "productUrl": "/ip/wrong-sugar/prod111"
+                    },
+                    {
+                      "itemId": "980066417",
+                      "productName": "Member's Mark Premium Cane Sugar, 25 lbs.",
+                      "productUrl": "/ip/members-mark-premium-cane-sugar-25-lbs/prod222"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        </script>
+      </head>
+    </html>
+  `;
+
+  assertEquals(extractSamsClubDirectSearchResolution(html, "980066417", "MM 25 SUGAR"), {
+    product_name: "Member's Mark Premium Cane Sugar, 25 lbs.",
+    source_url: "https://www.samsclub.com/ip/members-mark-premium-cane-sugar-25-lbs/prod222",
     provider: "samsclub_direct",
   });
 });
@@ -250,3 +308,33 @@ Deno.test("isPlausibleSamsClubMatch rejects brand-only overlap", () => {
     false,
   );
 });
+
+function buildLookupStubClient() {
+  return {
+    from(table: string) {
+      return {
+        select() {
+          return {
+            in() {
+              if (table === "product_lookup_cache") {
+                return Promise.resolve({ data: [], error: null });
+              }
+
+              return {
+                in() {
+                  if (table === "product_lookup") {
+                    return Promise.resolve({ data: [], error: null });
+                  }
+                  if (table === "product_lookup_cache") {
+                    return Promise.resolve({ data: [], error: null });
+                  }
+                  return Promise.resolve({ data: [], error: null });
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+}

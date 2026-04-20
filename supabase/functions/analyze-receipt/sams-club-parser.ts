@@ -4,7 +4,8 @@ import type { ParsedReceiptItem } from "./parser-types.ts";
 const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT(?:\s+1)?\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
 const INST_SV_LINE_PATTERN = /^INST\s+SV\b/i;
 const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*[A-Z.]*\s*$/i;
-const SINGLE_LINE_PRICE_PATTERN = /^(.*?)(\d+(?:\.\d{1,2})?)\s+([A-Z.]+)\s*$/i;
+const SINGLE_LINE_PRICE_PATTERN = /^(.*?)\s+(\d+(?:\.\d{1,2})?)(?:\s+([A-Z.]+))?\s*$/i;
+const PRICE_ONLY_LINE_PATTERN = /^(\d+(?:\.\d{1,2})?)(?:\s+([A-Z.]+))?\s*$/i;
 
 export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[]): ParsedReceiptItem[] {
   const parsedItems: ParsedReceiptItem[] = [];
@@ -15,8 +16,9 @@ export function extractSamsClubParsedItems(lines: string[], itemNumbers: string[
     const number = extractLineItemNumber(line);
     if (!number) continue;
 
-    const normalizedProductNumber = normalizeProductNumber(number);
-    if (!normalizedProductNumber || !anchors.has(normalizedProductNumber)) continue;
+    const detectedProductNumber = normalizeProductNumber(number);
+    const normalizedProductNumber = normalizeKnownSamsClubItemNumber(detectedProductNumber, line);
+    if (!normalizedProductNumber || (!anchors.has(detectedProductNumber) && !anchors.has(normalizedProductNumber))) continue;
 
     const nextLine = String(lines[i + 1] || "").trim();
     const purchaseMatch = nextLine.match(PURCHASE_INFO_PATTERN);
@@ -72,12 +74,20 @@ function parseInstantSavingsAmount(line: string): number {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
+function normalizeKnownSamsClubItemNumber(itemNumber: string, line: string): string {
+  if (itemNumber === "98006417" && /\bMM\s+25\s+SUGAR\b/i.test(String(line || ""))) {
+    return "980066417";
+  }
+
+  return itemNumber;
+}
+
 function extractReceiptLabel(line: string): string {
   const text = String(line || "").trim();
   if (!text) return "";
 
   const withoutItemNumber = text.replace(/^.*?(?:^|\D)\d{9,12}(?=\D|$)\s*/, "");
-  const withoutTrailingPrice = withoutItemNumber.replace(/\s+\d+(?:\.\d{1,2})\s*[A-Z.]*\s*$/i, "");
+  const withoutTrailingPrice = stripTrailingStandalonePrice(withoutItemNumber);
   const cleaned = withoutTrailingPrice
     .replace(/\s+/g, " ")
     .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "")
@@ -94,10 +104,12 @@ function parseStandaloneSamsClubItem(input: {
   nextNextLine?: string;
 }): ParsedReceiptItem | null {
   const lineWithoutItemNumber = String(input.line || "").trim().replace(/^.*?(?:^|\D)\d{9,12}(?=\D|$)\s*/, "");
-  const priceMatch = lineWithoutItemNumber.match(SINGLE_LINE_PRICE_PATTERN);
-  if (!priceMatch) return null;
+  const sameLinePrice = parseStandalonePriceSuffix(lineWithoutItemNumber);
+  const splitLinePrice = sameLinePrice ? null : parsePriceOnlyLine(input.nextLine);
+  const priceInfo = sameLinePrice || splitLinePrice;
+  if (!priceInfo) return null;
 
-  const unitPrice = Number.parseFloat(priceMatch[2]);
+  const unitPrice = priceInfo.price;
   if (!Number.isFinite(unitPrice)) return null;
 
   const receiptLabel = extractReceiptLabel(input.line);
@@ -113,13 +125,14 @@ function parseStandaloneSamsClubItem(input: {
     line_index: input.lineIndex,
     raw_lines: [
       input.line,
+      ...(!sameLinePrice && input.nextLine ? [input.nextLine] : []),
     ].filter(Boolean),
     parser_confidence: "medium",
   };
 
   const savingsLine = findMatchingInstantSavingsLine(
     receiptLabel,
-    String(input.nextLine || "").trim(),
+    sameLinePrice ? String(input.nextLine || "").trim() : String(input.nextNextLine || "").trim(),
     String(input.nextNextLine || "").trim(),
   );
   const instantSavingsAmount = parseInstantSavingsAmount(savingsLine);
@@ -129,6 +142,39 @@ function parseStandaloneSamsClubItem(input: {
   }
 
   return parsedItem;
+}
+
+function stripTrailingStandalonePrice(value: string): string {
+  const priceInfo = parseStandalonePriceSuffix(value);
+  return priceInfo ? priceInfo.label : value;
+}
+
+function parseStandalonePriceSuffix(value: string): { label: string; price: number } | null {
+  const match = String(value || "").trim().match(SINGLE_LINE_PRICE_PATTERN);
+  if (!match || !isReceiptPriceFlag(match[3])) return null;
+
+  const label = String(match[1] || "").trim();
+  const price = Number.parseFloat(match[2]);
+  if (!label || !Number.isFinite(price)) return null;
+
+  return { label, price };
+}
+
+function parsePriceOnlyLine(value: string | undefined): { price: number } | null {
+  const match = String(value || "").trim().match(PRICE_ONLY_LINE_PATTERN);
+  if (!match || !isReceiptPriceFlag(match[2])) return null;
+
+  const price = Number.parseFloat(match[1]);
+  if (!Number.isFinite(price)) return null;
+
+  return { price };
+}
+
+function isReceiptPriceFlag(value: string | undefined): boolean {
+  const flag = String(value || "").replace(/\./g, "").trim().toUpperCase();
+  if (!flag) return true;
+
+  return ["B", "F", "T", "Y"].includes(flag);
 }
 
 function findMatchingInstantSavingsLine(
