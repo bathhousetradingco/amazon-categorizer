@@ -120,3 +120,34 @@ Deno.test("parseMiscReceipt creates fallback item from USD currency total", () =
   assertEquals(result.parsed_items[0]?.total_price, 7);
   assertEquals(result.debug?.detected_total, 7);
 });
+
+Deno.test("parseMiscReceipt labels single-line service receipts by merchant", () => {
+  const result = parseMiscReceipt({
+    lines: [
+      "PATREON",
+      "RECEIPT",
+      "Total USD $7.00",
+    ],
+    transactionName: "Patreon* Membership",
+    merchantName: "Patreon",
+    modelParsedItems: [
+      {
+        product_number: "model-line-1",
+        identifier_type: "unknown",
+        quantity: 1,
+        unit_price: 7,
+        total_price: 7,
+        receipt_label: "All Recipes + One Monthly Bonus Recipe",
+        raw_lines: ["All Recipes + One Monthly Bonus Recipe $7.00"],
+        parser_confidence: "low",
+      },
+    ],
+  });
+
+  assertEquals(result.item_numbers, ["model-line-1"]);
+  assertEquals(result.parsed_items[0]?.receipt_label, "Patreon");
+  assertEquals(result.parsed_items[0]?.raw_lines, [
+    "All Recipes + One Monthly Bonus Recipe $7.00",
+    "Receipt description: All Recipes + One Monthly Bonus Recipe",
+  ]);
+});

@@ -9,14 +9,18 @@ type ParseMiscReceiptInput = {
 
 export function parseMiscReceipt(input: ParseMiscReceiptInput): ReceiptParserResult {
   if (input.modelParsedItems?.length) {
+    const parsedItems = shouldUseMerchantAsSingleLineLabel(input)
+      ? relabelSingleServiceReceiptItem(input.modelParsedItems, buildMiscReceiptLabel(input))
+      : input.modelParsedItems;
+
     return {
       merchant: "misc",
-      item_numbers: input.modelParsedItems.map((item) => item.product_number).filter(Boolean),
-      parsed_items: input.modelParsedItems,
+      item_numbers: parsedItems.map((item) => item.product_number).filter(Boolean),
+      parsed_items: parsedItems,
       debug: {
         parser_status: "openai-line-items",
         parser_message: "Used OpenAI-extracted misc receipt line items.",
-        parsed_item_count: input.modelParsedItems.length,
+        parsed_item_count: parsedItems.length,
       },
     };
   }
@@ -62,6 +66,30 @@ function buildMiscReceiptLabel(input: ParseMiscReceiptInput): string {
     .find((line) => line.length >= 3 && !/\d+\.\d{2}/.test(line));
 
   return merchant || transaction || firstContentLine || "Misc receipt";
+}
+
+function shouldUseMerchantAsSingleLineLabel(input: ParseMiscReceiptInput): boolean {
+  if (input.modelParsedItems?.length !== 1) return false;
+
+  const merchantText = `${input.merchantName || ""} ${input.transactionName || ""}`.toLowerCase();
+  return /\b(patreon|shopify|google workspace|cricut|gfl|minutekey|minute\s*key)\b/.test(merchantText);
+}
+
+function relabelSingleServiceReceiptItem(items: ParsedReceiptItem[], merchantLabel: string): ParsedReceiptItem[] {
+  const item = items[0];
+  const originalLabel = String(item?.receipt_label || "").trim();
+  const cleanMerchantLabel = String(merchantLabel || "").trim();
+
+  if (!item || !cleanMerchantLabel) return items;
+
+  return [{
+    ...item,
+    receipt_label: cleanMerchantLabel,
+    raw_lines: [
+      ...(Array.isArray(item.raw_lines) ? item.raw_lines : []),
+      originalLabel && originalLabel !== cleanMerchantLabel ? `Receipt description: ${originalLabel}` : "",
+    ].filter(Boolean),
+  }];
 }
 
 function detectMiscReceiptTotal(lines: string[]): number | null {
