@@ -13,7 +13,13 @@ This app should treat receipt line-item names as a confidence-ranked pipeline, n
    - Medium confidence.
    - Stores successful search/API resolutions so repeated receipt scans do not call external services again.
 
-3. Sam's Club Advertising Catalog API
+3. Direct Sam's Club item search page
+   - For Sam's receipts, the parser strips leading zeroes from receipt item numbers and queries `https://www.samsclub.com/s/{itemNumber}`.
+   - Example: receipt item `0990395985` becomes `990395985`, which can resolve to `Member's Mark Avocado Oil Glass Bottle, 34 fl. oz.` from Sam's own page data.
+   - Accepted only when the page/search data contains the exact item id or the title plausibly overlaps the receipt label.
+   - If the search result points to a Sam's product page, the app refines the title from the product page JSON-LD/meta title.
+
+4. Sam's Club Advertising Catalog API
    - Used only when credentials are configured.
    - Environment variables:
      - `SAMS_ADS_ADVERTISER_ID`
@@ -25,19 +31,19 @@ This app should treat receipt line-item names as a confidence-ranked pipeline, n
    - This is the most accurate non-manual path when available because it can search item ids in a Sam's catalog directly.
    - The official API is an advertising-partner API, not a public lookup endpoint. It may require signed Walmart/Sam's request headers beyond a bearer token.
 
-4. SerpApi Google Shopping search
+5. SerpApi Google Shopping search
    - Used when `SERPAPI_KEY` or `SERPAPI_API_KEY` is configured.
    - Results are accepted only when source evidence points to Sam's Club and the product title plausibly overlaps the receipt label.
 
-5. DuckDuckGo HTML search
+6. DuckDuckGo HTML search
    - No key required.
    - Results are accepted only from `samsclub.com` URLs.
 
-6. Sam's Club product page refinement
+7. Sam's Club product page refinement
    - When any accepted result has a `samsclub.com` product page URL, the function fetches that page and prefers the product name from JSON-LD, then social meta title, then the page title.
    - The refined page name still has to plausibly match the receipt label.
 
-7. Receipt label fallback
+8. Receipt label fallback
    - Lowest confidence.
    - Kept visible so the user can manually confirm or correct it.
 
@@ -50,7 +56,8 @@ This app should treat receipt line-item names as a confidence-ranked pipeline, n
 
 ## Better Accuracy Options
 
-- Best practical path: obtain Sam's Advertising Catalog API credentials and configure the `SAMS_ADS_*` environment variables.
+- Best no-credential path: direct Sam's item search by normalized receipt item number, then product-page title refinement.
+- Best credentialed path: obtain Sam's Advertising Catalog API credentials and configure the `SAMS_ADS_*` environment variables.
 - Best internal path: keep building verified `product_lookup` rows from user confirmations and seed common repeat purchases through migrations.
 - Useful fallback: keep SerpApi enabled, but use it as a candidate finder only. Do not trust results unless the source and receipt-label overlap pass validation.
 - Avoid using broad web search alone for accounting line items. It can return plausible but wrong products when receipt labels are abbreviated.

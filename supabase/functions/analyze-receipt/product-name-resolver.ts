@@ -30,7 +30,7 @@ type CacheLookupRow = {
 type SearchResolution = {
   product_name: string;
   source_url?: string | null;
-  provider?: "sams_ads_catalog" | "serpapi_samsclub" | "duckduckgo_samsclub";
+  provider?: "samsclub_direct" | "sams_ads_catalog" | "serpapi_samsclub" | "duckduckgo_samsclub";
 };
 
 type SamsAdsCatalogConfig = {
@@ -207,6 +207,184 @@ export function extractSamsClubSearchResult(html: string): SearchResolution | nu
   return null;
 }
 
+export function extractSamsClubDirectSearchResolution(
+  html: string,
+  itemNumber: string,
+  receiptLabel?: string,
+): SearchResolution | null {
+  const text = String(html || "");
+  const targetItemNumber = normalizeLookupKey(itemNumber);
+  if (!text || !targetItemNumber) return null;
+
+  const productPageName = extractSamsClubProductPageName(text);
+  if (productPageName && text.includes(targetItemNumber)) {
+    return {
+      product_name: productPageName,
+      source_url: extractCanonicalSamsClubUrl(text) || null,
+      provider: "samsclub_direct",
+    };
+  }
+
+  const candidates = [
+    ...extractSamsClubCandidatesFromJsonScripts(text),
+    ...extractSamsClubCandidatesFromAnchors(text),
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate.product_name) continue;
+    const candidateItemNumber = normalizeLookupKey(candidate.itemId);
+    const isExactItemId = Boolean(candidateItemNumber && candidateItemNumber === targetItemNumber);
+    if (!isExactItemId && receiptLabel && !isPlausibleSamsClubMatch(receiptLabel, candidate.product_name)) continue;
+
+    return {
+      product_name: candidate.product_name,
+      source_url: candidate.source_url || `https://www.samsclub.com/s/${targetItemNumber}`,
+      provider: "samsclub_direct",
+    };
+  }
+
+  return null;
+}
+
+function extractSamsClubCandidatesFromJsonScripts(html: string): Array<SearchResolution & { itemId?: string }> {
+  const candidates: Array<SearchResolution & { itemId?: string }> = [];
+  const scripts = html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi);
+
+  for (const script of scripts) {
+    const scriptBody = decodeHtml(script[1] || "").trim();
+    if (!scriptBody || !/[{[]/.test(scriptBody)) continue;
+
+    const jsonCandidates = [
+      scriptBody,
+      ...extractEmbeddedJsonObjects(scriptBody),
+    ];
+
+    for (const jsonCandidate of jsonCandidates) {
+      const parsed = tryParseJson(jsonCandidate);
+      if (!parsed) continue;
+      collectSamsClubCandidatesFromObject(parsed, candidates);
+    }
+  }
+
+  return dedupeSamsClubCandidates(candidates);
+}
+
+function extractEmbeddedJsonObjects(value: string): string[] {
+  const matches = [
+    ...value.matchAll(/self\.__next_f\.push\(\[\d+,\s*"([\s\S]*?)"\]\)/g),
+    ...value.matchAll(/window\.__WML_REDUX_INITIAL_STATE__\s*=\s*({[\s\S]*?});/g),
+    ...value.matchAll(/__NEXT_DATA__\s*=\s*({[\s\S]*?});/g),
+  ];
+
+  return matches
+    .map((match) => match[1] || "")
+    .map((entry) => decodeEscapedScriptJson(entry))
+    .filter(Boolean);
+}
+
+function decodeEscapedScriptJson(value: string): string {
+  const text = String(value || "");
+  if (!text) return "";
+
+  try {
+    return JSON.parse(`"${text.replace(/"/g, '\\"')}"`);
+  } catch {
+    return text
+      .replace(/\\"/g, '"')
+      .replace(/\\u0026/g, "&")
+      .replace(/\\u003c/gi, "<")
+      .replace(/\\u003e/gi, ">");
+  }
+}
+
+function collectSamsClubCandidatesFromObject(
+  value: unknown,
+  candidates: Array<SearchResolution & { itemId?: string }>,
+  depth = 0,
+) {
+  if (!value || depth > 24) return;
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectSamsClubCandidatesFromObject(entry, candidates, depth + 1));
+    return;
+  }
+
+  if (typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+
+  const productName = normalizeSamsClubProductTitle(
+    record.productName ||
+      record.itemName ||
+      record.name ||
+      record.title ||
+      record.displayName ||
+      record.usItemName,
+  );
+  const sourceUrl = normalizeSamsClubUrl(
+    record.productUrl ||
+      record.productPageUrl ||
+      record.itemPageUrl ||
+      record.canonicalUrl ||
+      record.seoUrl ||
+      record.url ||
+      record.productCanonicalUrl,
+  );
+  const itemId = normalizeLookupKey(
+    record.itemId ||
+      record.itemNumber ||
+      record.usItemId ||
+      record.productId ||
+      record.sku ||
+      record.skuId ||
+      record.id,
+  );
+
+  if (productName && (itemId || /samsclub\.com\/(?:ip|p)\//i.test(sourceUrl))) {
+    candidates.push({
+      itemId,
+      product_name: productName,
+      source_url: sourceUrl || null,
+      provider: "samsclub_direct",
+    });
+  }
+
+  Object.values(record).forEach((entry) => collectSamsClubCandidatesFromObject(entry, candidates, depth + 1));
+}
+
+function extractSamsClubCandidatesFromAnchors(html: string): Array<SearchResolution & { itemId?: string }> {
+  const candidates: Array<SearchResolution & { itemId?: string }> = [];
+  const anchors = html.matchAll(/<a\b[^>]+href=["']([^"']*\/(?:ip|p)\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi);
+
+  for (const anchor of anchors) {
+    const sourceUrl = normalizeSamsClubUrl(decodeHtml(anchor[1] || ""));
+    const productName = normalizeSamsClubProductTitle(stripHtml(decodeHtml(anchor[2] || "")));
+    if (!productName || !sourceUrl) continue;
+
+    candidates.push({
+      itemId: extractItemNumberFromText(`${sourceUrl} ${productName}`),
+      product_name: productName,
+      source_url: sourceUrl,
+      provider: "samsclub_direct",
+    });
+  }
+
+  return dedupeSamsClubCandidates(candidates);
+}
+
+function dedupeSamsClubCandidates(candidates: Array<SearchResolution & { itemId?: string }>): Array<SearchResolution & { itemId?: string }> {
+  const seen = new Set<string>();
+  const deduped: Array<SearchResolution & { itemId?: string }> = [];
+
+  for (const candidate of candidates) {
+    const key = `${candidate.itemId || ""}|${candidate.product_name}|${candidate.source_url || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(candidate);
+  }
+
+  return deduped;
+}
+
 export function extractSamsClubCatalogSearchResolution(
   payload: unknown,
   itemNumber: string,
@@ -326,6 +504,13 @@ function collectJsonLdProductNames(value: unknown, names: string[]) {
 function extractMetaContent(html: string, attrName: string, attrValue: string): string {
   const escapedValue = attrValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`<meta\\b(?=[^>]*\\b${attrName}=["']${escapedValue}["'])(?=[^>]*\\bcontent=["']([^"']+)["'])[^>]*>`, "i");
+  const match = html.match(pattern);
+  return decodeHtml(match?.[1] || "");
+}
+
+function extractLinkHref(html: string, attrName: string, attrValue: string): string {
+  const escapedValue = attrValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`<link\\b(?=[^>]*\\b${attrName}=["']${escapedValue}["'])(?=[^>]*\\bhref=["']([^"']+)["'])[^>]*>`, "i");
   const match = html.match(pattern);
   return decodeHtml(match?.[1] || "");
 }
@@ -458,6 +643,11 @@ async function searchSamsClubByItemNumber(
 ): Promise<SearchResolution | null> {
   if (!isSearchableSamsClubReceiptLabel(receiptLabel)) return null;
 
+  const directResolution = await searchSamsClubDirectly(itemNumber, receiptLabel);
+  if (directResolution?.product_name) {
+    return refineSamsClubResolutionWithProductPage(directResolution, receiptLabel);
+  }
+
   const adsCatalogResolution = await searchSamsClubByAdvertisingCatalog(itemNumber, receiptLabel);
   if (adsCatalogResolution?.product_name) {
     return refineSamsClubResolutionWithProductPage(adsCatalogResolution, receiptLabel);
@@ -484,6 +674,30 @@ async function searchSamsClubByItemNumber(
   }
 
   return null;
+}
+
+async function searchSamsClubDirectly(
+  itemNumber: string,
+  receiptLabel?: string,
+): Promise<SearchResolution | null> {
+  const normalizedItemNumber = normalizeLookupKey(itemNumber);
+  if (!normalizedItemNumber) return null;
+
+  try {
+    const url = `https://www.samsclub.com/s/${encodeURIComponent(normalizedItemNumber)}`;
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; BathhouseCategorizer/1.0)",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    }, 10000);
+
+    if (!response.ok) return null;
+    return extractSamsClubDirectSearchResolution(await response.text(), normalizedItemNumber, receiptLabel);
+  } catch (error) {
+    console.warn("Sam's Club direct item lookup failed", { itemNumber: normalizedItemNumber, error });
+    return null;
+  }
 }
 
 async function searchSamsClubByAdvertisingCatalog(
@@ -702,6 +916,33 @@ function normalizeSearchResultUrl(value: string): string {
   } catch {
     return raw;
   }
+}
+
+function normalizeSamsClubUrl(value: unknown): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    return new URL(raw, "https://www.samsclub.com").toString();
+  } catch {
+    return raw;
+  }
+}
+
+function extractCanonicalSamsClubUrl(html: string): string {
+  return normalizeSamsClubUrl(
+    extractMetaContent(html, "property", "og:url") ||
+      extractLinkHref(html, "rel", "canonical"),
+  );
+}
+
+function extractItemNumberFromText(value: string): string {
+  const matches = String(value || "").match(/\b0*(\d{7,12})\b/g) || [];
+  for (const match of matches) {
+    const normalized = normalizeLookupKey(match);
+    if (normalized.length >= 7) return normalized;
+  }
+  return "";
 }
 
 export function isSamsClubSearchSource(sourceName: string, title: string, sourceUrl: string): boolean {

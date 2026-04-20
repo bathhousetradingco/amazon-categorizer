@@ -7,6 +7,7 @@ import {
   isSearchableSamsClubReceiptLabel,
   chooseBestCacheRows,
   extractSamsClubCatalogSearchResolution,
+  extractSamsClubDirectSearchResolution,
   extractSamsClubProductPageName,
   extractSamsClubSearchResult,
   normalizeSamsClubProductTitle,
@@ -123,6 +124,58 @@ Deno.test("isSamsClubSearchSource requires Sam's Club source evidence", () => {
   assertEquals(isSamsClubSearchSource("Sam's Club", "Folgers Coffee", ""), true);
   assertEquals(isSamsClubSearchSource("", "Folgers Coffee | Sam's Club", ""), true);
   assertEquals(isSamsClubSearchSource("Amazon", "Folgers Coffee", "https://www.amazon.com/item"), false);
+});
+
+Deno.test("extractSamsClubDirectSearchResolution resolves exact item ids from Sam's hydrated search data", () => {
+  const html = `
+    <html>
+      <head>
+        <script id="__NEXT_DATA__" type="application/json">
+          {
+            "props": {
+              "pageProps": {
+                "initialData": {
+                  "items": [
+                    {
+                      "itemId": "990395985",
+                      "productName": "Member's Mark Avocado Oil Glass Bottle, 34 fl. oz.",
+                      "productUrl": "/ip/members-mark-avocado-oil-glass-bottle-34-fl-oz/17133350002"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        </script>
+      </head>
+    </html>
+  `;
+
+  assertEquals(extractSamsClubDirectSearchResolution(html, "0990395985", "MM AVO OIL"), {
+    product_name: "Member's Mark Avocado Oil Glass Bottle, 34 fl. oz.",
+    source_url: "https://www.samsclub.com/ip/members-mark-avocado-oil-glass-bottle-34-fl-oz/17133350002",
+    provider: "samsclub_direct",
+  });
+});
+
+Deno.test("extractSamsClubDirectSearchResolution resolves direct product pages that include item number", () => {
+  const html = `
+    <html>
+      <head>
+        <link rel="canonical" href="/ip/members-mark-avocado-oil-glass-bottle-34-fl-oz/17133350002">
+        <script type="application/ld+json">
+          {"@type":"Product","name":"Member's Mark Avocado Oil Glass Bottle, 34 fl. oz. | Sam's Club"}
+        </script>
+      </head>
+      <body>Item # 990395985</body>
+    </html>
+  `;
+
+  assertEquals(extractSamsClubDirectSearchResolution(html, "990395985", "MM AVO OIL"), {
+    product_name: "Member's Mark Avocado Oil Glass Bottle, 34 fl. oz.",
+    source_url: "https://www.samsclub.com/ip/members-mark-avocado-oil-glass-bottle-34-fl-oz/17133350002",
+    provider: "samsclub_direct",
+  });
 });
 
 Deno.test("extractSamsClubCatalogSearchResolution prefers exact item ids from catalog API payloads", () => {
