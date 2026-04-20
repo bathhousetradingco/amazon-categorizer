@@ -427,6 +427,32 @@ margin-top:8px;
 .splitItemMeta { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .splitItemActions { display:flex; flex-wrap:wrap; gap:8px; }
 .splitItemActions .touchButton { flex:1 1 calc(50% - 4px); }
+.nameStatusBadge {
+  display:inline-flex;
+  align-items:center;
+  min-height:24px;
+  padding:4px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:800;
+  white-space:nowrap;
+}
+.nameStatusBadge.verified {
+  background:#dcfce7;
+  color:#166534;
+  border:1px solid #86efac;
+}
+.nameStatusBadge.needsReview {
+  background:#fef3c7;
+  color:#92400e;
+  border:1px solid #fcd34d;
+}
+.splitItemActions .nameVerifiedBtn:disabled {
+  background:#dcfce7;
+  color:#166534;
+  border:1px solid #86efac;
+  opacity:1;
+}
 .splitItemRow.justAdded { animation: splitPulse .45s ease; border-color:#2e7d32; background:#f1fbf2; }
 @keyframes splitPulse { 0%{transform:scale(.99)} 60%{transform:scale(1.01)} 100%{transform:scale(1)} }
 .splitFooterSticky {

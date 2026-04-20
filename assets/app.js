@@ -2831,11 +2831,21 @@ function openDetectedReceiptItemsModal(){
         ? `${String(resolved.source).replace(/_/g, " ")}${resolved?.confidence ? ` • ${resolved.confidence}` : ""}`
         : (parsed?.receipt_label ? "receipt label" : "");
       const canConfirmResolvedName = Boolean(displayName && displayName !== "Name unavailable");
+      const nameVerified = !needsDetectedItemNameConfirmation(num, resolved);
+      const nameStatusBadge = nameVerified
+        ? `<span class="nameStatusBadge verified">Name verified</span>`
+        : `<span class="nameStatusBadge needsReview">Confirm name first</span>`;
+      const nameActionButton = nameVerified
+        ? `<button class="touchButton nameVerifiedBtn" disabled>Name Verified</button>`
+        : canConfirmResolvedName
+          ? `<button class="touchButton" style="background:#0f766e;color:#fff;" onclick="confirmDetectedItemName('${escapeForSingleQuote(num)}')">Confirm Name</button>`
+          : `<button class="touchButton" style="background:#7c3aed;color:#fff;" onclick="openDetectedItemNameModal('${escapeForSingleQuote(num)}')">Edit Name</button>`;
       return `
         <div class="splitItemRow">
           <div><span class="currentCategoryBadge" style="margin-top:0;">${escapeHtml(displayCategory)}</span></div>
           <div class="splitItemMeta">
             <strong>${escapeHtml(displayName)}</strong>
+            ${nameStatusBadge}
             <div class="small"><code>${escapeHtml(num)}</code></div>
             <div class="small">${amount ? Utils.money(amount) : "No total price detected"}</div>
           </div>
@@ -2843,7 +2853,7 @@ function openDetectedReceiptItemsModal(){
           <div class="splitItemActions">
             <button class="touchButton" style="background:#1e3a8a;color:#fff;" onclick="openDetectedItemCategoryModal('${escapeForSingleQuote(num)}')" ${amount ? "" : "disabled"}>Choose Category</button>
             <button class="touchButton" style="background:#000;color:#fff;" onclick="askAIForDetectedItem('${escapeForSingleQuote(num)}')">Ask AI</button>
-            <button class="touchButton" style="background:#0f766e;color:#fff;" onclick="confirmDetectedItemName('${escapeForSingleQuote(num)}')" ${canConfirmResolvedName ? "" : "disabled"}>Confirm Name</button>
+            ${nameActionButton}
             <button class="touchButton" style="background:#7c3aed;color:#fff;" onclick="openDetectedItemNameModal('${escapeForSingleQuote(num)}')">Edit Name</button>
             ${assigned > 0 ? `<button class="touchButton" style="background:#0f766e;color:#fff;" disabled>Assigned ${Utils.money(assigned)}</button>` : ""}
           </div>
