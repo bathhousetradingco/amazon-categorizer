@@ -49,7 +49,7 @@ export function normalizeCategories(input: unknown): AskAiCategory[] {
     .filter((entry): entry is AskAiCategory => Boolean(entry?.name));
 }
 
-export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategory[]): string {
+export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategory[], taxGuidanceBlock = ""): string {
   const categoryBlock = categories.map((category) => {
     const parts = [
       `- ${category.name}`,
@@ -94,6 +94,7 @@ export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategor
     "",
     transactionBlock,
     receiptBlock,
+    taxGuidanceBlock,
     "",
     "Available categories:",
     categoryBlock,

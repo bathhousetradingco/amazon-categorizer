@@ -675,8 +675,9 @@ Examples:
 • Vendor meetings
 • Market event meals
 • Business planning lunches
+• Coffee, drinks, or simple refreshments for people working, when accountant-reviewed
 
-Note: Typically 50% deductible.
+Note: Food and beverages often need substantiation and may be limited, partly deductible, or non-deductible depending on facts and tax year.
 `
 },
 {
@@ -825,7 +826,7 @@ const categoryTaxMetadata = {
   "Meals": {
     tax_treatment: "review",
     schedule_c_reference: "Schedule C Line 24b - Meals",
-    tax_note: "Deductibility may be limited and substantiation is required.",
+    tax_note: "Food/beverage, de minimis meal, and worker refreshment rules are sensitive; deductibility may be limited or require accountant review.",
   },
   "Professional Services": {
     tax_treatment: "expense",

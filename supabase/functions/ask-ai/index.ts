@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildAskAiPrompt, normalizeCategories } from "./prompt.ts";
+import { applyTaxGuidance, buildTaxGuidancePromptBlock, lookupTaxGuidance } from "./tax-guidance.ts";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -65,28 +66,31 @@ Deno.serve(async (req) => {
     }
 
     const normalizedCategories = normalizeCategories(categories);
+    const askAiContext = {
+      user_input: String(userInput),
+      transaction: transactionContext && typeof transactionContext === "object"
+        ? {
+          title: String(transactionContext.title || "").trim() || null,
+          vendor: String(transactionContext.vendor || "").trim() || null,
+          amount: Number(transactionContext.amount),
+          institution: String(transactionContext.institution || "").trim() || null,
+          current_category: String(transactionContext.current_category || "").trim() || null,
+        }
+        : undefined,
+      receipt_item: receiptItemContext && typeof receiptItemContext === "object"
+        ? {
+          item_number: String(receiptItemContext.item_number || "").trim() || null,
+          product_name: String(receiptItemContext.product_name || "").trim() || null,
+          receipt_label: String(receiptItemContext.receipt_label || "").trim() || null,
+          amount: Number(receiptItemContext.amount),
+        }
+        : undefined,
+    };
+    const taxGuidance = lookupTaxGuidance(askAiContext, normalizedCategories);
     const prompt = buildAskAiPrompt(
-      {
-        user_input: String(userInput),
-        transaction: transactionContext && typeof transactionContext === "object"
-          ? {
-            title: String(transactionContext.title || "").trim() || null,
-            vendor: String(transactionContext.vendor || "").trim() || null,
-            amount: Number(transactionContext.amount),
-            institution: String(transactionContext.institution || "").trim() || null,
-            current_category: String(transactionContext.current_category || "").trim() || null,
-          }
-          : undefined,
-        receipt_item: receiptItemContext && typeof receiptItemContext === "object"
-          ? {
-            item_number: String(receiptItemContext.item_number || "").trim() || null,
-            product_name: String(receiptItemContext.product_name || "").trim() || null,
-            receipt_label: String(receiptItemContext.receipt_label || "").trim() || null,
-            amount: Number(receiptItemContext.amount),
-          }
-          : undefined,
-      },
+      askAiContext,
       normalizedCategories,
+      buildTaxGuidancePromptBlock(taxGuidance),
     );
 
     const openaiRes = await fetch("https://api.openai.com/v1/responses", {
@@ -120,7 +124,7 @@ Deno.serve(async (req) => {
     const end = text.lastIndexOf("}");
     const clean = start !== -1 && end !== -1 ? text.slice(start, end + 1) : text;
 
-    const parsed = JSON.parse(clean);
+    const parsed = applyTaxGuidance(JSON.parse(clean), taxGuidance, normalizedCategories);
 
     return new Response(JSON.stringify(parsed), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
