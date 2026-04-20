@@ -5,7 +5,15 @@ import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from
 import { dedupeItemNumbers, extractItemNumbersFromLineItems, isLikelyLineItem } from "./line-item-parser.ts";
 import { normalizeModelReceiptItems } from "./model-line-items.ts";
 import { resolveProductNames } from "./product-name-resolver.ts";
-import { extractFilename, inferReceiptMimeType, isPdfReceipt } from "./receipt-file.ts";
+import {
+  extractFilename,
+  inferReceiptMimeType,
+  isPdfReceipt,
+  isSupportedReceiptMimeType,
+  isUnsupportedReceiptMimeType,
+  sniffReceiptMimeType,
+  unwrapStoredDataUrl,
+} from "./receipt-file.ts";
 import { parseReceiptByMerchant } from "./receipt-parser.ts";
 import { parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
 import { validateReceiptMathByMerchant } from "./receipt-validator.ts";
@@ -278,12 +286,46 @@ async function fetchReceiptAsDataUrl(signedUrl: string, receiptPath: string): Pr
     });
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const mimeType = inferReceiptMimeType(receiptPath, response.headers.get("content-type"));
+  let bytes: Uint8Array = new Uint8Array(await response.arrayBuffer());
+  const storedDataUrl = unwrapStoredDataUrl(bytes);
+  const contentType = storedDataUrl?.mimeType || response.headers.get("content-type");
+  if (storedDataUrl) {
+    bytes = storedDataUrl.bytes;
+  }
+
+  const sniffedMimeType = sniffReceiptMimeType(bytes);
+  if (isUnsupportedReceiptMimeType(sniffedMimeType)) {
+    throw new HttpError(
+      415,
+      "Uploaded receipt image is HEIC/HEIF. Reattach the receipt after refreshing the app so it can be converted to JPEG before analysis.",
+    );
+  }
+
+  const mimeType = isSupportedReceiptMimeType(sniffedMimeType)
+    ? sniffedMimeType
+    : inferReceiptMimeType(receiptPath, contentType);
+
+  if (!isSupportedReceiptMimeType(mimeType) || !isReceiptBytesCompatible(bytes, mimeType)) {
+    throw new HttpError(
+      415,
+      "Uploaded receipt file is not a valid JPEG, PNG, GIF, WebP, or PDF. Reattach it as a JPG, PNG, or PDF receipt.",
+      {
+        receiptPath,
+        contentType,
+        sniffedMimeType,
+      },
+    );
+  }
+
   return {
     dataUrl: `data:${mimeType};base64,${encodeBase64(bytes)}`,
     mimeType,
   };
+}
+
+function isReceiptBytesCompatible(bytes: Uint8Array, mimeType: string): boolean {
+  const sniffedMimeType = sniffReceiptMimeType(bytes);
+  return sniffedMimeType === mimeType;
 }
 
 function encodeBase64(bytes: Uint8Array): string {

@@ -1327,11 +1327,178 @@ function inferReceiptFileKind(pathOrName = "", mimeType = ""){
 }
 
 function sanitizeReceiptFileExt(file){
+  const mimeExt = receiptFileExtForMimeType(file?.type);
+  if(mimeExt) return mimeExt;
+
   const inferredExt = String(file?.name || "").split(".").pop()?.toLowerCase()?.replace(/[^a-z0-9]/g, "");
   if(inferredExt) return inferredExt;
   if(file?.type === "application/pdf") return "pdf";
   if(String(file?.type || "").startsWith("image/")) return "jpg";
   return "bin";
+}
+
+function normalizeReceiptMimeType(value = ""){
+  return String(value || "").split(";")[0].trim().toLowerCase();
+}
+
+function receiptFileExtForMimeType(mimeType = ""){
+  switch(normalizeReceiptMimeType(mimeType)){
+    case "application/pdf":
+      return "pdf";
+    case "image/jpeg":
+    case "image/jpg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/gif":
+      return "gif";
+    case "image/webp":
+      return "webp";
+    default:
+      return "";
+  }
+}
+
+function isSupportedReceiptImageMimeType(mimeType = ""){
+  return ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"].includes(normalizeReceiptMimeType(mimeType));
+}
+
+function isBrowserConvertibleReceiptMimeType(mimeType = ""){
+  const normalized = normalizeReceiptMimeType(mimeType);
+  return normalized.startsWith("image/") && !isSupportedReceiptImageMimeType(normalized);
+}
+
+function receiptAsciiFromBytes(bytes){
+  return Array.from(bytes || []).map((byte) => String.fromCharCode(byte)).join("");
+}
+
+function receiptBytesStartWith(bytes, text){
+  if(!bytes || bytes.length < text.length) return false;
+  for(let i = 0; i < text.length; i += 1){
+    if(bytes[i] !== text.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+function sniffReceiptFileMimeType(bytes){
+  if(!bytes || !bytes.length) return "";
+
+  if(bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if(bytes.length >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a) return "image/png";
+  if(receiptBytesStartWith(bytes, "GIF87a") || receiptBytesStartWith(bytes, "GIF89a")) return "image/gif";
+  if(bytes.length >= 12 && receiptBytesStartWith(bytes.slice(0, 4), "RIFF") && receiptBytesStartWith(bytes.slice(8, 12), "WEBP")) return "image/webp";
+  if(receiptBytesStartWith(bytes, "%PDF-")) return "application/pdf";
+
+  if(bytes.length >= 12 && receiptBytesStartWith(bytes.slice(4, 8), "ftyp")){
+    const brandHeader = receiptAsciiFromBytes(bytes.slice(8, Math.min(bytes.length, 64))).toLowerCase();
+    if(["heic", "heix", "hevc", "hevx", "heif", "heis", "mif1", "msf1"].some((brand) => brandHeader.includes(brand))){
+      return "image/heic";
+    }
+  }
+
+  return "";
+}
+
+async function readReceiptFileHeader(file){
+  const header = await file.slice(0, 64).arrayBuffer();
+  return new Uint8Array(header);
+}
+
+async function prepareReceiptUploadFile(file){
+  const headerMimeType = sniffReceiptFileMimeType(await readReceiptFileHeader(file));
+  const declaredMimeType = normalizeReceiptMimeType(file.type);
+  const fileKind = inferReceiptFileKind(file.name, file.type);
+
+  if(headerMimeType === "application/pdf" || declaredMimeType === "application/pdf"){
+    return {
+      file,
+      contentType: "application/pdf",
+      safeExt: "pdf",
+      wasConverted: false
+    };
+  }
+
+  if(isSupportedReceiptImageMimeType(headerMimeType)){
+    const contentType = headerMimeType === "image/jpg" ? "image/jpeg" : headerMimeType;
+    return {
+      file,
+      contentType,
+      safeExt: receiptFileExtForMimeType(contentType),
+      wasConverted: false
+    };
+  }
+
+  if(headerMimeType === "image/heic" || headerMimeType === "image/heif" || isBrowserConvertibleReceiptMimeType(declaredMimeType)){
+    return convertReceiptImageToJpeg(file);
+  }
+
+  if(fileKind === "image" && !headerMimeType){
+    return convertReceiptImageToJpeg(file);
+  }
+
+  if(isSupportedReceiptImageMimeType(declaredMimeType)){
+    return {
+      file,
+      contentType: declaredMimeType === "image/jpg" ? "image/jpeg" : declaredMimeType,
+      safeExt: receiptFileExtForMimeType(declaredMimeType),
+      wasConverted: false
+    };
+  }
+
+  throw new Error("Unsupported receipt file. Upload a JPG, PNG, HEIC, or PDF receipt.");
+}
+
+async function convertReceiptImageToJpeg(file){
+  const objectUrl = URL.createObjectURL(file);
+  try{
+    const image = new Image();
+    image.decoding = "async";
+    const loaded = new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error("This browser could not decode the receipt image."));
+    });
+    image.src = objectUrl;
+    await loaded;
+
+    if(!image.naturalWidth || !image.naturalHeight){
+      throw new Error("The receipt image did not contain valid dimensions.");
+    }
+
+    const maxLongSide = 3200;
+    const scale = Math.min(1, maxLongSide / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    if(!context) throw new Error("Unable to prepare the receipt image.");
+
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if(!blob) throw new Error("Unable to convert the receipt image to JPEG.");
+
+    const baseName = String(file.name || "receipt").replace(/\.[^.]+$/, "").trim() || "receipt";
+    return {
+      file: new File([blob], `${baseName}.jpg`, { type: "image/jpeg" }),
+      contentType: "image/jpeg",
+      safeExt: "jpg",
+      wasConverted: true
+    };
+  }finally{
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 async function attachReceipt(e){
@@ -1354,15 +1521,26 @@ if(!item.id){
   return;
 }
 
-const safeExt = sanitizeReceiptFileExt(file);
+let preparedReceipt;
+try{
+  preparedReceipt = await prepareReceiptUploadFile(file);
+}catch(error){
+  console.error("Receipt preparation failed", error);
+  alert(error?.message || "Unsupported receipt image. Please upload a JPG, PNG, HEIC, or PDF receipt.");
+  e.target.value = "";
+  return;
+}
+
+const safeExt = preparedReceipt.safeExt || sanitizeReceiptFileExt(preparedReceipt.file);
 const filePath = `receipts/${item.id}.${safeExt}`;
+const previousReceiptUrl = item.receipt_url;
 
 const { error: uploadError } = await supabaseClient
   .storage
   .from("receipts")
-  .upload(filePath, file, {
+  .upload(filePath, preparedReceipt.file, {
     upsert: true,
-    contentType: file.type || undefined
+    contentType: preparedReceipt.contentType || preparedReceipt.file.type || undefined
   });
 
 if(uploadError){
@@ -1379,12 +1557,17 @@ const { error: updateError } = await supabaseClient
 
 if(updateError){
   console.error("DB update error:", updateError);
+  await supabaseClient.storage.from("receipts").remove([filePath]);
   alert("Error saving receipt reference.");
   e.target.value = "";
   return;
 }
 
 item.receipt_url = filePath;
+if(previousReceiptUrl && previousReceiptUrl !== filePath){
+  const { error: cleanupError } = await supabaseClient.storage.from("receipts").remove([previousReceiptUrl]);
+  if(cleanupError) console.warn("Unable to remove previous receipt file", cleanupError);
+}
 
 showCard(); // refreshes the UI
 alert("Receipt saved successfully.");
