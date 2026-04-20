@@ -1596,6 +1596,7 @@ async function repairAttachedReceiptForAnalysis(item){
     if(cleanupError) console.warn("Unable to remove replaced receipt file", cleanupError);
     item.receipt_url = filePath;
   }
+  clearReceiptAnalysisCacheForTransaction(item.id);
 
   return true;
 }
@@ -1667,6 +1668,7 @@ if(previousReceiptUrl && previousReceiptUrl !== filePath){
   const { error: cleanupError } = await supabaseClient.storage.from("receipts").remove([previousReceiptUrl]);
   if(cleanupError) console.warn("Unable to remove previous receipt file", cleanupError);
 }
+clearReceiptAnalysisCacheForTransaction(item.id);
 
 showCard(); // refreshes the UI
 alert("Receipt saved successfully.");
@@ -1823,6 +1825,7 @@ if(dbError){
 }
 
 item.receipt_url = null;
+clearReceiptAnalysisCacheForTransaction(item.id);
 
 showCard();
 alert("Receipt removed successfully.");
@@ -2139,6 +2142,7 @@ const SplitState = {
   manualAmount: 0,
   manualCategory: null,
   highlightedIndex: null,
+  receiptAnalysisCache: {},
   detectedMerchant: "misc",
   detectedItemNumbers: [],
   detectedParsedItems: [],
@@ -2163,6 +2167,105 @@ const SplitState = {
     onCancel: null
   }
 };
+
+function clonePlainValue(value){
+  if(value == null) return value;
+  try{
+    return JSON.parse(JSON.stringify(value));
+  }catch{
+    return value;
+  }
+}
+
+function getReceiptAnalysisCacheKey(item){
+  if(!item?.id || !item?.receipt_url) return "";
+  return `${String(item.id)}::${String(item.receipt_url)}`;
+}
+
+function buildReceiptAnalysisSnapshot(item){
+  const key = getReceiptAnalysisCacheKey(item);
+  if(!key) return null;
+
+  return {
+    key,
+    transactionId: String(item.id),
+    receiptUrl: String(item.receipt_url),
+    detectedMerchant: SplitState.detectedMerchant || "misc",
+    detectedItemNumbers: clonePlainValue(SplitState.detectedItemNumbers || []),
+    detectedParsedItems: clonePlainValue(SplitState.detectedParsedItems || []),
+    detectedResolvedProducts: clonePlainValue(SplitState.detectedResolvedProducts || {}),
+    detectedLineItemPrices: clonePlainValue(SplitState.detectedLineItemPrices || {}),
+    detectedReceiptTax: SplitState.detectedReceiptTax,
+    detectedReceiptSubtotal: SplitState.detectedReceiptSubtotal,
+    detectedReceiptTotal: SplitState.detectedReceiptTotal,
+    detectedUnassignedDiscount: SplitState.detectedUnassignedDiscount || 0,
+    receiptMathValidation: clonePlainValue(SplitState.receiptMathValidation || null),
+    receiptNameDrafts: clonePlainValue(SplitState.receiptNameDrafts || {}),
+    cachedAt: Date.now()
+  };
+}
+
+function storeReceiptAnalysisCache(item = data[currentIndex]){
+  const snapshot = buildReceiptAnalysisSnapshot(item);
+  if(!snapshot) return;
+  SplitState.receiptAnalysisCache[snapshot.key] = snapshot;
+}
+
+function getReceiptAnalysisCache(item){
+  const key = getReceiptAnalysisCacheKey(item);
+  if(!key) return null;
+
+  const snapshot = SplitState.receiptAnalysisCache[key];
+  if(!snapshot) return null;
+  if(String(snapshot.transactionId || "") !== String(item.id || "")) return null;
+  if(String(snapshot.receiptUrl || "") !== String(item.receipt_url || "")) return null;
+
+  return snapshot;
+}
+
+function hasReceiptAnalysisCache(item){
+  return Boolean(getReceiptAnalysisCache(item));
+}
+
+function clearReceiptAnalysisCacheForTransaction(transactionId){
+  const prefix = `${String(transactionId || "")}::`;
+  if(!prefix.trim()) return;
+
+  Object.keys(SplitState.receiptAnalysisCache || {}).forEach((key) => {
+    if(key.startsWith(prefix)){
+      delete SplitState.receiptAnalysisCache[key];
+    }
+  });
+}
+
+function restoreReceiptAnalysisSnapshot(snapshot){
+  if(!snapshot) return false;
+
+  SplitState.detectedMerchant = snapshot.detectedMerchant || "misc";
+  SplitState.detectedItemNumbers = clonePlainValue(snapshot.detectedItemNumbers || []);
+  SplitState.detectedParsedItems = clonePlainValue(snapshot.detectedParsedItems || []);
+  SplitState.detectedResolvedProducts = clonePlainValue(snapshot.detectedResolvedProducts || {});
+  SplitState.detectedLineItemPrices = clonePlainValue(snapshot.detectedLineItemPrices || {});
+  SplitState.detectedReceiptTax = normalizeNullableMoney(snapshot.detectedReceiptTax);
+  SplitState.detectedReceiptSubtotal = normalizeNullableMoney(snapshot.detectedReceiptSubtotal);
+  SplitState.detectedReceiptTotal = normalizeNullableMoney(snapshot.detectedReceiptTotal);
+  SplitState.detectedUnassignedDiscount = Number.isFinite(Number(snapshot.detectedUnassignedDiscount))
+    ? Number(snapshot.detectedUnassignedDiscount)
+    : 0;
+  SplitState.detectedTransactionId = snapshot.transactionId || null;
+  SplitState.receiptMathValidation = clonePlainValue(snapshot.receiptMathValidation || null);
+  SplitState.receiptNameDrafts = clonePlainValue(snapshot.receiptNameDrafts || {});
+
+  return true;
+}
+
+function openCachedReceiptAnalysis(item){
+  const snapshot = getReceiptAnalysisCache(item);
+  if(!restoreReceiptAnalysisSnapshot(snapshot)) return false;
+
+  openDetectedReceiptItemsModal();
+  return true;
+}
 
 function parseLineItemPrice(line){
   const text = String(line || "").trim();
@@ -2455,6 +2558,7 @@ async function openSplitModal(){
   SplitState.receiptExpanded = false;
   const item = data[currentIndex];
   if(!item) return;
+  const hasCachedAnalysis = hasReceiptAnalysisCache(item);
 
   modalTitle.innerText = "Split Transaction";
 
@@ -2468,7 +2572,7 @@ async function openSplitModal(){
         <div class="receiptCard">
           <div class="receiptControls">
             <button class="touchButton" onclick="openManualSplitModal()" style="background:#1e3a8a;color:#fff;flex:1;">Add Split</button>
-            ${item.receipt_url ? `<button class="touchButton" onclick="analyzeSplitReceipt()" style="background:#6a1b9a;color:#fff;flex:1;">Analyze Receipt</button>` : ""}
+            ${item.receipt_url ? `<button class="touchButton" onclick="analyzeSplitReceipt()" style="background:#6a1b9a;color:#fff;flex:1;">${hasCachedAnalysis ? "Review Detected Items" : "Analyze Receipt"}</button>` : ""}
             ${item.receipt_url ? `<button class="touchButton" onclick="openSplitReceiptViewer()" style="background:#1565c0;color:#fff;flex:1;">View Receipt</button>` : ""}
           </div>
           ${item.receipt_url ? `` : `<div class="small" style="margin-bottom:8px;">No receipt attached. Use keypad-first split entry for fast mobile input.</div>`}
@@ -2492,6 +2596,10 @@ async function analyzeSplitReceipt(){
   const item = data[currentIndex];
   if(!item?.id || !item?.receipt_url){
     alert("No receipt attached.");
+    return;
+  }
+
+  if(openCachedReceiptAnalysis(item)){
     return;
   }
 
@@ -2648,12 +2756,14 @@ async function analyzeSplitReceipt(){
     SplitState.detectedUnassignedDiscount = unassignedReceiptDiscount;
     SplitState.detectedTransactionId = item.id || null;
     SplitState.receiptMathValidation = receiptMathValidation;
+    SplitState.receiptNameDrafts = {};
 
     const taxSplitChanged = syncDetectedTaxSplit(item, receiptTotals.tax);
     if(taxSplitChanged){
       await persistSplitItem(item);
     }
 
+    storeReceiptAnalysisCache(item);
     openDetectedReceiptItemsModal();
   } catch (error) {
     console.error("Receipt analysis error:", error);
@@ -2914,6 +3024,7 @@ async function saveVerifiedProductName({ merchant, itemNumber, newProductName, p
         ...(parsed?.receipt_label ? { receipt_label: parsed.receipt_label } : {})
       }
     };
+    storeReceiptAnalysisCache(data[currentIndex]);
 
     alert("Verified product name saved.");
     openDetectedReceiptItemsModal();
@@ -2957,6 +3068,7 @@ async function applyDetectedItemCategory(itemNumber, category){
     sourceIdentifierType: parsed?.identifier_type || "unknown"
   });
   if(success){
+    storeReceiptAnalysisCache(data[currentIndex]);
     openDetectedReceiptItemsModal();
   }
 }
@@ -3387,18 +3499,28 @@ async function applySplit(category, amount, options = {}){
   const item = data[currentIndex];
   const categoryName = getAllowedCategoryName(category);
   if (!item.Splits) item.Splits = [];
+  const previousSplits = Array.isArray(item.Splits) ? clonePlainValue(item.Splits) : [];
+  const previousCategory = item.Category;
+  const sourceProductNumber = String(options.sourceProductNumber || "").trim();
+  if(sourceProductNumber){
+    item.Splits = item.Splits.filter((split) => String(split?.SourceProductNumber || "") !== sourceProductNumber);
+  }
 
   let total = item.Splits.reduce((sum, s) => sum + Math.round(normalizeMoney(s.Amount) * 100), 0) / 100;
   const receiptDiscount = getEffectiveReceiptDiscount(item);
   const remaining = parseFloat((normalizeMoney(item.Amount) - total - receiptDiscount).toFixed(2));
 
   if(amount > remaining + 0.01){
+    item.Splits = previousSplits;
+    item.Category = previousCategory;
     alert("Amount exceeds remaining balance.");
     return false;
   }
 
   if(Math.abs(amount - remaining) < 0.01) amount = remaining;
   if(amount <= 0){
+    item.Splits = previousSplits;
+    item.Category = previousCategory;
     alert("Enter a valid amount.");
     return false;
   }
@@ -3406,7 +3528,7 @@ async function applySplit(category, amount, options = {}){
   item.Splits.push({
     Category: categoryName,
     Amount: parseFloat(amount.toFixed(2)),
-    ...(options.sourceProductNumber ? { SourceProductNumber: options.sourceProductNumber } : {}),
+    ...(sourceProductNumber ? { SourceProductNumber: sourceProductNumber } : {}),
     ...(options.sourceMerchant ? { SourceMerchant: options.sourceMerchant } : {}),
     ...(options.sourceIdentifierType ? { SourceIdentifierType: options.sourceIdentifierType } : {}),
     ...(options.reviewStatus ? { ReviewStatus: options.reviewStatus } : {}),
@@ -4469,7 +4591,10 @@ async function applyAISuggestion(category){
       reviewNote: [suggestion?.reasoning, suggestion?.tax_consideration].filter(Boolean).join(" | ")
     });
     aiSuggestionResult = null;
-    if(success) openDetectedReceiptItemsModal();
+    if(success){
+      storeReceiptAnalysisCache(data[currentIndex]);
+      openDetectedReceiptItemsModal();
+    }
     return;
   }
 
