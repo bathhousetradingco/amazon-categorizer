@@ -86,6 +86,16 @@ function toTransactionRow(transaction: any, account: SyncAccount) {
   };
 }
 
+function plaidErrorSummary(payload: any) {
+  const source = payload?.error && typeof payload.error === "object" ? payload.error : payload;
+  return {
+    error_type: source?.error_type || null,
+    error_code: source?.error_code || null,
+    error_message: source?.error_message || source?.display_message || null,
+    request_id: source?.request_id || payload?.request_id || null,
+  };
+}
+
 export async function syncPlaidTransactionsForAccount(context: SyncContext): Promise<SyncResult> {
   const { plaidBase, plaidClientId, plaidSecret, supabase, account } = context;
 
@@ -119,11 +129,12 @@ export async function syncPlaidTransactionsForAccount(context: SyncContext): Pro
     const plaidData = await plaidRes.json();
 
     if (!plaidRes.ok || plaidData.error) {
-      const message = JSON.stringify(plaidData);
+      const summary = plaidErrorSummary(plaidData);
+      const message = JSON.stringify(summary);
       console.error("❌ Plaid sync failed", {
         item_id: account.item_id,
         status: plaidRes.status,
-        plaid_error: plaidData,
+        plaid_error: summary,
       });
       errors.push({
         phase: "plaid_sync",

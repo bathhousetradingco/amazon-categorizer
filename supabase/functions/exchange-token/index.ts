@@ -15,14 +15,27 @@ const PLAID_BASE =
     ? "https://production.plaid.com"
     : "https://sandbox.plaid.com";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "https://bathhousetradingco.github.io",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-};
+const ALLOWED_ORIGINS = new Set([
+  "https://bathhousetradingco.github.io",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:5500",
+]);
+
+function cors(origin: string | null) {
+  return {
+    "Access-Control-Allow-Origin": origin && ALLOWED_ORIGINS.has(origin)
+      ? origin
+      : "https://bathhousetradingco.github.io",
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  };
+}
 
 Deno.serve(async (req) => {
+  const corsHeaders = cors(req.headers.get("origin"));
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

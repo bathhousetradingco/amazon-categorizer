@@ -42,10 +42,6 @@ export function extractItemNumbersFromLineItems(lines: string[]): string[] {
     const normalizedItemNumber = normalizeProductNumber(rawMatch);
     const addedToDetectedItems = Boolean(normalizedItemNumber);
 
-    console.log("RAW MATCH:", rawMatch);
-    console.log("NORMALIZED ITEM NUMBER:", normalizedItemNumber);
-    console.log("ADDED TO DETECTED ITEMS:", addedToDetectedItems);
-
     if (addedToDetectedItems) found.push(rawMatch);
   }
 

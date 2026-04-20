@@ -60,11 +60,12 @@ Deno.serve(async (req) => {
     );
 
     const matchingLines = lines.filter((line) => isLikelyLineItem(line));
+    const receiptTotals = parseReceiptTotals(extraction.fullText);
+    const instantSavingsTotal = parseReceiptInstantSavingsTotal(extraction.fullText);
 
     const debug = {
       merchant: parsedReceipt.merchant,
       provider: extraction.provider,
-      raw_receipt_text: extraction.fullText,
       total_lines_detected: lines.length,
       lines_matching_item_number_pattern: matchingLines,
       item_numbers_found: parsedReceipt.item_numbers,
@@ -81,6 +82,8 @@ Deno.serve(async (req) => {
       item_numbers: parsedReceipt.item_numbers,
       parsed_items: parsedReceipt.parsed_items,
       resolved_products: resolvedProducts,
+      receipt_totals: receiptTotals,
+      instant_savings_total: instantSavingsTotal,
       debug,
     });
   } catch (error) {
@@ -107,6 +110,68 @@ async function requireUser(req: Request) {
 
   if (error || !user) throw new HttpError(401, "Unauthorized");
   return user;
+}
+
+function parseReceiptTotals(rawReceiptText: string) {
+  const totals: { tax: number | null; subtotal: number | null; receiptTotal: number | null } = {
+    tax: null,
+    subtotal: null,
+    receiptTotal: null,
+  };
+  const lines = String(rawReceiptText || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let taxSumCents = 0;
+  let foundTax = false;
+
+  for (const line of lines) {
+    const trailingAmountCents = parseTrailingCurrencyToCents(line);
+
+    if (/\bSUB\s*TOTAL\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
+      totals.subtotal = centsToAmount(trailingAmountCents);
+    }
+
+    if (/\bTAX\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
+      taxSumCents += trailingAmountCents as number;
+      foundTax = true;
+    }
+
+    if (/\bTOTAL\b/i.test(line) && !/\bSUB\s*TOTAL\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
+      totals.receiptTotal = centsToAmount(trailingAmountCents);
+    }
+  }
+
+  totals.tax = foundTax ? centsToAmount(taxSumCents) : null;
+  return totals;
+}
+
+function parseReceiptInstantSavingsTotal(rawReceiptText: string): number {
+  const lines = String(rawReceiptText || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return lines.reduce((sum, line) => {
+    if (!/^INST\s+SV\b/i.test(line)) return sum;
+    const match = line.match(/(\d+\.\d{2})-\s*[A-Z.]*\s*$/i);
+    if (!match) return sum;
+    const amount = Number(match[1]);
+    return Number.isFinite(amount) ? sum + amount : sum;
+  }, 0);
+}
+
+function parseTrailingCurrencyToCents(line: string): number | null {
+  const match = String(line || "").trim().match(/(\d+\.\d{2})\s*[A-Z]?\s*$/i);
+  if (!match) return null;
+
+  const amount = Number(match[1]);
+  return Number.isFinite(amount) ? Math.round(amount * 100) : null;
+}
+
+function centsToAmount(cents: number | null): number | null {
+  return Number.isFinite(cents) ? (cents as number) / 100 : null;
 }
 
 function normalizeReceiptPath(value: string): string {

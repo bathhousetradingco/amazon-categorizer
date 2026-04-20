@@ -29,11 +29,15 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
     const body = await req.json().catch(() => ({}));
-    console.log("📩 PLAID WEBHOOK", JSON.stringify(body));
 
     const webhookType = body?.webhook_type;
     const webhookCode = body?.webhook_code;
     const itemId = body?.item_id;
+    console.log("📩 PLAID WEBHOOK", {
+      webhook_type: webhookType,
+      webhook_code: webhookCode,
+      item_id: itemId,
+    });
 
     if (!itemId) {
       console.error("⚠️ Missing item_id in webhook payload");

@@ -30,6 +30,7 @@ type CacheLookupRow = {
 type SearchResolution = {
   product_name: string;
   source_url?: string | null;
+  provider?: "serpapi_samsclub" | "duckduckgo_samsclub";
 };
 
 export async function resolveProductNames(
@@ -190,10 +191,30 @@ export function extractSamsClubSearchResult(html: string): SearchResolution | nu
     return {
       product_name: cleanedTitle,
       source_url: sourceUrl,
+      provider: "duckduckgo_samsclub",
     };
   }
 
   return null;
+}
+
+export function isSearchableSamsClubReceiptLabel(receiptLabel: string | undefined): boolean {
+  const cleaned = cleanLookupLabel(receiptLabel);
+  if (!cleaned) return false;
+
+  const originalText = normalizeComparisonText(cleaned);
+  const originalLetters = originalText.replace(/[^a-z]/g, "");
+  if (originalLetters.length < 2) return false;
+
+  const expandedText = normalizeComparisonText(expandSamsReceiptLabel(cleaned));
+  const searchableTokens = expandedText
+    .split(" ")
+    .filter((token) => /[a-z]/.test(token))
+    .filter((token) => token.length >= 3)
+    .filter((token) => !SAM_SEARCH_NOISE_TOKENS.has(token))
+    .filter((token) => !SAM_SEARCH_GENERIC_TOKENS.has(token));
+
+  return searchableTokens.length > 0;
 }
 
 export function isPlausibleSamsClubMatch(
@@ -286,7 +307,7 @@ async function searchSamsClubByItemNumber(
   itemNumber: string,
   receiptLabel?: string,
 ): Promise<SearchResolution | null> {
-  if (!cleanLookupLabel(receiptLabel)) return null;
+  if (!isSearchableSamsClubReceiptLabel(receiptLabel)) return null;
 
   const serpApiResolution = await searchSamsClubBySerpApi(itemNumber, receiptLabel);
   if (serpApiResolution?.product_name) {
@@ -337,12 +358,22 @@ async function searchSamsClubBySerpApi(
       for (const entry of entries) {
         const title = cleanLookupLabel(entry?.title);
         const sourceUrl = normalizeSearchResultUrl(String(entry?.link || entry?.product_link || ""));
+        const sourceName = cleanLookupLabel([
+          entry?.source,
+          entry?.store,
+          entry?.merchant,
+          entry?.seller,
+          entry?.domain,
+          entry?.displayed_link,
+        ].filter(Boolean).join(" "));
         if (!title) continue;
+        if (!isSamsClubSearchSource(sourceName, title, sourceUrl)) continue;
         if (receiptLabel && !isPlausibleSamsClubMatch(receiptLabel, title)) continue;
 
         return {
           product_name: title,
           source_url: sourceUrl || null,
+          provider: "serpapi_samsclub",
         };
       }
     }
@@ -388,7 +419,7 @@ async function upsertLookupCache(
     .upsert({
       sku: itemNumber,
       clean_name: cleanName,
-      source: "duckduckgo_samsclub",
+      source: resolution.provider || "samsclub_search",
       source_url: resolution.source_url || null,
       last_checked_at: new Date().toISOString(),
     }, { onConflict: "sku" });
@@ -435,6 +466,16 @@ function normalizeSearchResultUrl(value: string): string {
   }
 }
 
+export function isSamsClubSearchSource(sourceName: string, title: string, sourceUrl: string): boolean {
+  const combinedSource = cleanLookupLabel(sourceName);
+  const combinedTitle = cleanLookupLabel(title);
+
+  return /samsclub\.com/i.test(sourceUrl) ||
+    /samsclub\.com/i.test(combinedSource) ||
+    /\bsam'?s\s+club\b/i.test(combinedSource) ||
+    /\bsam'?s\s+club\b/i.test(combinedTitle);
+}
+
 function expandSamsReceiptLabel(value: unknown): string {
   return cleanLookupLabel(value)
     .replace(/\bIYC\b/gi, "If You Care")
@@ -477,4 +518,16 @@ const SAM_SEARCH_NOISE_TOKENS = new Set([
   "member",
   "members",
   "sams",
+]);
+
+const SAM_SEARCH_GENERIC_TOKENS = new Set([
+  "count",
+  "each",
+  "inst",
+  "pack",
+  "pk",
+  "sale",
+  "subtotal",
+  "tax",
+  "total",
 ]);

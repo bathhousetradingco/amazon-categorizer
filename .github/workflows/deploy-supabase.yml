@@ -11,17 +11,31 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Deno
         uses: denoland/setup-deno@v1
         with:
-          deno-version: v1.x
+          deno-version: v2.x
 
       - uses: supabase/setup-cli@v1
 
       - name: Validate Edge Functions
         run: deno check supabase/functions/**/*.ts
+
+      - name: Test Edge Functions
+        run: deno test supabase/functions/**/*.test.ts
+
+      - name: Apply Supabase migrations
+        run: |
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::notice::SUPABASE_DB_URL is not configured; skipping database migrations."
+            exit 0
+          fi
+
+          supabase db push --db-url "$SUPABASE_DB_URL" --yes
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
 
       - name: Deploy Edge Functions (API mode, no Docker pull)
         run: |

@@ -3,6 +3,8 @@ import {
   buildReceiptLabelMap,
   buildSamsClubSearchQuery,
   isPlausibleSamsClubMatch,
+  isSamsClubSearchSource,
+  isSearchableSamsClubReceiptLabel,
   chooseBestCacheRows,
   extractSamsClubSearchResult,
 } from "./product-name-resolver.ts";
@@ -98,7 +100,26 @@ Deno.test("extractSamsClubSearchResult parses a DuckDuckGo result title and url"
   assertEquals(extractSamsClubSearchResult(html), {
     product_name: "Folgers Dark Roast Ground Coffee, Black Silk, 40.3 oz.",
     source_url: "https://www.samsclub.com/p/folgers-dark-roast-ground-coffee-black-silk-40-3-oz/prod123",
+    provider: "duckduckgo_samsclub",
   });
+});
+
+Deno.test("isSearchableSamsClubReceiptLabel rejects labels that are too generic for lookup", () => {
+  assertEquals(isSearchableSamsClubReceiptLabel("9401"), false);
+  assertEquals(isSearchableSamsClubReceiptLabel("24CT"), false);
+  assertEquals(isSearchableSamsClubReceiptLabel("TAX"), false);
+});
+
+Deno.test("isSearchableSamsClubReceiptLabel accepts distinctive Sam's receipt shorthand", () => {
+  assertEquals(isSearchableSamsClubReceiptLabel("FG 40.3OZ B"), true);
+  assertEquals(isSearchableSamsClubReceiptLabel("IYC 4 CF 40"), true);
+  assertEquals(isSearchableSamsClubReceiptLabel("24CT SHARPI"), true);
+});
+
+Deno.test("isSamsClubSearchSource requires Sam's Club source evidence", () => {
+  assertEquals(isSamsClubSearchSource("Sam's Club", "Folgers Coffee", ""), true);
+  assertEquals(isSamsClubSearchSource("", "Folgers Coffee | Sam's Club", ""), true);
+  assertEquals(isSamsClubSearchSource("Amazon", "Folgers Coffee", "https://www.amazon.com/item"), false);
 });
 
 Deno.test("isPlausibleSamsClubMatch accepts meaningful Sam's title expansions", () => {

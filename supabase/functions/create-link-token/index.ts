@@ -19,15 +19,28 @@ const PLAID_BASE =
 const WEBHOOK_URL = resolvePlaidWebhookUrl(SUPABASE_URL);
 
 /* ================= CORS ================= */
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "https://bathhousetradingco.github.io",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-};
+const ALLOWED_ORIGINS = new Set([
+  "https://bathhousetradingco.github.io",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:5500",
+]);
+
+function cors(origin: string | null) {
+  return {
+    "Access-Control-Allow-Origin": origin && ALLOWED_ORIGINS.has(origin)
+      ? origin
+      : "https://bathhousetradingco.github.io",
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  };
+}
 
 /* ================= FUNCTION ================= */
 Deno.serve(async (req) => {
+  const corsHeaders = cors(req.headers.get("origin"));
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -56,9 +69,6 @@ Deno.serve(async (req) => {
         headers: corsHeaders,
       });
     }
-
-    console.log("👤 Creating link token for user:", user.id);
-    console.log("🔗 Using webhook:", WEBHOOK_URL);
 
     /* ================= PLAID LINK TOKEN ================= */
     const plaidRes = await fetch(`${PLAID_BASE}/link/token/create`, {
