@@ -1,6 +1,6 @@
 import { detectReceiptMerchant } from "./merchant-detector.ts";
 import { parseMiscReceipt } from "./misc-receipt-parser.ts";
-import type { ReceiptParserResult } from "./parser-types.ts";
+import type { ParsedReceiptItem, ReceiptParserResult } from "./parser-types.ts";
 import { extractSamsClubParsedItems } from "./sams-club-parser.ts";
 import { parseWalmartReceipt } from "./walmart-parser.ts";
 
@@ -9,6 +9,7 @@ type ParseReceiptInput = {
   candidateItemNumbers: string[];
   transactionName?: string | null;
   merchantName?: string | null;
+  modelParsedItems?: ParsedReceiptItem[];
 };
 
 export function parseReceiptByMerchant(input: ParseReceiptInput): ReceiptParserResult {
@@ -37,5 +38,6 @@ export function parseReceiptByMerchant(input: ParseReceiptInput): ReceiptParserR
     lines: input.lines,
     transactionName: input.transactionName,
     merchantName: input.merchantName,
+    modelParsedItems: input.modelParsedItems,
   });
 }

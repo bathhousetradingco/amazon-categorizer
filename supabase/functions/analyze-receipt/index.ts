@@ -3,9 +3,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchWithTimeout } from "../_shared/fetch.ts";
 import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from "../_shared/http.ts";
 import { dedupeItemNumbers, extractItemNumbersFromLineItems, isLikelyLineItem } from "./line-item-parser.ts";
+import { normalizeModelReceiptItems } from "./model-line-items.ts";
 import { resolveProductNames } from "./product-name-resolver.ts";
 import { parseReceiptByMerchant } from "./receipt-parser.ts";
 import { parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
+import { validateReceiptMathByMerchant } from "./receipt-validator.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -43,15 +45,18 @@ Deno.serve(async (req) => {
 
     const lineItemNumbers = extractItemNumbersFromLineItems(lines);
     const modelItemNumbers = filterModelItemNumbers(extraction.modelItemNumbers, lines);
+    const modelParsedItems = extraction.modelParsedItems;
     const itemNumbers = dedupeItemNumbers([
       ...lineItemNumbers,
       ...modelItemNumbers,
+      ...modelParsedItems.map((item) => item.product_number),
     ]);
     const parsedReceipt = parseReceiptByMerchant({
       lines,
       candidateItemNumbers: itemNumbers,
       transactionName: transactionContext.name,
       merchantName: transactionContext.merchant_name,
+      modelParsedItems,
     });
     const resolvedProducts = await resolveProductNames(
       serviceClient,
@@ -63,6 +68,12 @@ Deno.serve(async (req) => {
     const matchingLines = lines.filter((line) => isLikelyLineItem(line));
     const receiptTotals = parseReceiptTotals(extraction.fullText);
     const instantSavingsTotal = parseReceiptInstantSavingsTotal(extraction.fullText);
+    const receiptMathValidation = validateReceiptMathByMerchant({
+      merchant: parsedReceipt.merchant,
+      parsedItems: parsedReceipt.parsed_items,
+      receiptTotals,
+      itemNumbers: parsedReceipt.item_numbers,
+    });
 
     const debug = {
       merchant: parsedReceipt.merchant,
@@ -75,6 +86,8 @@ Deno.serve(async (req) => {
       resolved_products: resolvedProducts,
       model_item_numbers: extraction.modelItemNumbers,
       filtered_model_item_numbers: modelItemNumbers,
+      model_parsed_item_count: modelParsedItems.length,
+      receipt_math_validation: receiptMathValidation,
     };
 
     return jsonResponse({
@@ -85,6 +98,7 @@ Deno.serve(async (req) => {
       resolved_products: resolvedProducts,
       receipt_totals: receiptTotals,
       instant_savings_total: instantSavingsTotal,
+      receipt_math_validation: receiptMathValidation,
       debug,
     });
   } catch (error) {
@@ -175,20 +189,27 @@ async function createReceiptSignedUrl(
 async function extractReceiptData(
   signedUrl: string,
   receiptPath: string,
-): Promise<{ fullText: string; modelItemNumbers: string[]; provider: string }> {
+): Promise<{ fullText: string; modelItemNumbers: string[]; modelParsedItems: ReturnType<typeof normalizeModelReceiptItems>; provider: string }> {
   if (!OPENAI_API_KEY) {
     throw new HttpError(500, "OPENAI_API_KEY is not configured");
   }
 
   const prompt = [
-    "You are extracting product/item numbers from a purchase receipt image.",
-    "Return strict JSON with keys: raw_text (string) and item_numbers (array of strings).",
+    "You are extracting purchase receipt data from an image or PDF.",
+    "Return strict JSON with keys: raw_text (string), item_numbers (array of strings), and line_items (array).",
     "Rules for item_numbers:",
     "- Include only likely product/item numbers from line items.",
     "- Include item numbers exactly as seen; normalization will happen downstream.",
     "- Exclude prices, totals, ZIP codes, dates, times, phone numbers, or transaction/reference ids.",
     "- Prefer numeric codes that are 9 to 12 digits.",
     "- If none are found, return an empty array.",
+    "Rules for line_items:",
+    "- Include actual purchased products/services only.",
+    "- Exclude subtotal, tax, total, tender, payment, change, rewards, and loyalty rows.",
+    "- Each line item should include description, product_number when visible, quantity, unit_price, total_price, and raw_text.",
+    "- For Sam's Club and Walmart, preserve raw_text carefully; deterministic parsers will verify risky COGS receipts.",
+    "- For miscellaneous receipts, line_items will be used as fallback split candidates.",
+    "- If no line items are visible, return an empty array.",
   ].join("\n");
 
   const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
@@ -223,10 +244,12 @@ async function extractReceiptData(
     ? parsed.raw_text
     : responseText;
   const modelItemNumbers = dedupeItemNumbers(Array.isArray(parsed?.item_numbers) ? parsed.item_numbers : []);
+  const modelParsedItems = normalizeModelReceiptItems(parsed?.line_items);
 
   return {
     fullText: rawText,
     modelItemNumbers,
+    modelParsedItems,
     provider: "openai:gpt-4.1-mini",
   };
 }

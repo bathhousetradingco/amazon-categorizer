@@ -1,7 +1,7 @@
 import { extractLineItemNumber, normalizeProductNumber } from "./line-item-parser.ts";
 import type { ParsedReceiptItem } from "./parser-types.ts";
 
-const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT\s+1\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
+const PURCHASE_INFO_PATTERN = /^(\d+)\s+AT(?:\s+1)?\s+FOR\s+(\d+(?:\.\d{1,2})?)\s+(\d+(?:\.\d{1,2})?)\b/i;
 const INST_SV_LINE_PATTERN = /^INST\s+SV\b/i;
 const INST_SV_AMOUNT_PATTERN = /(\d+(?:\.\d{1,2})?)-\s*[A-Z.]*\s*$/i;
 const SINGLE_LINE_PRICE_PATTERN = /^(.*?)(\d+(?:\.\d{1,2})?)\s+([A-Z.]+)\s*$/i;

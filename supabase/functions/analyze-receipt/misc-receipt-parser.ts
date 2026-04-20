@@ -4,9 +4,23 @@ type ParseMiscReceiptInput = {
   lines: string[];
   transactionName?: string | null;
   merchantName?: string | null;
+  modelParsedItems?: ParsedReceiptItem[];
 };
 
 export function parseMiscReceipt(input: ParseMiscReceiptInput): ReceiptParserResult {
+  if (input.modelParsedItems?.length) {
+    return {
+      merchant: "misc",
+      item_numbers: input.modelParsedItems.map((item) => item.product_number).filter(Boolean),
+      parsed_items: input.modelParsedItems,
+      debug: {
+        parser_status: "openai-line-items",
+        parser_message: "Used OpenAI-extracted misc receipt line items.",
+        parsed_item_count: input.modelParsedItems.length,
+      },
+    };
+  }
+
   const totalAmount = detectMiscReceiptTotal(input.lines);
   const receiptLabel = buildMiscReceiptLabel(input);
   const hasDetectedTotal = Number.isFinite(totalAmount) && (totalAmount as number) > 0;

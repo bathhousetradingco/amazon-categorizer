@@ -28,6 +28,64 @@ Deno.test("extractSamsClubParsedItems parses quantity, unit, total, and instant 
   ]);
 });
 
+Deno.test("extractSamsClubParsedItems parses receipt quantity math from Sam's register format", () => {
+  const lines = [
+    "0990395985 MM AVO OIL",
+    "3 AT 1 FOR 13.98 41.94 Y",
+    "0990293173 BAKING SODA",
+    "6 AT 1 FOR 8.88 53.28 Y",
+    "0990282589 MM OLIVE OI",
+    "2 AT FOR 18.98 37.96 Y",
+  ];
+
+  assertEquals(extractSamsClubParsedItems(lines, ["990395985", "990293173", "990282589"]), [
+    {
+      product_number: "990395985",
+      identifier_type: "item_number",
+      receipt_label: "MM AVO OIL",
+      quantity: 3,
+      unit_price: 13.98,
+      total_price: 41.94,
+      line_index: 0,
+      raw_lines: [
+        "0990395985 MM AVO OIL",
+        "3 AT 1 FOR 13.98 41.94 Y",
+        "0990293173 BAKING SODA",
+      ],
+      parser_confidence: "high",
+    },
+    {
+      product_number: "990293173",
+      identifier_type: "item_number",
+      receipt_label: "BAKING SODA",
+      quantity: 6,
+      unit_price: 8.88,
+      total_price: 53.28,
+      line_index: 2,
+      raw_lines: [
+        "0990293173 BAKING SODA",
+        "6 AT 1 FOR 8.88 53.28 Y",
+        "0990282589 MM OLIVE OI",
+      ],
+      parser_confidence: "high",
+    },
+    {
+      product_number: "990282589",
+      identifier_type: "item_number",
+      receipt_label: "MM OLIVE OI",
+      quantity: 2,
+      unit_price: 18.98,
+      total_price: 37.96,
+      line_index: 4,
+      raw_lines: [
+        "0990282589 MM OLIVE OI",
+        "2 AT FOR 18.98 37.96 Y",
+      ],
+      parser_confidence: "high",
+    },
+  ]);
+});
+
 Deno.test("extractSamsClubParsedItems returns empty when purchase line format does not match", () => {
   const lines = [
     "0000744575 ITEM",
