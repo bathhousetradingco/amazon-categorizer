@@ -54,10 +54,11 @@ function normalizeReceiptLines(rawReceiptText: string): string[] {
 }
 
 function parseTrailingCurrencyToCents(line: string): number | null {
-  const match = String(line || "").trim().match(/(\d+\.\d{2})\s*[A-Z]?\s*$/i);
-  if (!match) return null;
+  const matches = [...String(line || "").trim().matchAll(/(?:USD\s*)?\$?\s*(\d[\d,]*\.\d{2})(?:\s*USD)?/gi)];
+  const match = matches[matches.length - 1];
+  if (!match?.[1]) return null;
 
-  const amount = Number(match[1]);
+  const amount = Number(match[1].replace(/,/g, ""));
   return Number.isFinite(amount) ? Math.round(amount * 100) : null;
 }
 

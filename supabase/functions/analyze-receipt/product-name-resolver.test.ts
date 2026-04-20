@@ -92,6 +92,27 @@ Deno.test("resolveProductNames uses built-in verified Sam's lookup for cane suga
   });
 });
 
+Deno.test("resolveProductNames preserves synthetic misc receipt line identifiers", async () => {
+  const serviceClient = buildLookupStubClient();
+  const resolved = await resolveProductNames(serviceClient, "misc", ["model-line-1"], [
+    {
+      product_number: "model-line-1",
+      identifier_type: "unknown",
+      quantity: 1,
+      unit_price: 7,
+      total_price: 7,
+      receipt_label: "All Recipes + One Monthly Bonus Recipe",
+    },
+  ]);
+
+  assertEquals(resolved["model-line-1"], {
+    product_name: "All Recipes + One Monthly Bonus Recipe",
+    source: "receipt_label",
+    confidence: "low",
+    receipt_label: "All Recipes + One Monthly Bonus Recipe",
+  });
+});
+
 Deno.test("buildSamsClubSearchQuery expands abbreviated Sam's receipt labels", () => {
   assertEquals(
     buildSamsClubSearchQuery("990008301", "FG 40.3OZ B"),

@@ -87,6 +87,7 @@ export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategor
     "You are categorizing transactions for Bathhouse Trading Co, an LLC using this app to prepare an accountant-ready Schedule C export.",
     "Classify the purchase based on what the item was used for in the business, not just the merchant name.",
     "Prefer the most specific category that fits the user's explanation and the category definitions below.",
+    "For every request, reason through all available categories; do not limit the answer to common examples or deterministic lookup rules.",
     "If facts are still insufficient or the choice depends on tax/accounting treatment, choose Needs Review.",
     "Separate the operational category from deductibility. A transaction can fit a category and still need review or be partly/non-deductible.",
     "",

@@ -101,3 +101,22 @@ Deno.test("parseMiscReceipt prefers OpenAI-extracted line items for misc receipt
     },
   });
 });
+
+Deno.test("parseMiscReceipt creates fallback item from USD currency total", () => {
+  const result = parseMiscReceipt({
+    lines: [
+      "PATREON",
+      "RECEIPT",
+      "CREATOR DESCRIPTION PRICE TAX TOTAL",
+      "Cory O'Briant All Recipes + One Monthly Bonus Recipe $7.00 (0%) $0.00 $7.00",
+      "Total USD $7.00 USD $0.00 USD $7.00",
+    ],
+    transactionName: "PATREON",
+    merchantName: "Patreon",
+  });
+
+  assertEquals(result.item_numbers, ["misc-receipt-total"]);
+  assertEquals(result.parsed_items[0]?.receipt_label, "Patreon");
+  assertEquals(result.parsed_items[0]?.total_price, 7);
+  assertEquals(result.debug?.detected_total, 7);
+});

@@ -216,6 +216,19 @@ export function lookupTaxGuidance(context: AskAiContext, categories: AskAiCatego
     });
   }
 
+  if (/\b(patreon|paid newsletter|digital content|content subscription|recipe subscription|online course|training course|business training|digital membership|creator membership)\b/.test(combinedText)) {
+    return guidance(availableCategories, {
+      id: "business-content-subscription",
+      categories: ["Software & Subscriptions", "Professional Services", "Needs Review"],
+      deduction_status: "Review Required",
+      confidence: "Medium",
+      reasoning: "The purchase appears to be a paid digital membership, content subscription, or training resource.",
+      tax_consideration: "Classify business-use subscriptions separately from personal content; confirm it is ordinary and necessary for product development, operations, marketing, or training before export.",
+      follow_up_question: "Was this subscription used directly for Bathhouse operations, product development, marketing, or training rather than personal use?",
+      source_summary: "Schedule C ordinary-and-necessary business expense standard; other expense itemization.",
+    });
+  }
+
   if (/\b(subscription|software|shopify|quickbooks|supabase|plaid|domain|hosting|app|saas|google workspace|microsoft 365)\b/.test(combinedText)) {
     return guidance(availableCategories, {
       id: "software-subscriptions",

@@ -54,6 +54,10 @@ export async function resolveProductNames(
   itemNumbers: string[],
   parsedItems: ParsedReceiptItem[],
 ): Promise<Record<string, ResolvedProduct>> {
+  if (merchant === "misc") {
+    return resolveMiscReceiptLabels(itemNumbers, parsedItems);
+  }
+
   const normalizedItemNumbers = [...new Set(itemNumbers.map(normalizeLookupKey).filter(Boolean))];
   if (!normalizedItemNumbers.length) return {};
 
@@ -165,6 +169,34 @@ export async function resolveProductNames(
         receipt_label: fallback.receiptLabel,
       };
     }
+  }
+
+  return resolved;
+}
+
+function resolveMiscReceiptLabels(
+  itemNumbers: string[],
+  parsedItems: ParsedReceiptItem[],
+): Record<string, ResolvedProduct> {
+  const labels = new Map<string, string>();
+
+  for (const item of parsedItems) {
+    const itemNumber = String(item?.product_number || "").trim();
+    const receiptLabel = cleanLookupLabel(item?.receipt_label);
+    if (!itemNumber || !receiptLabel || labels.has(itemNumber)) continue;
+    labels.set(itemNumber, receiptLabel);
+  }
+
+  const resolved: Record<string, ResolvedProduct> = {};
+  for (const itemNumber of itemNumbers.map((value) => String(value || "").trim()).filter(Boolean)) {
+    const receiptLabel = labels.get(itemNumber);
+    if (!receiptLabel) continue;
+    resolved[itemNumber] = {
+      product_name: receiptLabel,
+      source: "receipt_label",
+      confidence: "low",
+      receipt_label: receiptLabel,
+    };
   }
 
   return resolved;

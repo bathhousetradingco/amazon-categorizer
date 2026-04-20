@@ -46,6 +46,7 @@ Deno.test("buildAskAiPrompt includes transaction and receipt context", () => {
   assertMatch(prompt, /COGS - Packaging/);
   assertMatch(prompt, /deduction_status/);
   assertMatch(prompt, /paper plates, cups, napkins/);
+  assertMatch(prompt, /all available categories/);
 });
 
 Deno.test("buildAskAiPrompt includes deterministic tax guidance block", () => {

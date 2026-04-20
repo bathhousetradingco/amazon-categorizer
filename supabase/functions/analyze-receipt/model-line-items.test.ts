@@ -71,3 +71,29 @@ Deno.test("normalizeModelReceiptItems preserves usable model item numbers", () =
     ],
   );
 });
+
+Deno.test("normalizeModelReceiptItems accepts currency-formatted model prices", () => {
+  assertEquals(
+    normalizeModelReceiptItems([
+      {
+        description: "All Recipes + One Monthly Bonus Recipe",
+        quantity: "1",
+        unit_price: "$7.00",
+        total_price: "USD $7.00",
+        raw_text: "All Recipes + One Monthly Bonus Recipe $7.00 (0%) $0.00 $7.00",
+      },
+    ]),
+    [
+      {
+        product_number: "model-line-1",
+        identifier_type: "unknown",
+        quantity: 1,
+        unit_price: 7,
+        total_price: 7,
+        receipt_label: "All Recipes + One Monthly Bonus Recipe",
+        raw_lines: ["All Recipes + One Monthly Bonus Recipe $7.00 (0%) $0.00 $7.00"],
+        parser_confidence: "low",
+      },
+    ],
+  );
+});

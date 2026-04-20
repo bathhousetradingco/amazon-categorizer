@@ -617,6 +617,7 @@ Examples:<br>
 • QuickBooks<br>
 • Supabase<br>
 • Plaid<br>
+• Paid digital memberships or content subscriptions used directly for business<br>
 `
 },
 {
@@ -801,7 +802,7 @@ const categoryTaxMetadata = {
   "Software & Subscriptions": {
     tax_treatment: "expense",
     schedule_c_reference: "Schedule C Line 27a - Other Expenses",
-    tax_note: "Software subscriptions should usually remain itemized as other expenses.",
+    tax_note: "Software and business-use digital subscriptions should usually remain itemized as other expenses.",
   },
   "Insurance": {
     tax_treatment: "expense",
@@ -2611,7 +2612,7 @@ async function analyzeSplitReceipt(){
     openModal();
 
     const repairedReceipt = await repairAttachedReceiptForAnalysis(item);
-    modalContent.innerHTML = `<div class="small" style="padding:14px;">${repairedReceipt ? "Converted receipt to JPEG. Extracting item numbers…" : "Extracting item numbers…"}</div>`;
+    modalContent.innerHTML = `<div class="small" style="padding:14px;">${repairedReceipt ? "Converted receipt to JPEG. Extracting receipt line items…" : "Extracting receipt line items…"}</div>`;
 
     const payload = {
       transaction_id: item.id,
@@ -2687,7 +2688,7 @@ async function analyzeSplitReceipt(){
       console.log("TOTAL LINES DETECTED:", totalLinesDetected);
       console.log("RECEIPT MERCHANT:", detectedMerchant);
       console.log("LINES MATCHING ITEM NUMBER PATTERN:", matchingLines);
-      console.log("ITEM NUMBERS FOUND:", itemNumbers);
+      console.log("DETECTED RECEIPT LINE IDS:", itemNumbers);
       console.log("PARSED PURCHASE LINES:", parsedItems);
 
       console.group("RECEIPT MATH DIAGNOSTICS");
@@ -2861,7 +2862,7 @@ function openDetectedReceiptItemsModal(){
         </div>
       `;
     }).join("")}</div>`
-    : `<div class="small">No item numbers detected.</div>`;
+    : `<div class="small">No receipt line items detected. For miscellaneous receipts, try a clearer receipt image/PDF or add the split manually.</div>`;
   const totalsHtml = Number.isFinite(subtotal) || Number.isFinite(tax) || Number.isFinite(receiptTotal)
     ? `<div class="small" style="display:grid;gap:4px;padding-top:4px;">
         ${Number.isFinite(subtotal) ? `<div><strong>Subtotal =</strong> ${subtotal.toFixed(2)}</div>` : ""}
@@ -2915,6 +2916,11 @@ function needsDetectedItemNameConfirmation(itemNumber, resolved){
   return source !== "verified_lookup";
 }
 
+function isSyntheticReceiptItemId(itemNumber){
+  const normalized = String(itemNumber || "").trim();
+  return normalized === "misc-receipt-total" || /^model-line-\d+$/i.test(normalized);
+}
+
 function openDetectedItemNameModal(itemNumber){
   setModalBackAction(() => openDetectedReceiptItemsModal());
   const normalized = String(itemNumber || "").trim();
@@ -2926,11 +2932,14 @@ function openDetectedItemNameModal(itemNumber){
     || resolved?.product_name
     || parsed?.receipt_label
     || "";
+  const nameHelpText = isSyntheticReceiptItemId(normalized)
+    ? "Use this when the detected receipt line name is wrong or too vague. Saving verifies this receipt line for the current transaction."
+    : "Use this when the detected name is wrong or too vague. Saving here creates a verified mapping for future receipts.";
 
   modalTitle.innerText = `Edit Product Name • ${normalized}`;
   modalContent.innerHTML = `
     <div style="padding:10px;display:grid;gap:10px;">
-      <div class="small">Use this when the detected name is wrong or too vague. Saving here creates a verified mapping for future receipts.</div>
+      <div class="small">${escapeHtml(nameHelpText)}</div>
       <div class="small"><strong>Current name:</strong> ${escapeHtml(resolved?.product_name || parsed?.receipt_label || "Unknown")}</div>
       <label class="small" for="detectedItemNameInput">Verified product name</label>
       <input id="detectedItemNameInput" type="text" value="${escapeHtml(suggestedName)}" placeholder="Enter the correct product name">
@@ -2957,6 +2966,11 @@ async function confirmDetectedItemName(itemNumber){
     return;
   }
 
+  if(isSyntheticReceiptItemId(normalized)){
+    markSyntheticReceiptItemNameVerified(normalized, productName);
+    return;
+  }
+
   await saveVerifiedProductName({
     merchant: SplitState.detectedMerchant || "any",
     itemNumber: normalized,
@@ -2976,6 +2990,12 @@ async function saveDetectedItemName(itemNumber){
 
   if(!normalized || !newProductName){
     alert("Enter a product name before saving.");
+    return;
+  }
+
+  if(isSyntheticReceiptItemId(normalized)){
+    SplitState.receiptNameDrafts[normalized] = newProductName;
+    markSyntheticReceiptItemNameVerified(normalized, newProductName);
     return;
   }
 
@@ -3045,6 +3065,32 @@ async function saveVerifiedProductName({ merchant, itemNumber, newProductName, p
     alert("Unable to save verified product name.");
     return false;
   }
+}
+
+function markSyntheticReceiptItemNameVerified(itemNumber, productName){
+  const normalized = String(itemNumber || "").trim();
+  const cleanName = String(productName || "").replace(/\s+/g, " ").trim();
+  const parsed = (SplitState.detectedParsedItems || []).find((entry) => String(entry?.product_number || "") === normalized);
+
+  if(!normalized || !cleanName){
+    alert("Missing receipt line name.");
+    return false;
+  }
+
+  SplitState.detectedResolvedProducts = {
+    ...(SplitState.detectedResolvedProducts || {}),
+    [normalized]: {
+      product_name: cleanName,
+      source: "verified_lookup",
+      confidence: "high",
+      ...(parsed?.receipt_label ? { receipt_label: parsed.receipt_label } : {})
+    }
+  };
+  storeReceiptAnalysisCache(data[currentIndex]);
+
+  alert("Receipt line name verified.");
+  openDetectedReceiptItemsModal();
+  return true;
 }
 
 async function applyDetectedItemCategory(itemNumber, category){

@@ -16,6 +16,19 @@ Deno.test("parseReceiptTotals extracts subtotal, summed tax, and receipt total",
   });
 });
 
+Deno.test("parseReceiptTotals handles invoice totals with USD and dollar signs", () => {
+  const rawText = [
+    "Cory O'Briant All Recipes + One Monthly Bonus Recipe $7.00 (0%) $0.00 $7.00",
+    "Total USD $7.00 USD $0.00 USD $7.00",
+  ].join("\n");
+
+  assertEquals(parseReceiptTotals(rawText), {
+    subtotal: null,
+    tax: null,
+    receiptTotal: 7,
+  });
+});
+
 Deno.test("parseReceiptInstantSavingsTotal sums Sam's instant savings lines", () => {
   const rawText = [
     "INST SV 24CT SHARPI 1.00-",

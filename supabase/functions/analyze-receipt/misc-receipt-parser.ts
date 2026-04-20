@@ -85,8 +85,9 @@ function detectMiscReceiptTotal(lines: string[]): number | null {
 }
 
 function parseTrailingAmount(line: string): number | null {
-  const match = String(line || "").match(/(\d+\.\d{2})\s*$/);
-  if (!match) return null;
-  const parsed = Number.parseFloat(match[1]);
+  const matches = [...String(line || "").matchAll(/(?:USD\s*)?\$?\s*(\d[\d,]*\.\d{2})(?:\s*USD)?/gi)];
+  const match = matches[matches.length - 1];
+  if (!match?.[1]) return null;
+  const parsed = Number.parseFloat(match[1].replace(/,/g, ""));
   return Number.isFinite(parsed) ? parsed : null;
 }

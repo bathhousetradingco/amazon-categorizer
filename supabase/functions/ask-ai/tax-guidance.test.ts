@@ -142,6 +142,22 @@ Deno.test("lookupTaxGuidance routes public food samples to advertising review", 
   assertEquals(guidance?.deduction_status, "Review Required");
 });
 
+Deno.test("lookupTaxGuidance routes business content subscriptions to subscription review", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "Recipe subscription used for product development ideas.",
+    transaction: {
+      title: "PATREON",
+    },
+    receipt_item: {
+      receipt_label: "All Recipes + One Monthly Bonus Recipe",
+      amount: 7,
+    },
+  }, categories);
+
+  assertEquals(guidance?.recommended_category, "Software & Subscriptions");
+  assertEquals(guidance?.deduction_status, "Review Required");
+});
+
 Deno.test("buildTaxGuidancePromptBlock includes rule and source basis", () => {
   const guidance = lookupTaxGuidance({
     user_input: "Coffee for volunteers while they work.",
