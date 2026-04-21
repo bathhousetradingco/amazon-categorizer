@@ -12,6 +12,8 @@ const progressText = document.getElementById("progressText");
 const DEBUG_RECEIPTS = false;
 let currentCategoryBreakdownRows = [];
 let currentCategoryBreakdownName = "";
+let amazonBusinessAutoSyncInFlight = false;
+const AMAZON_BUSINESS_AUTO_SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 function debugReceipt(...args){
   if(DEBUG_RECEIPTS) console.log(...args);
@@ -267,7 +269,7 @@ let aiSuggestionResult = null;
 // { type: "receipt", index: X } = receipt item mode
 /* ================= LOAD FROM SUPABASE ================= */
 
-async function loadTransactions() {
+async function loadTransactions(options = {}) {
   const { data: rows, error } = await supabaseClient
     .from("transactions")
     .select("*")
@@ -317,6 +319,10 @@ data = rows
 
   if (data.length > 0) {
     showCard();
+  }
+
+  if(!options.skipAmazonAutoSync){
+    maybeAutoSyncAmazonBusiness();
   }
 }
 
@@ -1054,11 +1060,33 @@ async function reconnectAmazonBusiness(){
   }
 }
 
-async function syncAmazonBusiness(){
+async function maybeAutoSyncAmazonBusiness(){
+  if(amazonBusinessAutoSyncInFlight) return;
+  amazonBusinessAutoSyncInFlight = true;
+
   try {
-    modalTitle.innerText = "Amazon Business";
-    modalContent.innerHTML = `<div class="small" style="padding:10px;">Syncing Amazon Business order lines...</div>`;
-    openModal();
+    const status = await getAmazonBusinessStatus();
+    if(!status?.connected) return;
+
+    const lastSyncAt = Date.parse(status.last_sync_at || "");
+    if(Number.isFinite(lastSyncAt) && Date.now() - lastSyncAt < AMAZON_BUSINESS_AUTO_SYNC_INTERVAL_MS) return;
+
+    await syncAmazonBusiness({ silent: true });
+  } catch(error){
+    console.warn("Amazon Business automatic sync skipped", error);
+  } finally {
+    amazonBusinessAutoSyncInFlight = false;
+  }
+}
+
+async function syncAmazonBusiness(options = {}){
+  const silent = !!options.silent;
+  try {
+    if(!silent){
+      modalTitle.innerText = "Amazon Business";
+      modalContent.innerHTML = `<div class="small" style="padding:10px;">Syncing Amazon Business order lines...</div>`;
+      openModal();
+    }
 
     const { response, result } = await invokeEdgeFunction("amazon-business-sync", {});
 
@@ -1081,30 +1109,36 @@ async function syncAmazonBusiness(){
       `
       : `<div class="small">No line-item preview returned.</div>`;
 
-    modalContent.innerHTML = `
-      <div style="padding:10px;display:grid;gap:10px;">
-        <div><strong>Amazon Business sync complete</strong></div>
-        <div class="small">Order line items synced: ${escapeHtml(result.line_items ?? result.upserted ?? 0)}</div>
-        <div class="small">Transaction rows created/updated: ${escapeHtml(result.transaction_rows ?? 0)}</div>
-        <div class="small">Plaid Amazon rows hidden: ${escapeHtml(result.superseded_plaid_rows ?? 0)}</div>
-        <div class="small">Date range: ${escapeHtml(result.start_date || "")} to ${escapeHtml(result.end_date || "")}</div>
-        <div class="small">Amazon line items now appear as reviewable transaction rows. Plaid Amazon rows are only hidden when the Supabase secret AMAZON_BUSINESS_SUPERSEDE_PLAID is set to true.</div>
-        ${preview}
-      </div>
-    `;
-    await loadTransactions();
+    if(!silent){
+      modalContent.innerHTML = `
+        <div style="padding:10px;display:grid;gap:10px;">
+          <div><strong>Amazon Business sync complete</strong></div>
+          <div class="small">Order line items synced: ${escapeHtml(result.line_items ?? result.upserted ?? 0)}</div>
+          <div class="small">Transaction rows created/updated: ${escapeHtml(result.transaction_rows ?? 0)}</div>
+          <div class="small">Plaid Amazon rows hidden: ${escapeHtml(result.superseded_plaid_rows ?? 0)}</div>
+          <div class="small">Date range: ${escapeHtml(result.start_date || "")} to ${escapeHtml(result.end_date || "")}</div>
+          <div class="small">Amazon line items now appear as reviewable transaction rows. Matching Plaid Amazon bulk charges are hidden from normal review but remain in the database as bank audit records.</div>
+          ${preview}
+        </div>
+      `;
+    }
+    await loadTransactions({ skipAmazonAutoSync: true });
+    return result;
   } catch(error){
     console.error("Amazon Business sync failed", error);
     const message = error?.message || "Sync failed.";
     const needsConnection = /not connected/i.test(message);
-    modalContent.innerHTML = `
-      <div style="padding:10px;display:grid;gap:10px;">
-        <div class="small">Unable to sync Amazon Business.</div>
-        <div class="small">${escapeHtml(message)}</div>
-        ${needsConnection ? `<button class="touchButton" style="background:#374151;color:#fff;" onclick="connectAmazonBusiness()">Connect Amazon Business</button>` : ""}
-      </div>
-    `;
-    openModal();
+    if(!silent){
+      modalContent.innerHTML = `
+        <div style="padding:10px;display:grid;gap:10px;">
+          <div class="small">Unable to sync Amazon Business.</div>
+          <div class="small">${escapeHtml(message)}</div>
+          ${needsConnection ? `<button class="touchButton" style="background:#374151;color:#fff;" onclick="connectAmazonBusiness()">Connect Amazon Business</button>` : ""}
+        </div>
+      `;
+      openModal();
+    }
+    return null;
   }
 }
 

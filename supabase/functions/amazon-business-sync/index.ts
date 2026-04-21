@@ -9,6 +9,7 @@ import {
   refreshAmazonBusinessAccessToken,
 } from "../_shared/amazon-business.ts";
 import { daysAgo, toAmazonBusinessReportDateTime, toIsoDate } from "../_shared/amazon-business-dates.ts";
+import { findAmazonPlaidSupersedeMatches } from "../_shared/amazon-business-supersede.ts";
 import { corsHeaders, HttpError, jsonResponse, parseJsonBody, toHttpError } from "../_shared/http.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -113,7 +114,7 @@ Deno.serve(async (req) => {
       transactionRowsUpserted += chunk.length;
     }
 
-    const supersededPlaidRows = await maybeSupersedeAmazonPlaidTransactions(supabase, user.id);
+    const supersedeResult = await maybeSupersedeAmazonPlaidTransactions(supabase, user.id, lineItems);
 
     await supabase
       .from("amazon_business_connections")
@@ -133,7 +134,8 @@ Deno.serve(async (req) => {
       line_items: lineItems.length,
       upserted,
       transaction_rows: transactionRowsUpserted,
-      superseded_plaid_rows: supersededPlaidRows,
+      superseded_plaid_rows: supersedeResult.count,
+      superseded_plaid_matches: supersedeResult.matches.slice(0, 10),
       preview: lineItems.slice(0, 10).map((item) => ({
         date: toIsoDate(item.order_date || ""),
         title: item.title,
@@ -214,9 +216,34 @@ function sumMoney(left: number | null, right: number | null): number | null {
   return Math.round(((left || 0) + (right || 0)) * 100) / 100;
 }
 
-async function maybeSupersedeAmazonPlaidTransactions(supabase: any, userId: string): Promise<number> {
-  const enabled = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID") || "").toLowerCase() === "true";
-  if (!enabled) return 0;
+async function maybeSupersedeAmazonPlaidTransactions(
+  supabase: any,
+  userId: string,
+  lineItems: NormalizedAmazonOrderLineItem[],
+): Promise<{ count: number; matches: Array<Record<string, unknown>> }> {
+  const mode = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID_MODE") || "").toLowerCase();
+  const legacyBroadEnabled = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID") || "").toLowerCase() === "true";
+  if (mode === "off") return { count: 0, matches: [] };
+  if (legacyBroadEnabled || mode === "all") {
+    return broadSupersedeAmazonPlaidTransactions(supabase, userId);
+  }
+
+  const { data: candidates, error: candidateError } = await supabase
+    .from("transactions")
+    .select("id, date, amount, name, merchant_name")
+    .eq("user_id", userId)
+    .not("plaid_transaction_id", "is", null)
+    .is("superseded_at", null)
+    .or("merchant_name.ilike.%amazon%,name.ilike.%amazon%");
+
+  if (candidateError) throw new HttpError(500, "Failed to load Amazon Plaid match candidates", candidateError);
+
+  const matches = findAmazonPlaidSupersedeMatches(candidates || [], lineItems.map((item) => ({
+    order_id: item.order_id,
+    order_date: item.order_date,
+    amount: moneyAmount(item),
+  })));
+  if (!matches.length) return { count: 0, matches: [] };
 
   const { data, error } = await supabase
     .from("transactions")
@@ -224,7 +251,27 @@ async function maybeSupersedeAmazonPlaidTransactions(supabase: any, userId: stri
       superseded_by_source: "amazon_business",
       superseded_at: new Date().toISOString(),
       review_status: "Superseded by Amazon Business",
-      review_note: "Hidden from review because Amazon Business line-item rows are now the source of record.",
+      review_note: "Hidden from normal review because Amazon Business order line items matched this Plaid Amazon charge by date and amount.",
+    })
+    .eq("user_id", userId)
+    .in("id", matches.map((match) => match.transaction_id))
+    .select("id");
+
+  if (error) throw new HttpError(500, "Failed to supersede matched Amazon Plaid transactions", error);
+  return { count: data?.length || 0, matches };
+}
+
+async function broadSupersedeAmazonPlaidTransactions(
+  supabase: any,
+  userId: string,
+): Promise<{ count: number; matches: Array<Record<string, unknown>> }> {
+  const { data, error } = await supabase
+    .from("transactions")
+    .update({
+      superseded_by_source: "amazon_business",
+      superseded_at: new Date().toISOString(),
+      review_status: "Superseded by Amazon Business",
+      review_note: "Hidden from normal review because Amazon Business line-item rows are now the source of record.",
     })
     .eq("user_id", userId)
     .not("plaid_transaction_id", "is", null)
@@ -233,7 +280,7 @@ async function maybeSupersedeAmazonPlaidTransactions(supabase: any, userId: stri
     .select("id");
 
   if (error) throw new HttpError(500, "Failed to supersede Amazon Plaid transactions", error);
-  return data?.length || 0;
+  return { count: data?.length || 0, matches: [] };
 }
 
 function sanitizeHttpErrorDetails(details: unknown): unknown {
