@@ -49,14 +49,18 @@ Deno.test("applyTaxGuidance overrides generic office supply answers for worker r
       product_name: "Member's Mark Coffee",
     },
   }, categories);
-  const result = applyTaxGuidance({
-    category: "Office Supplies",
-    reasoning: "Used in the office.",
-    confidence: "Medium",
-    deduction_status: "Deductible",
-    tax_consideration: "",
-    follow_up_question: "",
-  }, guidance, categories);
+  const result = applyTaxGuidance(
+    {
+      category: "Office Supplies",
+      reasoning: "Used in the office.",
+      confidence: "Medium",
+      deduction_status: "Deductible",
+      tax_consideration: "",
+      follow_up_question: "",
+    },
+    guidance,
+    categories,
+  );
 
   assertEquals(result.category, "Meals & Refreshments");
   assertEquals(result.deduction_status, "Review Required");
@@ -131,7 +135,8 @@ Deno.test("lookupTaxGuidance routes resale inventory before product ingredients"
 
 Deno.test("lookupTaxGuidance does not treat bottled water as product packaging", () => {
   const guidance = lookupTaxGuidance({
-    user_input: "Bottled water for volunteers to drink while working at the market.",
+    user_input:
+      "Bottled water for volunteers to drink while working at the market.",
     receipt_item: {
       product_name: "Member's Mark Bottled Water",
     },
@@ -154,7 +159,8 @@ Deno.test("lookupTaxGuidance routes water bills to utilities", () => {
 
 Deno.test("lookupTaxGuidance routes public food samples to advertising review", () => {
   const guidance = lookupTaxGuidance({
-    user_input: "Free coffee samples given to the general public as a market promotion.",
+    user_input:
+      "Free coffee samples given to the general public as a market promotion.",
     receipt_item: {
       product_name: "Coffee",
     },

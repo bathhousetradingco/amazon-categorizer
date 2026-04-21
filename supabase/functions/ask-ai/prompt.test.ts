@@ -8,7 +8,7 @@ Deno.test("normalizeCategories accepts strings and rich category objects", () =>
       name: "Office Supplies",
       description: "Paper and pens",
       tax_treatment: "expense",
-    }
+    },
   ])));
 
   assertEquals(
@@ -39,7 +39,10 @@ Deno.test("buildAskAiPrompt includes transaction and receipt context", () => {
         product_name: "Folgers Dark Roast Ground Coffee",
       },
     },
-    [{ name: "COGS - Packaging", description: "Packaging attached to product." }],
+    [{
+      name: "COGS - Packaging",
+      description: "Packaging attached to product.",
+    }],
   );
 
   assertMatch(prompt, /Bathhouse Trading Co/);

@@ -4931,10 +4931,12 @@ async function submitAIRequest(options = {}){
 
   } catch(err){
     console.error(err);
+    const message = String(err?.message || "AI request failed").trim();
 
     modalContent.innerHTML = `
       <div style="padding:10px; color:red;">
-        Error getting AI suggestion
+        <strong>Error getting AI suggestion</strong>
+        <div class="small" style="margin-top:8px;color:#991b1b;">${escapeHtml(message)}</div>
       </div>
     `;
   }
