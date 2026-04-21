@@ -72,6 +72,7 @@ export function buildAskAiPrompt(
   context: AskAiContext,
   categories: AskAiCategory[],
   taxGuidanceBlock = "",
+  taxResearchBlock = "",
 ): string {
   const categoryBlock = categories.map((category) => {
     const parts = [
@@ -136,7 +137,7 @@ export function buildAskAiPrompt(
     "Classify the purchase based on what the item was used for in the business, not just the merchant name.",
     "Prefer the most specific category that fits the user's explanation and the category definitions below.",
     "For every request, reason through all available categories; do not limit the answer to common examples or deterministic lookup rules.",
-    "If tax treatment is materially uncertain and web search is available, use IRS-only web search to resolve the Schedule C category, limitation, or substantiation issue. Synthesize the answer; do not dump citations into the response.",
+    "Use the IRS research context below if it is provided. Do not claim a live IRS lookup happened when no IRS research context is provided.",
     "If facts are still insufficient or the choice depends on tax/accounting treatment, choose Needs Review.",
     "Separate the operational category from deductibility. A transaction can fit a category and still need review or be partly/non-deductible.",
     "",
@@ -145,6 +146,7 @@ export function buildAskAiPrompt(
     transactionBlock,
     receiptBlock,
     taxGuidanceBlock,
+    taxResearchBlock,
     "",
     "Available categories:",
     categoryBlock,

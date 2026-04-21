@@ -54,7 +54,8 @@ Deno.test("buildAskAiPrompt includes transaction and receipt context", () => {
   assertMatch(prompt, /tax year 2026/);
   assertMatch(prompt, /shower steamers/);
   assertMatch(prompt, /product packaging/);
-  assertMatch(prompt, /IRS-only web search/);
+  assertMatch(prompt, /IRS research context/);
+  assertMatch(prompt, /Do not claim a live IRS lookup/);
 });
 
 Deno.test("buildAskAiPrompt includes deterministic tax guidance block", () => {
@@ -68,4 +69,19 @@ Deno.test("buildAskAiPrompt includes deterministic tax guidance block", () => {
 
   assertMatch(prompt, /Tax guidance lookup/);
   assertMatch(prompt, /Recommended category: Meals & Refreshments/);
+});
+
+Deno.test("buildAskAiPrompt includes optional IRS research context block", () => {
+  const prompt = buildAskAiPrompt(
+    {
+      user_input: "Is this deductible under Schedule C?",
+      tax_year: 2026,
+    },
+    [{ name: "Needs Review" }],
+    "",
+    "IRS research context:\n- Summary: Schedule C requires ordinary and necessary business use.",
+  );
+
+  assertMatch(prompt, /IRS research context/);
+  assertMatch(prompt, /ordinary and necessary business use/);
 });
