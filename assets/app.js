@@ -39,6 +39,7 @@ function normalizeMoney(value){
 }
 
 function normalizeNullableMoney(value){
+  if(value === null || value === undefined || value === "") return null;
   const amount = Number(value);
   return Number.isFinite(amount) ? amount : null;
 }
@@ -2257,6 +2258,14 @@ function restoreReceiptAnalysisSnapshot(snapshot){
   SplitState.detectedTransactionId = snapshot.transactionId || null;
   SplitState.receiptMathValidation = clonePlainValue(snapshot.receiptMathValidation || null);
   SplitState.receiptNameDrafts = clonePlainValue(snapshot.receiptNameDrafts || {});
+  const completedTotals = completeReceiptTotals({
+    tax: SplitState.detectedReceiptTax,
+    subtotal: SplitState.detectedReceiptSubtotal,
+    receiptTotal: SplitState.detectedReceiptTotal
+  }, SplitState.detectedParsedItems);
+  SplitState.detectedReceiptTax = completedTotals.tax;
+  SplitState.detectedReceiptSubtotal = completedTotals.subtotal;
+  SplitState.detectedReceiptTotal = completedTotals.receiptTotal;
 
   return true;
 }
@@ -2373,6 +2382,49 @@ function parseReceiptTotals(rawReceiptText){
 
   totals.tax = foundTax ? centsToAmount(taxSumCents) : null;
   return totals;
+}
+
+function completeReceiptTotals(receiptTotals, parsedItems = []){
+  const safeTotals = {
+    tax: normalizeNullableMoney(receiptTotals?.tax),
+    subtotal: normalizeNullableMoney(receiptTotals?.subtotal),
+    receiptTotal: normalizeNullableMoney(receiptTotals?.receiptTotal)
+  };
+  const parsedSubtotal = sumParsedReceiptItems(parsedItems);
+  const tax = safeTotals.tax ?? 0;
+  const subtotalFromTotal = Number.isFinite(safeTotals.receiptTotal)
+    ? normalizeMoney(safeTotals.receiptTotal - tax)
+    : null;
+  const subtotalMissingOrClearlyWrong = safeTotals.subtotal === null
+    || (safeTotals.subtotal === 0 && (
+      (Number.isFinite(parsedSubtotal) && parsedSubtotal > 0)
+      || (Number.isFinite(subtotalFromTotal) && subtotalFromTotal > 0)
+    ));
+
+  if(!subtotalMissingOrClearlyWrong) return safeTotals;
+
+  return {
+    ...safeTotals,
+    subtotal: Number.isFinite(parsedSubtotal)
+      ? parsedSubtotal
+      : (Number.isFinite(subtotalFromTotal) ? subtotalFromTotal : safeTotals.subtotal)
+  };
+}
+
+function sumParsedReceiptItems(parsedItems = []){
+  let total = 0;
+  let hasItem = false;
+
+  (parsedItems || []).forEach((entry) => {
+    const totalPrice = normalizeNullableMoney(entry?.total_price);
+    if(!Number.isFinite(totalPrice)) return;
+
+    const discount = normalizeNullableMoney(entry?.instant_savings_discount) || 0;
+    total += totalPrice - discount;
+    hasItem = true;
+  });
+
+  return hasItem ? normalizeMoney(total) : null;
 }
 
 function parseReceiptInstantSavingsTotal(rawReceiptText){
@@ -2708,7 +2760,7 @@ async function analyzeSplitReceipt(){
         receiptTotal: normalizeNullableMoney(result.receipt_totals.receiptTotal)
       }
       : null;
-    const receiptTotals = serverReceiptTotals || parseReceiptTotals(rawReceiptText);
+    const receiptTotals = completeReceiptTotals(serverReceiptTotals || parseReceiptTotals(rawReceiptText), parsedItems);
     const serverInstantSavingsTotal = normalizeNullableMoney(result?.instant_savings_total);
     const detectedInstantSavingsTotal = Number.isFinite(serverInstantSavingsTotal)
       ? serverInstantSavingsTotal

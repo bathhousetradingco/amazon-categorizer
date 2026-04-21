@@ -4,6 +4,11 @@ export type ReceiptTotals = {
   receiptTotal: number | null;
 };
 
+type ReceiptSubtotalItem = {
+  total_price?: number;
+  instant_savings_discount?: number;
+};
+
 export function parseReceiptTotals(rawReceiptText: string): ReceiptTotals {
   const totals: ReceiptTotals = {
     tax: null,
@@ -47,6 +52,34 @@ export function parseReceiptTotals(rawReceiptText: string): ReceiptTotals {
 
   totals.tax = foundTax ? centsToAmount(taxSumCents) : null;
   return totals;
+}
+
+export function completeReceiptTotals(
+  totals: ReceiptTotals,
+  parsedItems: ReceiptSubtotalItem[] = [],
+): ReceiptTotals {
+  const safeTotals = {
+    tax: normalizeNullableAmount(totals?.tax),
+    subtotal: normalizeNullableAmount(totals?.subtotal),
+    receiptTotal: normalizeNullableAmount(totals?.receiptTotal),
+  };
+  const parsedSubtotal = sumParsedItems(parsedItems);
+  const tax = safeTotals.tax ?? 0;
+  const subtotalFromTotal = safeTotals.receiptTotal !== null && Number.isFinite(tax)
+    ? roundMoney(safeTotals.receiptTotal - tax)
+    : null;
+  const subtotalMissingOrClearlyWrong = safeTotals.subtotal === null ||
+    (safeTotals.subtotal === 0 && (
+      (parsedSubtotal !== null && parsedSubtotal > 0) ||
+      (subtotalFromTotal !== null && subtotalFromTotal > 0)
+    ));
+
+  if (!subtotalMissingOrClearlyWrong) return safeTotals;
+
+  return {
+    ...safeTotals,
+    subtotal: parsedSubtotal ?? subtotalFromTotal ?? safeTotals.subtotal,
+  };
 }
 
 export function parseReceiptInstantSavingsTotal(rawReceiptText: string): number {
@@ -108,6 +141,38 @@ function isTaxLine(line: string): boolean {
 function isReceiptTotalLine(line: string): boolean {
   if (/^\s*(?:sub\s*total|tax\s+total|sales\s+tax|tax(?:\s+\d+)?)\b/i.test(line)) return false;
   return /^\s*(?:grand\s+total|order\s+total|total)\b/i.test(line);
+}
+
+function sumParsedItems(items: ReceiptSubtotalItem[]): number | null {
+  let totalCents = 0;
+  let hasItem = false;
+
+  for (const item of items || []) {
+    const totalCentsForItem = toCents(item?.total_price);
+    if (!Number.isFinite(totalCentsForItem)) continue;
+
+    const discountCents = toCents(item?.instant_savings_discount) || 0;
+    totalCents += (totalCentsForItem as number) - discountCents;
+    hasItem = true;
+  }
+
+  return hasItem ? centsToAmount(totalCents) : null;
+}
+
+function normalizeNullableAmount(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? roundMoney(amount) : null;
+}
+
+function toCents(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.round(amount * 100) : null;
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function centsToAmount(cents: number | null): number | null {

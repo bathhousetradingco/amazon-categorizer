@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert";
-import { parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
+import { completeReceiptTotals, parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
 
 Deno.test("parseReceiptTotals extracts subtotal, summed tax, and receipt total", () => {
   const rawText = [
@@ -54,6 +54,26 @@ Deno.test("parseReceiptTotals handles subtotal tax total table rows", () => {
     tax: 0,
     receiptTotal: 9.99,
   });
+});
+
+Deno.test("completeReceiptTotals infers missing subtotal from parsed line items", () => {
+  assertEquals(
+    completeReceiptTotals(
+      { subtotal: null, tax: 0, receiptTotal: 1 },
+      [{ total_price: 1 }],
+    ),
+    { subtotal: 1, tax: 0, receiptTotal: 1 },
+  );
+});
+
+Deno.test("completeReceiptTotals repairs zero subtotal when total and parsed lines are positive", () => {
+  assertEquals(
+    completeReceiptTotals(
+      { subtotal: 0, tax: 0, receiptTotal: 9.99 },
+      [{ total_price: 9.99 }],
+    ),
+    { subtotal: 9.99, tax: 0, receiptTotal: 9.99 },
+  );
 });
 
 Deno.test("parseReceiptInstantSavingsTotal sums Sam's instant savings lines", () => {

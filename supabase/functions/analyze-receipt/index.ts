@@ -15,7 +15,7 @@ import {
   unwrapStoredDataUrl,
 } from "./receipt-file.ts";
 import { parseReceiptByMerchant } from "./receipt-parser.ts";
-import { parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
+import { completeReceiptTotals, parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
 import { validateReceiptMathByMerchant } from "./receipt-validator.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -75,7 +75,10 @@ Deno.serve(async (req) => {
     );
 
     const matchingLines = lines.filter((line) => isLikelyLineItem(line));
-    const receiptTotals = parseReceiptTotals(extraction.fullText);
+    const receiptTotals = completeReceiptTotals(
+      parseReceiptTotals(extraction.fullText),
+      parsedReceipt.parsed_items,
+    );
     const instantSavingsTotal = parseReceiptInstantSavingsTotal(extraction.fullText);
     const receiptMathValidation = validateReceiptMathByMerchant({
       merchant: parsedReceipt.merchant,
