@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
       transactionRowsUpserted += chunk.length;
     }
 
-    const supersedeResult = await maybeSupersedeAmazonPlaidTransactions(
+    const supersedeResult = await attemptSupersedeAmazonPlaidTransactions(
       supabase,
       user.id,
       lineItems,
@@ -142,6 +142,7 @@ Deno.serve(async (req) => {
       transaction_rows: transactionRowsUpserted,
       superseded_plaid_rows: supersedeResult.count,
       superseded_plaid_matches: supersedeResult.matches.slice(0, 10),
+      supersede_warning: supersedeResult.warning,
       preview: lineItems.slice(0, 10).map((item) => ({
         date: toIsoDate(item.order_date || ""),
         title: item.title,
@@ -171,6 +172,25 @@ async function requireUser(req: Request) {
 
   if (error || !user) throw new HttpError(401, "Unauthorized");
   return user;
+}
+
+async function attemptSupersedeAmazonPlaidTransactions(
+  supabase: any,
+  userId: string,
+  lineItems: NormalizedAmazonOrderLineItem[],
+  orderStartDate: string,
+  orderEndDate: string,
+): Promise<{ count: number; matches: Array<Record<string, unknown>>; warning?: string }> {
+  try {
+    return await maybeSupersedeAmazonPlaidTransactions(supabase, userId, lineItems, orderStartDate, orderEndDate);
+  } catch (error) {
+    const httpError = toHttpError(error);
+    console.error("Amazon Plaid supersede failed", {
+      message: httpError.message,
+      details: httpError.details,
+    });
+    return { count: 0, matches: [], warning: httpError.message };
+  }
 }
 
 function chunks<T>(items: T[], size: number): T[][] {
@@ -280,31 +300,49 @@ async function broadSupersedeAmazonPlaidTransactions(
   const startDate = toIsoDate(orderStartDate);
   const endDate = toIsoDate(orderEndDate);
 
-  const { data, error } = await supabase
+  const { data: candidates, error: candidateError } = await supabase
     .from("transactions")
-    .update({
-      superseded_by_source: "amazon_business",
-      superseded_at: new Date().toISOString(),
-      review_status: "Superseded by Amazon Business",
-      review_note: "Hidden from normal review because Amazon Business line-item rows are now the source of record.",
-    })
+    .select("id")
     .eq("user_id", userId)
     .not("plaid_transaction_id", "is", null)
     .is("superseded_at", null)
     .gte("date", startDate)
     .lte("date", endDate)
-    .or("merchant_name.ilike.%amazon%,name.ilike.%amazon%")
-    .select("id");
+    .or("merchant_name.ilike.%amazon%,name.ilike.%amazon%");
 
-  if (error) throw new HttpError(500, "Failed to supersede Amazon Plaid transactions", error);
-  return { count: data?.length || 0, matches: [] };
+  if (candidateError) throw new HttpError(500, "Failed to load Amazon Plaid transactions to hide", candidateError);
+
+  const ids = (candidates || [])
+    .map((row: Record<string, unknown>) => String(row.id || "").trim())
+    .filter(Boolean);
+  if (!ids.length) return { count: 0, matches: [] };
+
+  let count = 0;
+  for (const idChunk of chunks(ids, 200)) {
+    const { data, error } = await supabase
+      .from("transactions")
+      .update({
+        superseded_by_source: "amazon_business",
+        superseded_at: new Date().toISOString(),
+        review_status: "Superseded by Amazon Business",
+        review_note: "Hidden from normal review because Amazon Business line-item rows are now the source of record.",
+      })
+      .eq("user_id", userId)
+      .in("id", idChunk)
+      .select("id");
+
+    if (error) throw new HttpError(500, "Failed to mark Amazon Plaid transactions hidden", error);
+    count += data?.length || 0;
+  }
+
+  return { count, matches: [] };
 }
 
 function sanitizeHttpErrorDetails(details: unknown): unknown {
   if (!details || typeof details !== "object") return undefined;
   const record = details as Record<string, unknown>;
   const sanitized: Record<string, unknown> = {};
-  for (const key of ["status", "request_id", "body"]) {
+  for (const key of ["status", "request_id", "body", "code", "message", "details", "hint"]) {
     if (record[key] !== undefined) sanitized[key] = record[key];
   }
   return Object.keys(sanitized).length ? sanitized : undefined;

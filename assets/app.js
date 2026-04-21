@@ -281,9 +281,13 @@ async function loadTransactions(options = {}) {
   }
 
   debugReceipt("Rows from Supabase:", rows);
+  const hasAmazonBusinessRows = (rows || []).some((row) =>
+    row?.source === "amazon_business" && !row?.superseded_at
+  );
 
 data = rows
 .filter(r => !r.superseded_at)
+.filter(r => !(hasAmazonBusinessRows && isPlaidAmazonRawRow(r)))
 .map(r => ({
   id: r.id,
 
@@ -324,6 +328,12 @@ data = rows
   if(!options.skipAmazonAutoSync){
     maybeAutoSyncAmazonBusiness();
   }
+}
+
+function isPlaidAmazonRawRow(row){
+  if(!row?.plaid_transaction_id) return false;
+  const combined = `${row.name || ""} ${row.merchant_name || ""}`.toLowerCase();
+  return combined.includes("amazon");
 }
 
 /* ================= SUPABASE ================= */
@@ -1116,6 +1126,7 @@ async function syncAmazonBusiness(options = {}){
           <div class="small">Order line items synced: ${escapeHtml(result.line_items ?? result.upserted ?? 0)}</div>
           <div class="small">Transaction rows created/updated: ${escapeHtml(result.transaction_rows ?? 0)}</div>
           <div class="small">Plaid Amazon rows hidden: ${escapeHtml(result.superseded_plaid_rows ?? 0)}</div>
+          ${result.supersede_warning ? `<div class="small" style="color:#92400e;">Plaid hide warning: ${escapeHtml(result.supersede_warning)}</div>` : ""}
           <div class="small">Date range: ${escapeHtml(result.start_date || "")} to ${escapeHtml(result.end_date || "")}</div>
           <div class="small">Amazon line items now appear as reviewable transaction rows. Plaid Amazon bulk charges in the synced date range are hidden from normal review but remain in the database as bank audit records.</div>
           ${preview}
