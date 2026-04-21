@@ -151,3 +151,83 @@ Deno.test("parseMiscReceipt labels single-line service receipts by merchant", ()
     "Receipt description: All Recipes + One Monthly Bonus Recipe",
   ]);
 });
+
+Deno.test("parseMiscReceipt extracts account statement charge rows before generic total fallback", () => {
+  const result = parseMiscReceipt({
+    lines: [
+      "TOTAL DUE",
+      "$200.48 USD",
+      "Bathhouse Trading Company",
+      "Shipping (18 items) $156.55 USD",
+      "Messaging (2 items) $0.00 USD",
+      "Tax transaction fees (172 items) $43.93 USD",
+      "Credit $0.00 USD",
+      "Subtotal $200.48 USD",
+      "Total $200.48 USD",
+    ],
+    transactionName: "SHOPIFY",
+    merchantName: "Shopify",
+  });
+
+  assertEquals(result.item_numbers, [
+    "misc-line-shipping",
+    "misc-line-tax-transaction-fees",
+  ]);
+  assertEquals(result.parsed_items, [
+    {
+      product_number: "misc-line-shipping",
+      identifier_type: "unknown",
+      quantity: 1,
+      unit_price: 156.55,
+      total_price: 156.55,
+      receipt_label: "Shipping",
+      line_index: 3,
+      raw_lines: ["Shipping (18 items) $156.55 USD"],
+      parser_confidence: "medium",
+    },
+    {
+      product_number: "misc-line-tax-transaction-fees",
+      identifier_type: "unknown",
+      quantity: 1,
+      unit_price: 43.93,
+      total_price: 43.93,
+      receipt_label: "Tax transaction fees",
+      line_index: 5,
+      raw_lines: ["Tax transaction fees (172 items) $43.93 USD"],
+      parser_confidence: "medium",
+    },
+  ]);
+  assertEquals(result.debug?.parser_status, "structured-charge-rows");
+});
+
+Deno.test("parseMiscReceipt prefers structured charge rows over a single generic model item", () => {
+  const result = parseMiscReceipt({
+    lines: [
+      "Shipping (18 items) $156.55 USD",
+      "Tax transaction fees (172 items) $43.93 USD",
+      "Total $200.48 USD",
+    ],
+    transactionName: "SHOPIFY",
+    merchantName: "Shopify",
+    modelParsedItems: [
+      {
+        product_number: "model-line-1",
+        identifier_type: "unknown",
+        quantity: 1,
+        unit_price: 200.48,
+        total_price: 200.48,
+        receipt_label: "Shopify",
+        parser_confidence: "low",
+      },
+    ],
+  });
+
+  assertEquals(result.item_numbers, [
+    "misc-line-shipping",
+    "misc-line-tax-transaction-fees",
+  ]);
+  assertEquals(result.parsed_items.map((item) => item.receipt_label), [
+    "Shipping",
+    "Tax transaction fees",
+  ]);
+});

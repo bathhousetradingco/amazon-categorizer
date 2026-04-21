@@ -1,8 +1,18 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fetchWithTimeout } from "../_shared/fetch.ts";
-import { HttpError, corsHeaders, jsonResponse, parseJsonBody, toHttpError } from "../_shared/http.ts";
-import { dedupeItemNumbers, extractItemNumbersFromLineItems, isLikelyLineItem } from "./line-item-parser.ts";
+import {
+  corsHeaders,
+  HttpError,
+  jsonResponse,
+  parseJsonBody,
+  toHttpError,
+} from "../_shared/http.ts";
+import {
+  dedupeItemNumbers,
+  extractItemNumbersFromLineItems,
+  isLikelyLineItem,
+} from "./line-item-parser.ts";
 import { normalizeModelReceiptItems } from "./model-line-items.ts";
 import { resolveProductNames } from "./product-name-resolver.ts";
 import {
@@ -15,7 +25,11 @@ import {
   unwrapStoredDataUrl,
 } from "./receipt-file.ts";
 import { parseReceiptByMerchant } from "./receipt-parser.ts";
-import { completeReceiptTotals, parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
+import {
+  completeReceiptTotals,
+  parseReceiptInstantSavingsTotal,
+  parseReceiptTotals,
+} from "./receipt-totals.ts";
 import { validateReceiptMathByMerchant } from "./receipt-validator.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -32,14 +46,20 @@ Deno.serve(async (req) => {
     const user = await requireUser(req);
     const body = await parseJsonBody(req);
     const transactionId = String(body.transaction_id || "").trim();
-    const payloadReceiptUrl = String(body.receipt_url || body.receipt_path || "").trim();
+    const payloadReceiptUrl = String(
+      body.receipt_url || body.receipt_path || "",
+    ).trim();
 
     if (!transactionId) {
       throw new HttpError(400, "Missing transaction_id");
     }
 
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-    const transactionContext = await getUserTransactionContext(serviceClient, transactionId, user.id);
+    const transactionContext = await getUserTransactionContext(
+      serviceClient,
+      transactionId,
+      user.id,
+    );
     const receiptPath = payloadReceiptUrl
       ? normalizeReceiptPath(payloadReceiptUrl)
       : transactionContext.receipt_url;
@@ -53,7 +73,10 @@ Deno.serve(async (req) => {
       .filter((line) => line.trim().length > 0);
 
     const lineItemNumbers = extractItemNumbersFromLineItems(lines);
-    const modelItemNumbers = filterModelItemNumbers(extraction.modelItemNumbers, lines);
+    const modelItemNumbers = filterModelItemNumbers(
+      extraction.modelItemNumbers,
+      lines,
+    );
     const modelParsedItems = extraction.modelParsedItems;
     const itemNumbers = dedupeItemNumbers([
       ...lineItemNumbers,
@@ -79,7 +102,9 @@ Deno.serve(async (req) => {
       parseReceiptTotals(extraction.fullText),
       parsedReceipt.parsed_items,
     );
-    const instantSavingsTotal = parseReceiptInstantSavingsTotal(extraction.fullText);
+    const instantSavingsTotal = parseReceiptInstantSavingsTotal(
+      extraction.fullText,
+    );
     const receiptMathValidation = validateReceiptMathByMerchant({
       merchant: parsedReceipt.merchant,
       parsedItems: parsedReceipt.parsed_items,
@@ -153,10 +178,14 @@ function normalizeReceiptPath(value: string): string {
     const idx = url.pathname.indexOf(marker);
 
     if (idx !== -1) {
-      return decodeURIComponent(url.pathname.slice(idx + marker.length)).replace(/^\/+/, "");
+      return decodeURIComponent(url.pathname.slice(idx + marker.length))
+        .replace(/^\/+/, "");
     }
 
-    return decodeURIComponent(url.pathname.split("/").pop() || "").replace(/^\/+/, "");
+    return decodeURIComponent(url.pathname.split("/").pop() || "").replace(
+      /^\/+/,
+      "",
+    );
   } catch {
     return trimmed;
   }
@@ -166,9 +195,15 @@ async function getUserTransactionContext(
   serviceClient: any,
   transactionId: string,
   userId: string,
-): Promise<{ receipt_url: string; name?: string | null; merchant_name?: string | null }> {
+): Promise<
+  { receipt_url: string; name?: string | null; merchant_name?: string | null }
+> {
   const { data, error }: {
-    data: { receipt_url?: string | null; name?: string | null; merchant_name?: string | null } | null;
+    data: {
+      receipt_url?: string | null;
+      name?: string | null;
+      merchant_name?: string | null;
+    } | null;
     error: any;
   } = await serviceClient
     .from("transactions")
@@ -191,7 +226,8 @@ async function createReceiptSignedUrl(
   serviceClient: any,
   receiptPath: string,
 ): Promise<string> {
-  const { data, error } = await serviceClient.storage.from("receipts").createSignedUrl(receiptPath, 180);
+  const { data, error } = await serviceClient.storage.from("receipts")
+    .createSignedUrl(receiptPath, 180);
   if (error || !data?.signedUrl) {
     throw new HttpError(500, "Failed to load receipt image", error);
   }
@@ -201,7 +237,14 @@ async function createReceiptSignedUrl(
 async function extractReceiptData(
   signedUrl: string,
   receiptPath: string,
-): Promise<{ fullText: string; modelItemNumbers: string[]; modelParsedItems: ReturnType<typeof normalizeModelReceiptItems>; provider: string }> {
+): Promise<
+  {
+    fullText: string;
+    modelItemNumbers: string[];
+    modelParsedItems: ReturnType<typeof normalizeModelReceiptItems>;
+    provider: string;
+  }
+> {
   if (!OPENAI_API_KEY) {
     throw new HttpError(500, "OPENAI_API_KEY is not configured");
   }
@@ -219,37 +262,48 @@ async function extractReceiptData(
     "Rules for line_items:",
     "- Include actual purchased products/services only.",
     "- Exclude subtotal, tax, total, tender, payment, change, rewards, and loyalty rows.",
+    "- For account statements or service invoices, include positive charge rows such as shipping, transaction fees, subscription fees, service fees, processing fees, and other billed services.",
     "- Each line item should include description, product_number when visible, quantity, unit_price, total_price, and raw_text.",
     "- For Sam's Club and Walmart, preserve raw_text carefully; deterministic parsers will verify risky COGS receipts.",
     "- For miscellaneous receipts, line_items will be used as fallback split candidates.",
     "- If no line items are visible, return an empty array.",
   ].join("\n");
 
-  const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
+  const response = await fetchWithTimeout(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+        input: [{
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            receiptInputPart,
+          ],
+        }],
+      }),
     },
-    body: JSON.stringify({
-      model: "gpt-4.1-mini",
-      input: [{
-        role: "user",
-        content: [
-          { type: "input_text", text: prompt },
-          receiptInputPart,
-        ],
-      }],
-    }),
-  }, 45000);
+    45000,
+  );
 
   const json = await safeJson(response);
   if (!response.ok) {
     const openAiMessage = extractOpenAiErrorMessage(json);
-    throw new HttpError(422, openAiMessage ? `OCR request failed: ${openAiMessage}` : "OCR request failed", {
-      status: response.status,
-      body: json,
-    });
+    throw new HttpError(
+      422,
+      openAiMessage
+        ? `OCR request failed: ${openAiMessage}`
+        : "OCR request failed",
+      {
+        status: response.status,
+        body: json,
+      },
+    );
   }
 
   const responseText = extractResponseText(json);
@@ -257,7 +311,9 @@ async function extractReceiptData(
   const rawText = typeof parsed?.raw_text === "string" && parsed.raw_text.trim()
     ? parsed.raw_text
     : responseText;
-  const modelItemNumbers = dedupeItemNumbers(Array.isArray(parsed?.item_numbers) ? parsed.item_numbers : []);
+  const modelItemNumbers = dedupeItemNumbers(
+    Array.isArray(parsed?.item_numbers) ? parsed.item_numbers : [],
+  );
   const modelParsedItems = normalizeModelReceiptItems(parsed?.line_items);
 
   return {
@@ -269,7 +325,10 @@ async function extractReceiptData(
 }
 
 async function buildReceiptInputPart(signedUrl: string, receiptPath: string) {
-  const { dataUrl, mimeType } = await fetchReceiptAsDataUrl(signedUrl, receiptPath);
+  const { dataUrl, mimeType } = await fetchReceiptAsDataUrl(
+    signedUrl,
+    receiptPath,
+  );
   if (isPdfReceipt(receiptPath, mimeType)) {
     return {
       type: "input_file",
@@ -281,7 +340,10 @@ async function buildReceiptInputPart(signedUrl: string, receiptPath: string) {
   return { type: "input_image", image_url: dataUrl };
 }
 
-async function fetchReceiptAsDataUrl(signedUrl: string, receiptPath: string): Promise<{ dataUrl: string; mimeType: string }> {
+async function fetchReceiptAsDataUrl(
+  signedUrl: string,
+  receiptPath: string,
+): Promise<{ dataUrl: string; mimeType: string }> {
   const response = await fetchWithTimeout(signedUrl, {}, 30000);
   if (!response.ok) {
     throw new HttpError(500, "Failed to load receipt file for OCR", {
@@ -291,7 +353,8 @@ async function fetchReceiptAsDataUrl(signedUrl: string, receiptPath: string): Pr
 
   let bytes: Uint8Array = new Uint8Array(await response.arrayBuffer());
   const storedDataUrl = unwrapStoredDataUrl(bytes);
-  const contentType = storedDataUrl?.mimeType || response.headers.get("content-type");
+  const contentType = storedDataUrl?.mimeType ||
+    response.headers.get("content-type");
   if (storedDataUrl) {
     bytes = storedDataUrl.bytes;
   }
@@ -308,7 +371,10 @@ async function fetchReceiptAsDataUrl(signedUrl: string, receiptPath: string): Pr
     ? sniffedMimeType
     : inferReceiptMimeType(receiptPath, contentType);
 
-  if (!isSupportedReceiptMimeType(mimeType) || !isReceiptBytesCompatible(bytes, mimeType)) {
+  if (
+    !isSupportedReceiptMimeType(mimeType) ||
+    !isReceiptBytesCompatible(bytes, mimeType)
+  ) {
     throw new HttpError(
       415,
       "Uploaded receipt file is not a valid JPEG, PNG, GIF, WebP, or PDF. Reattach it as a JPG, PNG, or PDF receipt.",
@@ -326,7 +392,10 @@ async function fetchReceiptAsDataUrl(signedUrl: string, receiptPath: string): Pr
   };
 }
 
-function isReceiptBytesCompatible(bytes: Uint8Array, mimeType: string): boolean {
+function isReceiptBytesCompatible(
+  bytes: Uint8Array,
+  mimeType: string,
+): boolean {
   const sniffedMimeType = sniffReceiptMimeType(bytes);
   return sniffedMimeType === mimeType;
 }
@@ -404,5 +473,7 @@ function tryParseJson(value: string): Record<string, unknown> | null {
 function filterModelItemNumbers(values: string[], lines: string[]): string[] {
   const likelyItemNumbers = new Set(extractItemNumbersFromLineItems(lines));
 
-  return dedupeItemNumbers(values).filter((value) => likelyItemNumbers.has(value));
+  return dedupeItemNumbers(values).filter((value) =>
+    likelyItemNumbers.has(value)
+  );
 }

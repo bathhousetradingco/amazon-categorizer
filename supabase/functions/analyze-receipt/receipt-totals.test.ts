@@ -1,5 +1,9 @@
 import { assertEquals } from "jsr:@std/assert";
-import { completeReceiptTotals, parseReceiptInstantSavingsTotal, parseReceiptTotals } from "./receipt-totals.ts";
+import {
+  completeReceiptTotals,
+  parseReceiptInstantSavingsTotal,
+  parseReceiptTotals,
+} from "./receipt-totals.ts";
 
 Deno.test("parseReceiptTotals extracts subtotal, summed tax, and receipt total", () => {
   const rawText = [
@@ -40,6 +44,21 @@ Deno.test("parseReceiptTotals keeps tax total separate from receipt total", () =
     subtotal: 9.99,
     tax: 0,
     receiptTotal: 9.99,
+  });
+});
+
+Deno.test("parseReceiptTotals does not treat tax transaction fees as sales tax", () => {
+  const rawText = [
+    "Shipping (18 items) $156.55 USD",
+    "Tax transaction fees (172 items) $43.93 USD",
+    "Subtotal $200.48 USD",
+    "Total $200.48 USD",
+  ].join("\n");
+
+  assertEquals(parseReceiptTotals(rawText), {
+    tax: null,
+    subtotal: 200.48,
+    receiptTotal: 200.48,
   });
 });
 
