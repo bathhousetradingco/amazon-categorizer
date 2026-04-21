@@ -45,6 +45,8 @@ Deno.serve(async (req) => {
       marketplace_region: marketplaceRegion,
       authorization_url: buildAmazonBusinessAuthorizeUrl({
         authorizationUrl: config.authorizationUrl,
+        applicationId: config.applicationId,
+        marketplaceUrl: config.marketplaceUrl,
         redirectUri,
         state,
       }),

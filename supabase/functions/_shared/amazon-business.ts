@@ -8,6 +8,8 @@ export type AmazonBusinessConfig = {
   clientSecret: string;
   redirectUri: string;
   authorizationUrl: string;
+  applicationId: string;
+  marketplaceUrl: string;
   sandbox: boolean;
 };
 
@@ -73,6 +75,8 @@ export function getAmazonBusinessConfig(): AmazonBusinessConfig {
     clientSecret: Deno.env.get("AMAZON_BUSINESS_CLIENT_SECRET") || "",
     redirectUri: Deno.env.get("AMAZON_BUSINESS_REDIRECT_URI") || "",
     authorizationUrl: Deno.env.get("AMAZON_BUSINESS_AUTHORIZATION_URL") || "",
+    applicationId: Deno.env.get("AMAZON_BUSINESS_APPLICATION_ID") || Deno.env.get("AMAZON_BUSINESS_APP_ID") || "",
+    marketplaceUrl: Deno.env.get("AMAZON_BUSINESS_MARKETPLACE_URL") || "https://www.amazon.com",
     sandbox: (Deno.env.get("AMAZON_BUSINESS_SANDBOX") || "").toLowerCase() === "true",
   };
 }
@@ -91,20 +95,36 @@ export function assertAmazonBusinessConfig(config: AmazonBusinessConfig): void {
 
 export function buildAmazonBusinessAuthorizeUrl(input: {
   authorizationUrl: string;
+  applicationId?: string;
+  marketplaceUrl?: string;
   redirectUri: string;
   state: string;
 }): string {
-  if (!input.authorizationUrl) {
+  const rawAuthorizationUrl = String(input.authorizationUrl || "").trim();
+  const rawApplicationId = String(input.applicationId || "").trim();
+
+  if (!rawAuthorizationUrl && !rawApplicationId) {
     throw new HttpError(
       500,
-      "Missing Amazon Business authorization URL. Set AMAZON_BUSINESS_AUTHORIZATION_URL from the Solution Provider Portal app.",
+      "Missing Amazon Business authorization setup. Set AMAZON_BUSINESS_APPLICATION_ID from the Solution Provider Portal app ID, or set AMAZON_BUSINESS_AUTHORIZATION_URL.",
     );
   }
 
-  const url = new URL(input.authorizationUrl);
+  const url = rawAuthorizationUrl
+    ? new URL(rawAuthorizationUrl)
+    : new URL("/b2b/abws/oauth", normalizeAmazonBusinessMarketplaceUrl(input.marketplaceUrl));
+  if (rawApplicationId && !url.searchParams.get("applicationId")) {
+    url.searchParams.set("applicationId", rawApplicationId);
+  }
   url.searchParams.set("redirect_uri", input.redirectUri);
   url.searchParams.set("state", input.state);
   return url.toString();
+}
+
+function normalizeAmazonBusinessMarketplaceUrl(value: unknown): string {
+  const raw = String(value || "https://www.amazon.com").trim().replace(/\/+$/, "");
+  if (!raw) return "https://www.amazon.com";
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 }
 
 export async function exchangeAmazonBusinessAuthCode(input: {

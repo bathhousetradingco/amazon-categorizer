@@ -33,6 +33,21 @@ Deno.test("buildAmazonBusinessAuthorizeUrl adds redirect and state", () => {
   assertEquals(url, "https://www.amazon.com/b2b/abws/oauth?redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&state=state-123");
 });
 
+Deno.test("buildAmazonBusinessAuthorizeUrl can build from app id", () => {
+  const url = buildAmazonBusinessAuthorizeUrl({
+    authorizationUrl: "",
+    applicationId: "amzn1.sp.solution.example",
+    marketplaceUrl: "https://www.amazon.com",
+    redirectUri: "https://example.com/callback",
+    state: "state-123",
+  });
+
+  assertEquals(
+    url,
+    "https://www.amazon.com/b2b/abws/oauth?applicationId=amzn1.sp.solution.example&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&state=state-123",
+  );
+});
+
 Deno.test("normalizeAmazonOrderLineItem extracts common order line fields", () => {
   assertEquals(
     normalizeAmazonOrderLineItem({
