@@ -16,6 +16,51 @@ let amazonBusinessAutoSyncInFlight = false;
 const DEFAULT_TAX_YEAR = 2026;
 const AMAZON_BUSINESS_AUTO_SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
+const IRS_TAX_SOURCE_REFS = {
+  "irs-schedule-c": {
+    id: "irs-schedule-c",
+    title: "IRS Instructions for Schedule C",
+    url: "https://www.irs.gov/instructions/i1040sc",
+    note: "Primary IRS mapping for Schedule C expense lines, COGS, vehicle expenses, meals, other expenses, and depreciation references.",
+    as_of: "2026-04-21",
+  },
+  "irs-pub-334": {
+    id: "irs-pub-334",
+    title: "IRS Publication 334, Tax Guide for Small Business",
+    url: "https://www.irs.gov/publications/p334",
+    note: "Small-business guidance for ordinary business expenses, inventory, and recordkeeping.",
+    as_of: "2026-04-21",
+  },
+  "irs-pub-463": {
+    id: "irs-pub-463",
+    title: "IRS Publication 463, Travel, Gift, and Car Expenses",
+    url: "https://www.irs.gov/publications/p463",
+    note: "IRS guidance for business travel, meals, gifts, car expenses, substantiation, and meal limitations/exceptions.",
+    as_of: "2026-04-21",
+  },
+  "irs-pub-15b": {
+    id: "irs-pub-15b",
+    title: "IRS Publication 15-B, Employer's Tax Guide to Fringe Benefits",
+    url: "https://www.irs.gov/publications/p15b",
+    note: "IRS fringe-benefit guidance, including de minimis food and beverage treatment.",
+    as_of: "2026-04-21",
+  },
+  "irs-pub-946": {
+    id: "irs-pub-946",
+    title: "IRS Publication 946, How To Depreciate Property",
+    url: "https://www.irs.gov/publications/p946",
+    note: "IRS depreciation, Section 179, and business asset guidance.",
+    as_of: "2026-04-21",
+  },
+  "irs-2026-mileage": {
+    id: "irs-2026-mileage",
+    title: "IRS 2026 Standard Mileage Rate Notice",
+    url: "https://www.irs.gov/newsroom/irs-sets-2026-business-standard-mileage-rate-at-725-cents-per-mile-up-25-cents",
+    note: "IRS announcement for the 2026 business standard mileage rate.",
+    as_of: "2026-04-21",
+  },
+};
+
 function debugReceipt(...args){
   if(DEBUG_RECEIPTS) console.log(...args);
 }
@@ -921,8 +966,43 @@ function getCategoryTaxMetadata(name){
     tax_year: DEFAULT_TAX_YEAR,
     tax_group: inferTaxGroup(meta.tax_treatment),
     deduction_treatment: inferDeductionTreatment(meta.tax_treatment),
+    source_refs: getTaxSourceRefsForCategory(normalized),
     ...meta,
   };
+}
+
+function getTaxSourceRefsForCategory(categoryName){
+  const sourceIds = getTaxSourceIdsForCategory(categoryName);
+  return sourceIds
+    .map((id) => IRS_TAX_SOURCE_REFS[id])
+    .filter(Boolean);
+}
+
+function getTaxSourceIdsForCategory(categoryName){
+  const normalized = normalizeCategoryName(categoryName);
+
+  if(normalized.startsWith("COGS -")) return ["irs-schedule-c", "irs-pub-334"];
+
+  const sourceMap = {
+    "Shipping Supplies": ["irs-schedule-c", "irs-pub-334"],
+    "Shipping to Customers": ["irs-schedule-c", "irs-pub-334"],
+    "Advertising & Marketing": ["irs-schedule-c"],
+    "Commissions & Merchant Fees": ["irs-schedule-c"],
+    "Software & Subscriptions": ["irs-schedule-c", "irs-pub-334"],
+    "Insurance": ["irs-schedule-c"],
+    "Utilities": ["irs-schedule-c"],
+    "Office Supplies": ["irs-schedule-c"],
+    "Equipment & Fixed Assets": ["irs-schedule-c", "irs-pub-946"],
+    "Meals & Refreshments": ["irs-schedule-c", "irs-pub-463", "irs-pub-15b"],
+    "Professional Services": ["irs-schedule-c"],
+    "Vehicle / Fuel": ["irs-schedule-c", "irs-pub-463", "irs-2026-mileage"],
+    "Taxes & Licenses": ["irs-schedule-c"],
+    "Sales Tax Paid": ["irs-schedule-c"],
+    "Interest Expense": ["irs-schedule-c"],
+    "Needs Review": ["irs-schedule-c", "irs-pub-334"],
+  };
+
+  return sourceMap[normalized] || ["irs-schedule-c"];
 }
 
 function inferTaxGroup(taxTreatment){
@@ -4171,6 +4251,7 @@ function buildExportRows(){
           "Deduction Treatment": taxMeta.deduction_treatment,
           "Schedule C Reference": taxMeta.schedule_c_reference,
           "Tax Note": taxMeta.tax_note,
+          "Tax Sources": (taxMeta.source_refs || []).map((source) => source.title).join("; "),
         });
       });
       return;
@@ -4194,6 +4275,7 @@ function buildExportRows(){
       "Deduction Treatment": taxMeta.deduction_treatment,
       "Schedule C Reference": taxMeta.schedule_c_reference,
       "Tax Note": taxMeta.tax_note,
+      "Tax Sources": (taxMeta.source_refs || []).map((source) => source.title).join("; "),
     });
   });
 
@@ -4869,7 +4951,8 @@ async function submitAIRequest(options = {}){
       tax_group: taxMeta.tax_group,
       deduction_treatment: taxMeta.deduction_treatment,
       schedule_c_reference: taxMeta.schedule_c_reference,
-      tax_note: taxMeta.tax_note
+      tax_note: taxMeta.tax_note,
+      source_refs: taxMeta.source_refs
     };
   }),
   transactionContext: {
@@ -4910,6 +4993,7 @@ async function submitAIRequest(options = {}){
       tax_consideration: String(result?.tax_consideration || "").trim(),
       follow_up_question: String(result?.follow_up_question || "").trim(),
       tax_year: Number(result?.tax_year || DEFAULT_TAX_YEAR) || DEFAULT_TAX_YEAR,
+      source_refs: normalizeAiSourceRefs(result?.source_refs),
       user_input: userInput,
     };
 
@@ -4967,6 +5051,8 @@ function renderAISuggestionResult(result){
         </div>
       ` : ""}
 
+      ${renderAiSourceRefs(result.source_refs)}
+
       ${result.follow_up_question ? `
         <div class="aiFollowUpPanel">
           <strong>Follow-up question</strong>
@@ -4986,6 +5072,48 @@ function renderAISuggestionResult(result){
       </div>
     </div>
   `;
+}
+
+function normalizeAiSourceRefs(value){
+  if(!Array.isArray(value)) return [];
+
+  return value.map((ref) => {
+    const url = String(ref?.url || "").trim();
+    if(!/^https:\/\/www\.irs\.gov\//.test(url)) return null;
+    return {
+      id: String(ref?.id || "").trim(),
+      title: String(ref?.title || "IRS source").trim(),
+      url,
+      note: String(ref?.note || "").trim(),
+      as_of: String(ref?.as_of || "").trim(),
+    };
+  }).filter(Boolean);
+}
+
+function renderAiSourceRefs(refs){
+  const sources = normalizeAiSourceRefs(refs);
+  if(!sources.length) return "";
+
+  return `
+    <div class="aiSourceBlock">
+      <strong>IRS source refs</strong>
+      <div class="small">The recommendation is grounded in these source references, current as of the date shown.</div>
+      <ul>
+        ${sources.map((source) => `
+          <li>
+            <a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.title)}</a>
+            ${source.as_of ? `<span class="small">as of ${escapeHtml(source.as_of)}</span>` : ""}
+            ${source.note ? `<div class="small">${escapeHtml(source.note)}</div>` : ""}
+          </li>
+        `).join("")}
+      </ul>
+    </div>
+  `;
+}
+
+function formatAiSourceRefsForNote(refs){
+  const sources = normalizeAiSourceRefs(refs);
+  return sources.map((source) => source.title).join(", ");
 }
 
 async function submitAIFollowUpRequest(){
@@ -5037,7 +5165,11 @@ async function applyAISuggestion(category){
       sourceIdentifierType: parsed?.identifier_type || "unknown",
       reviewStatus: suggestion?.deduction_status || "",
       deductionStatus: suggestion?.deduction_status || "",
-      reviewNote: [suggestion?.reasoning, suggestion?.tax_consideration].filter(Boolean).join(" | ")
+      reviewNote: [
+        suggestion?.reasoning,
+        suggestion?.tax_consideration,
+        formatAiSourceRefsForNote(suggestion?.source_refs) ? `Sources: ${formatAiSourceRefsForNote(suggestion?.source_refs)}` : ""
+      ].filter(Boolean).join(" | ")
     });
     aiSuggestionResult = null;
     if(success){
@@ -5065,7 +5197,11 @@ async function applyAISuggestion(category){
   item.Splits = [];
   item.ReviewStatus = aiSuggestionResult?.deduction_status || "";
   item.DeductionStatus = aiSuggestionResult?.deduction_status || "";
-  item.ReviewNote = [aiSuggestionResult?.reasoning, aiSuggestionResult?.tax_consideration].filter(Boolean).join(" | ");
+  item.ReviewNote = [
+    aiSuggestionResult?.reasoning,
+    aiSuggestionResult?.tax_consideration,
+    formatAiSourceRefsForNote(aiSuggestionResult?.source_refs) ? `Sources: ${formatAiSourceRefsForNote(aiSuggestionResult?.source_refs)}` : ""
+  ].filter(Boolean).join(" | ");
 
   updateTotals();
   updateProgress();

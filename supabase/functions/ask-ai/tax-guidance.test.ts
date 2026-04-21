@@ -40,6 +40,7 @@ Deno.test("lookupTaxGuidance classifies coffee for workers as meals review", () 
   assertEquals(guidance?.recommended_category, "Meals & Refreshments");
   assertEquals(guidance?.deduction_status, "Review Required");
   assertEquals(guidance?.id, "worker-refreshments");
+  assertEquals(guidance?.source_refs?.some((source) => source.id === "irs-pub-15b"), true);
 });
 
 Deno.test("applyTaxGuidance overrides generic office supply answers for worker refreshments", () => {
@@ -169,4 +170,5 @@ Deno.test("buildTaxGuidancePromptBlock includes rule and source basis", () => {
 
   assertStringIncludes(block, "Tax guidance lookup:");
   assertStringIncludes(block, "IRS Pub. 15-B");
+  assertStringIncludes(block, "https://www.irs.gov/publications/p15b");
 });

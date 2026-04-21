@@ -8,6 +8,13 @@ Deno.test("normalizeCategories accepts strings and rich category objects", () =>
       name: "Office Supplies",
       description: "Paper and pens",
       tax_treatment: "expense",
+      source_refs: [{
+        id: "irs-schedule-c",
+        title: "IRS Instructions for Schedule C",
+        url: "https://www.irs.gov/instructions/i1040sc",
+        note: "Schedule C line mapping.",
+        as_of: "2026-04-21",
+      }],
     }
   ])));
 
@@ -19,6 +26,13 @@ Deno.test("normalizeCategories accepts strings and rich category objects", () =>
         name: "Office Supplies",
         description: "Paper and pens",
         tax_treatment: "expense",
+        source_refs: [{
+          id: "irs-schedule-c",
+          title: "IRS Instructions for Schedule C",
+          url: "https://www.irs.gov/instructions/i1040sc",
+          note: "Schedule C line mapping.",
+          as_of: "2026-04-21",
+        }],
       },
     ],
   );
@@ -49,6 +63,7 @@ Deno.test("buildAskAiPrompt includes transaction and receipt context", () => {
   assertMatch(prompt, /paper plates, cups, napkins/);
   assertMatch(prompt, /all available categories/);
   assertMatch(prompt, /tax year 2026/);
+  assertMatch(prompt, /Use only the provided IRS source refs/);
 });
 
 Deno.test("buildAskAiPrompt includes deterministic tax guidance block", () => {

@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildAskAiPrompt, normalizeCategories } from "./prompt.ts";
 import { applyTaxGuidance, buildTaxGuidancePromptBlock, lookupTaxGuidance } from "./tax-guidance.ts";
+import { isTaxSourceRef, type TaxSourceRef } from "./tax-sources.ts";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -131,8 +132,14 @@ Deno.serve(async (req) => {
     const clean = start !== -1 && end !== -1 ? text.slice(start, end + 1) : text;
 
     const parsed = applyTaxGuidance(JSON.parse(clean), taxGuidance, normalizedCategories);
+    const sourceRefs = normalizeResponseSourceRefs(parsed.source_refs);
+    const categorySourceRefs = findCategorySourceRefs(String(parsed.category || ""), normalizedCategories);
 
-    return new Response(JSON.stringify({ ...parsed, tax_year: effectiveTaxYear }), {
+    return new Response(JSON.stringify({
+      ...parsed,
+      tax_year: effectiveTaxYear,
+      source_refs: sourceRefs.length ? sourceRefs : categorySourceRefs,
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e: any) {
@@ -142,3 +149,12 @@ Deno.serve(async (req) => {
     });
   }
 }); 
+
+function normalizeResponseSourceRefs(value: unknown): TaxSourceRef[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isTaxSourceRef);
+}
+
+function findCategorySourceRefs(categoryName: string, categories: ReturnType<typeof normalizeCategories>): TaxSourceRef[] {
+  return categories.find((category) => category.name === categoryName)?.source_refs || [];
+}

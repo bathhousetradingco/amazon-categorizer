@@ -378,7 +378,8 @@ cursor:pointer;
 
 .aiResultGrid > div,
 .aiReasonBlock,
-.aiFollowUpPanel {
+.aiFollowUpPanel,
+.aiSourceBlock {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel-alt);
@@ -389,6 +390,20 @@ cursor:pointer;
 .aiFollowUpPanel p {
   margin: 8px 0 0;
   line-height: 1.45;
+}
+
+.aiSourceBlock ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.aiSourceBlock li {
+  margin-bottom: 10px;
+}
+
+.aiSourceBlock a {
+  color: #1e3a8a;
+  font-weight: 700;
 }
 
 .aiFollowUpPanel {
