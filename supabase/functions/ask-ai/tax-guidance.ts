@@ -95,7 +95,8 @@ export function lookupTaxGuidance(
 
   if (
     isProductPackagingUseCase(combinedText, useText) &&
-    !/\b(ship|shipping|mail|postage|ups|usps|fedex)\b/.test(combinedText)
+    !/\b(ship|shipping|mail|postage|ups|usps|fedex)\b/.test(combinedText) &&
+    !isPrintingEquipmentOrConsumableUseCase(combinedText)
   ) {
     return guidance(availableCategories, {
       id: "product-packaging",
@@ -363,9 +364,10 @@ export function lookupTaxGuidance(
   }
 
   if (
-    /\b(printer paper|receipt paper|pens?|file folders?|desk organizers?|office|admin|storage bins?|organizer|clipboard|staples?)\b/
+    /\b(printer paper|receipt paper|ink cartridges?|printer ink|ink refill|toner|label rolls?|label tape|thermal labels?|pens?|file folders?|desk organizers?|office|admin|storage bins?|organizer|clipboard|staples?)\b/
       .test(combinedText) &&
-    !isFoodOrBeverage(combinedText)
+    !isFoodOrBeverage(combinedText) &&
+    !isDurableEquipmentUseCase(combinedText)
   ) {
     return guidance(availableCategories, {
       id: "office-supplies",
@@ -381,8 +383,7 @@ export function lookupTaxGuidance(
   }
 
   if (
-    /\b(label printer|printer|shelving|rack|desk|chair|table|tool|scale|equipment|machine|washer|dryer|computer|ipad|phone|laptop)\b/
-      .test(combinedText)
+    isDurableEquipmentUseCase(combinedText)
   ) {
     return guidance(availableCategories, {
       id: "equipment",
@@ -484,7 +485,7 @@ export function buildTaxGuidancePromptBlock(
       ? `- Follow-up question: ${guidance.follow_up_question}`
       : "",
     `- Source basis: ${guidance.source_summary}`,
-    "When this lookup applies, follow it unless the user's facts clearly indicate a different business use.",
+    "Use this as advisory tax/category context only. Weigh it against the user's full explanation, transaction details, and receipt details. Do not force this category if the described business use supports a better category.",
   ].filter(Boolean).join("\n");
 }
 
@@ -499,20 +500,42 @@ export function applyTaxGuidance(
   const recommendedCategory = allowed.has(guidance.recommended_category)
     ? guidance.recommended_category
     : "Needs Review";
+  const modelCategory = String(result.category || "").trim();
+  const hasAllowedModelCategory = allowed.has(modelCategory);
+  const shouldForce = shouldForceTaxSafetyOverride(guidance);
+  const category = shouldForce
+    ? recommendedCategory
+    : hasAllowedModelCategory
+    ? modelCategory
+    : recommendedCategory;
+  const usedGuidanceFallback = !shouldForce && !hasAllowedModelCategory;
 
   return {
     ...result,
-    category: recommendedCategory,
-    confidence: guidance.confidence,
-    deduction_status: guidance.deduction_status,
-    reasoning: mergeSentences(result.reasoning, guidance.reasoning),
+    category,
+    confidence: shouldForce || usedGuidanceFallback
+      ? guidance.confidence
+      : result.confidence,
+    deduction_status: shouldForce
+      ? guidance.deduction_status
+      : result.deduction_status,
+    reasoning: shouldForce
+      ? mergeSentences(result.reasoning, guidance.reasoning)
+      : result.reasoning,
     tax_consideration: mergeSentences(
       result.tax_consideration,
       guidance.tax_consideration,
     ),
-    follow_up_question: guidance.follow_up_question ||
-      result.follow_up_question || "",
+    follow_up_question: result.follow_up_question ||
+      guidance.follow_up_question || "",
   };
+}
+
+function shouldForceTaxSafetyOverride(guidance: TaxGuidance): boolean {
+  return new Set([
+    "personal-use",
+    "tax-penalty-or-income-tax",
+  ]).has(guidance.id);
 }
 
 function guidance(
@@ -559,6 +582,27 @@ function isWorkerRefreshmentUseCase(text: string): boolean {
     .test(text) &&
     /\b(work|working|shift|shifts|shop|office|studio|production|market|event|drink|drinks|eat|snack|breakroom|break room)\b/
       .test(text);
+}
+
+function isDurableEquipmentUseCase(text: string): boolean {
+  const textWithoutLabelPrinter = text.replace(
+    /\b(?:thermal\s+)?label printer\b/g,
+    "",
+  );
+  if (
+    /\b(ink cartridges?|printer ink|ink refill|toner|paper|label rolls?|label tape|thermal labels?|receipt paper|replacement parts?|refills?|consumables?)\b/
+      .test(textWithoutLabelPrinter)
+  ) {
+    return false;
+  }
+
+  return /\b(label printer|printer|shelving|rack|desk|chair|table|tool|scale|equipment|machine|washer|dryer|computer|ipad|phone|laptop)\b/
+    .test(text);
+}
+
+function isPrintingEquipmentOrConsumableUseCase(text: string): boolean {
+  return /\b(label printer|printer|ink cartridges?|printer ink|ink refill|toner)\b/
+    .test(text);
 }
 
 function isProductInputUseCase(text: string): boolean {

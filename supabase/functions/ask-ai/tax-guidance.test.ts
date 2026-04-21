@@ -42,7 +42,7 @@ Deno.test("lookupTaxGuidance classifies coffee for workers as meals review", () 
   assertEquals(guidance?.id, "worker-refreshments");
 });
 
-Deno.test("applyTaxGuidance overrides generic office supply answers for worker refreshments", () => {
+Deno.test("applyTaxGuidance preserves OpenAI category for advisory tax guidance", () => {
   const guidance = lookupTaxGuidance({
     user_input: "Coffee for the team while working in the studio.",
     receipt_item: {
@@ -62,9 +62,34 @@ Deno.test("applyTaxGuidance overrides generic office supply answers for worker r
     categories,
   );
 
-  assertEquals(result.category, "Meals & Refreshments");
-  assertEquals(result.deduction_status, "Review Required");
+  assertEquals(result.category, "Office Supplies");
+  assertEquals(result.deduction_status, "Deductible");
   assertStringIncludes(result.tax_consideration || "", "de minimis meals");
+});
+
+Deno.test("applyTaxGuidance still forces hard personal-use safety overrides", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "This was for home and family use, not business.",
+    transaction: {
+      title: "Amazon purchase",
+    },
+  }, categories);
+  const result = applyTaxGuidance(
+    {
+      category: "Office Supplies",
+      reasoning: "The purchase looks like supplies.",
+      confidence: "Medium",
+      deduction_status: "Deductible",
+      tax_consideration: "",
+      follow_up_question: "",
+    },
+    guidance,
+    categories,
+  );
+
+  assertEquals(result.category, "Needs Review");
+  assertEquals(result.deduction_status, "Potentially Non-Deductible");
+  assertStringIncludes(result.reasoning || "", "personal or owner use");
 });
 
 Deno.test("lookupTaxGuidance routes product inputs to COGS ingredients", () => {
@@ -186,6 +211,57 @@ Deno.test("lookupTaxGuidance routes business content subscriptions to subscripti
   assertEquals(guidance?.deduction_status, "Review Required");
 });
 
+Deno.test("lookupTaxGuidance routes printer ink to office supplies instead of equipment", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "Ink cartridges for printing product labels.",
+    transaction: {
+      title: "Printer ink cartridge refill",
+    },
+  }, categories);
+
+  assertEquals(guidance?.recommended_category, "Office Supplies");
+  assertEquals(guidance?.id, "office-supplies");
+});
+
+Deno.test("lookupTaxGuidance still routes a label printer to equipment review", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "Label printer for printing product labels.",
+    transaction: {
+      title: "Thermal label printer",
+    },
+  }, categories);
+
+  assertEquals(guidance?.recommended_category, "Equipment & Fixed Assets");
+  assertEquals(guidance?.id, "equipment");
+});
+
+Deno.test("applyTaxGuidance does not force broad equipment guidance over OpenAI context", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "Label printer for printing product labels.",
+    transaction: {
+      title: "Thermal label printer",
+    },
+  }, categories);
+  assertEquals(guidance?.id, "equipment");
+  const result = applyTaxGuidance(
+    {
+      category: "Office Supplies",
+      reasoning:
+        "The user's description makes this an office workflow supply, not inventory or packaging.",
+      confidence: "Medium",
+      deduction_status: "Deductible",
+      tax_consideration: "Consumable supplies are generally expensed.",
+      follow_up_question: "",
+    },
+    guidance,
+    categories,
+  );
+
+  assertEquals(result.category, "Office Supplies");
+  assertEquals(result.deduction_status, "Deductible");
+  assertStringIncludes(result.reasoning || "", "office workflow supply");
+});
+
 Deno.test("buildTaxGuidancePromptBlock includes rule and source basis", () => {
   const guidance = lookupTaxGuidance({
     user_input: "Coffee for volunteers while they work.",
@@ -197,4 +273,5 @@ Deno.test("buildTaxGuidancePromptBlock includes rule and source basis", () => {
 
   assertStringIncludes(block, "Tax guidance lookup:");
   assertStringIncludes(block, "IRS Pub. 15-B");
+  assertStringIncludes(block, "advisory tax/category context");
 });

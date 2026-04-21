@@ -295,7 +295,7 @@ function shouldRequestTaxResearch(
   if (!guidance) return false;
   if (guidance.follow_up_question) return false;
 
-  return false;
+  return guidance.deduction_status !== "Deductible";
 }
 
 async function runTaxResearchIfNeeded(
