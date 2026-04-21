@@ -40,6 +40,8 @@ export function lookupTaxGuidance(
   );
   const useText = normalizeLookupText(context.user_input);
   const combinedText = `${itemText} ${useText}`.trim();
+  const foodGuidanceEligible = isFoodOrBeverage(combinedText) &&
+    !isNonFoodProductionUseCase(useText);
 
   if (
     /\b(personal|for home|family|owner draw|owner personal|not business|private use)\b/
@@ -197,7 +199,7 @@ export function lookupTaxGuidance(
   }
 
   if (
-    isFoodOrBeverage(combinedText) &&
+    foodGuidanceEligible &&
     /\b(general public|public giveaway|free samples?|sampled to customers?|customer samples?|promo|promotion|advertis|marketing|goodwill)\b/
       .test(useText)
   ) {
@@ -222,7 +224,7 @@ export function lookupTaxGuidance(
     });
   }
 
-  if (isFoodOrBeverage(combinedText) && isWorkerRefreshmentUseCase(useText)) {
+  if (foodGuidanceEligible && isWorkerRefreshmentUseCase(useText)) {
     return guidance(availableCategories, {
       id: "worker-refreshments",
       categories: ["Meals & Refreshments", "Meals", "Needs Review"],
@@ -239,7 +241,7 @@ export function lookupTaxGuidance(
   }
 
   if (
-    isFoodOrBeverage(combinedText) &&
+    foodGuidanceEligible &&
     /\b(office|supplies?|admin|operations?)\b/.test(useText)
   ) {
     return guidance(availableCategories, {
@@ -257,7 +259,7 @@ export function lookupTaxGuidance(
     });
   }
 
-  if (isFoodOrBeverage(combinedText)) {
+  if (foodGuidanceEligible) {
     return guidance(availableCategories, {
       id: "food-beverage-general",
       categories: ["Meals & Refreshments", "Meals", "Needs Review"],
@@ -509,6 +511,8 @@ export function applyTaxGuidance(
     ? modelCategory
     : recommendedCategory;
   const usedGuidanceFallback = !shouldForce && !hasAllowedModelCategory;
+  const shouldApplyGuidanceOverlay = shouldForce || usedGuidanceFallback ||
+    modelCategory === recommendedCategory;
 
   return {
     ...result,
@@ -516,18 +520,18 @@ export function applyTaxGuidance(
     confidence: shouldForce || usedGuidanceFallback
       ? guidance.confidence
       : result.confidence,
-    deduction_status: shouldForce
+    deduction_status: shouldForce || usedGuidanceFallback
       ? guidance.deduction_status
       : result.deduction_status,
-    reasoning: shouldForce
+    reasoning: shouldForce || usedGuidanceFallback
       ? mergeSentences(result.reasoning, guidance.reasoning)
       : result.reasoning,
-    tax_consideration: mergeSentences(
-      result.tax_consideration,
-      guidance.tax_consideration,
-    ),
-    follow_up_question: result.follow_up_question ||
-      guidance.follow_up_question || "",
+    tax_consideration: shouldApplyGuidanceOverlay
+      ? mergeSentences(result.tax_consideration, guidance.tax_consideration)
+      : result.tax_consideration,
+    follow_up_question: shouldApplyGuidanceOverlay
+      ? result.follow_up_question || guidance.follow_up_question || ""
+      : result.follow_up_question || "",
   };
 }
 
@@ -584,6 +588,26 @@ function isWorkerRefreshmentUseCase(text: string): boolean {
       .test(text);
 }
 
+function isNonFoodProductionUseCase(text: string): boolean {
+  if (!text) return false;
+
+  if (
+    /\b(not food|not a food|not drink|not a drink|not for eating|not for drinking|not consumed)\b/
+      .test(text) && isProductionTransferEquipmentUseCase(text)
+  ) {
+    return true;
+  }
+
+  if (
+    /\b(eat|eating|ate|drink|drank|drinking|consumed|consume|meal|meals|lunch|snack|snacks|beverage|beverages|coffee|tea|soda|water bottles?)\b/
+      .test(text)
+  ) {
+    return false;
+  }
+
+  return isProductionTransferEquipmentUseCase(text);
+}
+
 function isDurableEquipmentUseCase(text: string): boolean {
   const textWithoutLabelPrinter = text.replace(
     /\b(?:thermal\s+)?label printer\b/g,
@@ -596,8 +620,24 @@ function isDurableEquipmentUseCase(text: string): boolean {
     return false;
   }
 
+  if (isProductionTransferEquipmentUseCase(text)) return true;
+
   return /\b(label printer|printer|shelving|rack|desk|chair|table|tool|scale|equipment|machine|washer|dryer|computer|ipad|phone|laptop)\b/
     .test(text);
+}
+
+function isProductionTransferEquipmentUseCase(text: string): boolean {
+  const productTarget =
+    /\b(product|products|batch|batches|soap|lotion|scrub|balm|production|vessel|vessels|container|containers)\b/
+      .test(text);
+  const transferAction =
+    /\b(pipe|piping|transfer|transferring|dispense|dispensing|fill|filling|pour|pouring)\b/
+      .test(text);
+  const productionTool =
+    /\b(dispenser|pump|hose|tubing|funnel|pipe|piping)\b/.test(text) &&
+    /\b(production|vessel|vessels|batch|batches|mixing)\b/.test(text);
+
+  return productTarget && (transferAction || productionTool);
 }
 
 function isPrintingEquipmentOrConsumableUseCase(text: string): boolean {

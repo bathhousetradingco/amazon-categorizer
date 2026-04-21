@@ -42,7 +42,7 @@ Deno.test("lookupTaxGuidance classifies coffee for workers as meals review", () 
   assertEquals(guidance?.id, "worker-refreshments");
 });
 
-Deno.test("applyTaxGuidance preserves OpenAI category for advisory tax guidance", () => {
+Deno.test("applyTaxGuidance does not splice advisory food guidance into a conflicting model category", () => {
   const guidance = lookupTaxGuidance({
     user_input: "Coffee for the team while working in the studio.",
     receipt_item: {
@@ -64,7 +64,33 @@ Deno.test("applyTaxGuidance preserves OpenAI category for advisory tax guidance"
 
   assertEquals(result.category, "Office Supplies");
   assertEquals(result.deduction_status, "Deductible");
-  assertStringIncludes(result.tax_consideration || "", "de minimis meals");
+  assertEquals(result.tax_consideration, "");
+  assertEquals(result.follow_up_question, "");
+});
+
+Deno.test("applyTaxGuidance keeps deterministic follow-up when model agrees with guidance category", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "Coffee from a receipt, not sure how it was used.",
+    receipt_item: {
+      product_name: "Member's Mark Coffee",
+    },
+  }, categories);
+  const result = applyTaxGuidance(
+    {
+      category: "Meals & Refreshments",
+      reasoning: "The purchase is food or drink.",
+      confidence: "Medium",
+      deduction_status: "Review Required",
+      tax_consideration: "",
+      follow_up_question: "",
+    },
+    guidance,
+    categories,
+  );
+
+  assertEquals(result.category, "Meals & Refreshments");
+  assertStringIncludes(result.follow_up_question || "", "Who consumed");
+  assertStringIncludes(result.tax_consideration || "", "Business meal");
 });
 
 Deno.test("applyTaxGuidance still forces hard personal-use safety overrides", () => {
@@ -193,6 +219,19 @@ Deno.test("lookupTaxGuidance routes public food samples to advertising review", 
 
   assertEquals(guidance?.recommended_category, "Advertising & Marketing");
   assertEquals(guidance?.deduction_status, "Review Required");
+});
+
+Deno.test("lookupTaxGuidance does not treat production transfer tooling as food because of a drink-related item label", () => {
+  const guidance = lookupTaxGuidance({
+    user_input:
+      "Used to pipe product into production vessels, not for drinking or consumption.",
+    receipt_item: {
+      product_name: "Drink dispenser pump",
+    },
+  }, categories);
+
+  assertEquals(guidance?.recommended_category, "Equipment & Fixed Assets");
+  assertEquals(guidance?.id, "equipment");
 });
 
 Deno.test("lookupTaxGuidance routes business content subscriptions to subscription review", () => {

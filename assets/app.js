@@ -268,6 +268,7 @@ let activeTransactionTypeFilter = "all";
 let aiContext = null;
 let aiSuggestionResult = null;
 let aiLastUserInput = "";
+let aiLastContextKey = "";
 // null = normal transaction
 // { type: "receipt", index: X } = receipt item mode
 /* ================= LOAD FROM SUPABASE ================= */
@@ -4816,11 +4817,26 @@ async function connectBank() {
   handler.open();
 }
 
+function getAIContextMemoryKey(item = data[currentIndex]){
+  const transactionKey = item?.id
+    || [item?.Date, item?.Title, item?.Vendor, item?.Amount, currentIndex].map(value => String(value || "")).join("|");
+
+  if(aiContext?.type === "detected-receipt-item"){
+    return `${transactionKey}:receipt-item:${aiContext.itemNumber || ""}`;
+  }
+
+  return `${transactionKey}:transaction`;
+}
+
 async function askAI(){
+  const item = data[currentIndex];
+  const contextKey = getAIContextMemoryKey(item);
   const resolvedProduct = aiContext?.type === "detected-receipt-item"
     ? (SplitState.detectedResolvedProducts?.[aiContext.itemNumber] || null)
     : null;
-  const rememberedInput = aiLastUserInput && !/Follow-up question:/i.test(aiLastUserInput)
+  const rememberedInput = aiLastContextKey === contextKey
+    && aiLastUserInput
+    && !/Follow-up question:/i.test(aiLastUserInput)
     ? aiLastUserInput
     : "";
   const contextPrompt = aiContext?.type === "detected-receipt-item"
@@ -4858,6 +4874,7 @@ async function askAI(){
 async function submitAIRequest(options = {}){
 
   const item = data[currentIndex];
+  const contextKey = getAIContextMemoryKey(item);
   const inputEl = document.getElementById("aiUserInput");
   const userInput = String(options.userInput ?? inputEl?.value ?? "").trim();
 
@@ -4865,6 +4882,7 @@ async function submitAIRequest(options = {}){
     alert("Please enter a quick description.");
     return;
   }
+  aiLastContextKey = contextKey;
   aiLastUserInput = userInput;
 
   modalContent.innerHTML = `
