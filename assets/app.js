@@ -1117,7 +1117,7 @@ async function syncAmazonBusiness(options = {}){
           <div class="small">Transaction rows created/updated: ${escapeHtml(result.transaction_rows ?? 0)}</div>
           <div class="small">Plaid Amazon rows hidden: ${escapeHtml(result.superseded_plaid_rows ?? 0)}</div>
           <div class="small">Date range: ${escapeHtml(result.start_date || "")} to ${escapeHtml(result.end_date || "")}</div>
-          <div class="small">Amazon line items now appear as reviewable transaction rows. Matching Plaid Amazon bulk charges are hidden from normal review but remain in the database as bank audit records.</div>
+          <div class="small">Amazon line items now appear as reviewable transaction rows. Plaid Amazon bulk charges in the synced date range are hidden from normal review but remain in the database as bank audit records.</div>
           ${preview}
         </div>
       `;

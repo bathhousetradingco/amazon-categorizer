@@ -114,7 +114,13 @@ Deno.serve(async (req) => {
       transactionRowsUpserted += chunk.length;
     }
 
-    const supersedeResult = await maybeSupersedeAmazonPlaidTransactions(supabase, user.id, lineItems);
+    const supersedeResult = await maybeSupersedeAmazonPlaidTransactions(
+      supabase,
+      user.id,
+      lineItems,
+      orderStartDate,
+      orderEndDate,
+    );
 
     await supabase
       .from("amazon_business_connections")
@@ -220,12 +226,16 @@ async function maybeSupersedeAmazonPlaidTransactions(
   supabase: any,
   userId: string,
   lineItems: NormalizedAmazonOrderLineItem[],
+  orderStartDate: string,
+  orderEndDate: string,
 ): Promise<{ count: number; matches: Array<Record<string, unknown>> }> {
-  const mode = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID_MODE") || "").toLowerCase();
+  if (!lineItems.length) return { count: 0, matches: [] };
+
+  const mode = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID_MODE") || "all").toLowerCase();
   const legacyBroadEnabled = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID") || "").toLowerCase() === "true";
   if (mode === "off") return { count: 0, matches: [] };
   if (legacyBroadEnabled || mode === "all") {
-    return broadSupersedeAmazonPlaidTransactions(supabase, userId);
+    return broadSupersedeAmazonPlaidTransactions(supabase, userId, orderStartDate, orderEndDate);
   }
 
   const { data: candidates, error: candidateError } = await supabase
@@ -264,7 +274,12 @@ async function maybeSupersedeAmazonPlaidTransactions(
 async function broadSupersedeAmazonPlaidTransactions(
   supabase: any,
   userId: string,
+  orderStartDate: string,
+  orderEndDate: string,
 ): Promise<{ count: number; matches: Array<Record<string, unknown>> }> {
+  const startDate = toIsoDate(orderStartDate);
+  const endDate = toIsoDate(orderEndDate);
+
   const { data, error } = await supabase
     .from("transactions")
     .update({
@@ -276,6 +291,8 @@ async function broadSupersedeAmazonPlaidTransactions(
     .eq("user_id", userId)
     .not("plaid_transaction_id", "is", null)
     .is("superseded_at", null)
+    .gte("date", startDate)
+    .lte("date", endDate)
     .or("merchant_name.ilike.%amazon%,name.ilike.%amazon%")
     .select("id");
 

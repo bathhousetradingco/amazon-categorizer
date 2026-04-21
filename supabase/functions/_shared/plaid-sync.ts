@@ -26,8 +26,8 @@ type SyncContext = {
   account: SyncAccount;
 };
 
-const AMAZON_BUSINESS_SUPERSEDE_PLAID =
-  (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID") || "").toLowerCase() === "true";
+const AMAZON_BUSINESS_SUPERSEDE_PLAID_MODE =
+  (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID_MODE") || "all").toLowerCase();
 
 function normalizeText(value: unknown): string {
   return String(value || "").trim().toLowerCase();
@@ -122,6 +122,7 @@ export async function syncPlaidTransactionsForAccount(context: SyncContext): Pro
   let totalUpserted = 0;
   let totalRemoved = 0;
   const errors: SyncResult["errors"] = [];
+  const amazonBusinessSupersedesPlaid = await shouldAmazonBusinessSupersedePlaid(supabase, account.user_id);
 
   while (hasMore) {
     const plaidRes = await fetchWithTimeout(`${plaidBase}/transactions/sync`, {
@@ -154,7 +155,7 @@ export async function syncPlaidTransactionsForAccount(context: SyncContext): Pro
 
     const rows = [...(plaidData.added ?? []), ...(plaidData.modified ?? [])]
       .filter((transaction: any) => !isExcludedPlaidTransaction(transaction))
-      .filter((transaction: any) => !(AMAZON_BUSINESS_SUPERSEDE_PLAID && isLikelyAmazonPlaidTransaction(transaction)))
+      .filter((transaction: any) => !(amazonBusinessSupersedesPlaid && isLikelyAmazonPlaidTransaction(transaction)))
       .map((transaction: any) => toTransactionRow(transaction, account))
       .filter((row: any) => !!row.user_id && !!row.plaid_transaction_id);
 
@@ -224,4 +225,22 @@ export async function syncPlaidTransactionsForAccount(context: SyncContext): Pro
   }
 
   return { upserted: totalUpserted, removed: totalRemoved, finalCursor: cursor, errors };
+}
+
+async function shouldAmazonBusinessSupersedePlaid(supabase: any, userId: string | null): Promise<boolean> {
+  if (!userId) return false;
+  if (AMAZON_BUSINESS_SUPERSEDE_PLAID_MODE === "off") return false;
+
+  const { data, error } = await supabase
+    .from("amazon_business_connections")
+    .select("id, status")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Unable to check Amazon Business connection before Plaid sync", error);
+    return false;
+  }
+
+  return !!data && String(data.status || "connected") !== "disconnected";
 }
