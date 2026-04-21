@@ -15,19 +15,32 @@ export function parseReceiptTotals(rawReceiptText: string): ReceiptTotals {
   let taxSumCents = 0;
   let foundTax = false;
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const trailingAmountCents = parseTrailingCurrencyToCents(line);
+    const tableTotals = parseTotalsTableRow(line, lines[index + 1]);
 
-    if (/\bSUB\s*TOTAL\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
-      totals.subtotal = centsToAmount(trailingAmountCents);
+    if (tableTotals) {
+      totals.subtotal = centsToAmount(tableTotals.subtotalCents);
+      taxSumCents += tableTotals.taxCents;
+      foundTax = true;
+      totals.receiptTotal = centsToAmount(tableTotals.totalCents);
+      if (!parseCurrencyAmountsToCents(line).length) index += 1;
+      continue;
     }
 
-    if (/\bTAX\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
+    if (isSubtotalLine(line) && Number.isFinite(trailingAmountCents)) {
+      totals.subtotal = centsToAmount(trailingAmountCents);
+      continue;
+    }
+
+    if (isTaxLine(line) && Number.isFinite(trailingAmountCents)) {
       taxSumCents += trailingAmountCents as number;
       foundTax = true;
+      continue;
     }
 
-    if (/\bTOTAL\b/i.test(line) && !/\bSUB\s*TOTAL\b/i.test(line) && Number.isFinite(trailingAmountCents)) {
+    if (isReceiptTotalLine(line) && Number.isFinite(trailingAmountCents)) {
       totals.receiptTotal = centsToAmount(trailingAmountCents);
     }
   }
@@ -54,12 +67,47 @@ function normalizeReceiptLines(rawReceiptText: string): string[] {
 }
 
 function parseTrailingCurrencyToCents(line: string): number | null {
-  const matches = [...String(line || "").trim().matchAll(/(?:USD\s*)?\$?\s*(\d[\d,]*\.\d{2})(?:\s*USD)?/gi)];
-  const match = matches[matches.length - 1];
-  if (!match?.[1]) return null;
+  const amounts = parseCurrencyAmountsToCents(line);
+  return amounts[amounts.length - 1] ?? null;
+}
 
-  const amount = Number(match[1].replace(/,/g, ""));
-  return Number.isFinite(amount) ? Math.round(amount * 100) : null;
+function parseCurrencyAmountsToCents(line: string): number[] {
+  return [...String(line || "").trim().matchAll(/(?:USD\s*)?\$?\s*(\d[\d,]*\.\d{2})(?:\s*USD)?/gi)]
+    .map((match) => Number(match[1].replace(/,/g, "")))
+    .filter((amount) => Number.isFinite(amount))
+    .map((amount) => Math.round(amount * 100));
+}
+
+function parseTotalsTableRow(
+  line: string,
+  nextLine?: string,
+): { subtotalCents: number; taxCents: number; totalCents: number } | null {
+  if (!/\bSUB\s*TOTAL\b/i.test(line) || !/\bTAX\b/i.test(line) || !/\bTOTAL\b/i.test(line)) {
+    return null;
+  }
+
+  const lineAmounts = parseCurrencyAmountsToCents(line);
+  const amounts = lineAmounts.length >= 3 ? lineAmounts : parseCurrencyAmountsToCents(nextLine || "");
+  if (amounts.length < 3) return null;
+
+  return {
+    subtotalCents: amounts[amounts.length - 3],
+    taxCents: amounts[amounts.length - 2],
+    totalCents: amounts[amounts.length - 1],
+  };
+}
+
+function isSubtotalLine(line: string): boolean {
+  return /^\s*sub\s*total\b/i.test(line);
+}
+
+function isTaxLine(line: string): boolean {
+  return /^\s*(?:sales\s+tax|tax(?:\s+\d+)?|tax\s+total)\b/i.test(line);
+}
+
+function isReceiptTotalLine(line: string): boolean {
+  if (/^\s*(?:sub\s*total|tax\s+total|sales\s+tax|tax(?:\s+\d+)?)\b/i.test(line)) return false;
+  return /^\s*(?:grand\s+total|order\s+total|total)\b/i.test(line);
 }
 
 function centsToAmount(cents: number | null): number | null {

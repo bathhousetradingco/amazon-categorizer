@@ -29,6 +29,33 @@ Deno.test("parseReceiptTotals handles invoice totals with USD and dollar signs",
   });
 });
 
+Deno.test("parseReceiptTotals keeps tax total separate from receipt total", () => {
+  const rawText = [
+    "Subtotal $9.99",
+    "Tax Total $0.00",
+    "Order Total $9.99",
+  ].join("\n");
+
+  assertEquals(parseReceiptTotals(rawText), {
+    subtotal: 9.99,
+    tax: 0,
+    receiptTotal: 9.99,
+  });
+});
+
+Deno.test("parseReceiptTotals handles subtotal tax total table rows", () => {
+  const rawText = [
+    "Subtotal Tax Total",
+    "USD $9.99 USD $0.00 USD $9.99",
+  ].join("\n");
+
+  assertEquals(parseReceiptTotals(rawText), {
+    subtotal: 9.99,
+    tax: 0,
+    receiptTotal: 9.99,
+  });
+});
+
 Deno.test("parseReceiptInstantSavingsTotal sums Sam's instant savings lines", () => {
   const rawText = [
     "INST SV 24CT SHARPI 1.00-",
