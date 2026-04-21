@@ -1,8 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
-  fetchAmazonBusinessOrderLineItems,
+  fetchAmazonBusinessOrderLineItemReport,
   getAmazonBusinessConfig,
+  type AmazonBusinessOrderLineItemsReport,
   type NormalizedAmazonOrderLineItem,
   normalizeAmazonBusinessMarketplaceRegion,
   normalizeAmazonBusinessRegion,
@@ -60,7 +61,7 @@ Deno.serve(async (req) => {
       refreshToken: connection.refresh_token,
       config,
     });
-    const lineItems = await fetchAmazonBusinessOrderLineItems({
+    const lineItemReport = await fetchAmazonBusinessOrderLineItemReport({
       accessToken: token.access_token,
       region,
       marketplaceRegion,
@@ -69,6 +70,7 @@ Deno.serve(async (req) => {
       orderEndDate,
       orderIds,
     });
+    const lineItems = lineItemReport.items;
 
     const rows = lineItems.map((item) => ({
       user_id: user.id,
@@ -114,6 +116,14 @@ Deno.serve(async (req) => {
       transactionRowsUpserted += chunk.length;
     }
 
+    const storedOrderLineRows = await countStoredAmazonOrderLineRows(supabase, user.id, lineItems);
+    const audit = buildAmazonBusinessSyncAudit({
+      report: lineItemReport,
+      lineItems,
+      transactionRows,
+      storedOrderLineRows,
+    });
+
     const supersedeResult = await attemptSupersedeAmazonPlaidTransactions(
       supabase,
       user.id,
@@ -143,6 +153,7 @@ Deno.serve(async (req) => {
       superseded_plaid_rows: supersedeResult.count,
       superseded_plaid_matches: supersedeResult.matches.slice(0, 10),
       supersede_warning: supersedeResult.warning,
+      audit,
       preview: lineItems.slice(0, 10).map((item) => ({
         date: toIsoDate(item.order_date || ""),
         title: item.title,
@@ -199,6 +210,79 @@ function chunks<T>(items: T[], size: number): T[][] {
     result.push(items.slice(i, i + size));
   }
   return result;
+}
+
+async function countStoredAmazonOrderLineRows(
+  supabase: any,
+  userId: string,
+  lineItems: NormalizedAmazonOrderLineItem[],
+): Promise<number> {
+  const orderIds = Array.from(new Set(
+    lineItems.map((item) => String(item.order_id || "").trim()).filter(Boolean),
+  ));
+  let count = 0;
+
+  for (const orderIdChunk of chunks(orderIds, 200)) {
+    const { count: chunkCount, error } = await supabase
+      .from("amazon_business_order_line_items")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .in("order_id", orderIdChunk);
+
+    if (error) throw new HttpError(500, "Failed to audit stored Amazon Business order lines", error);
+    count += chunkCount || 0;
+  }
+
+  return count;
+}
+
+function buildAmazonBusinessSyncAudit(input: {
+  report: AmazonBusinessOrderLineItemsReport;
+  lineItems: NormalizedAmazonOrderLineItem[];
+  transactionRows: Record<string, unknown>[];
+  storedOrderLineRows: number;
+}): Record<string, unknown> {
+  const uniqueKeys = new Set(input.lineItems.map((item) => `${item.order_id}::${item.line_item_key}`));
+  const missingOrderIdCount = input.lineItems.filter((item) => item.order_id === "unknown-order").length;
+  const missingTitleCount = input.lineItems.filter((item) => !item.title).length;
+  const missingAmountCount = input.lineItems.filter((item) => moneyAmount(item) === null).length;
+  const duplicateKeyCount = Math.max(0, input.lineItems.length - uniqueKeys.size);
+  const warnings: string[] = [];
+
+  if (input.report.raw_count !== input.lineItems.length) {
+    warnings.push("Amazon raw line item count did not match normalized line item count.");
+  }
+  if (duplicateKeyCount > 0) {
+    warnings.push(`${duplicateKeyCount} duplicate Amazon order/line keys were returned.`);
+  }
+  if (input.storedOrderLineRows < uniqueKeys.size) {
+    warnings.push("Stored Amazon line item row count is lower than fetched unique line items.");
+  }
+  if (missingOrderIdCount > 0) {
+    warnings.push(`${missingOrderIdCount} Amazon line items were missing order IDs.`);
+  }
+  if (missingAmountCount > 0) {
+    warnings.push(`${missingAmountCount} Amazon line items had no usable amount and were not converted to review transactions.`);
+  }
+  if (missingTitleCount > 0) {
+    warnings.push(`${missingTitleCount} Amazon line items were missing product titles.`);
+  }
+
+  return {
+    complete: warnings.length === 0,
+    page_count: input.report.page_count,
+    raw_line_items: input.report.raw_count,
+    normalized_line_items: input.lineItems.length,
+    unique_line_items: uniqueKeys.size,
+    duplicate_key_count: duplicateKeyCount,
+    stored_order_line_rows: input.storedOrderLineRows,
+    transaction_rows: input.transactionRows.length,
+    missing_order_id_count: missingOrderIdCount,
+    missing_title_count: missingTitleCount,
+    missing_amount_count: missingAmountCount,
+    request_ids: input.report.request_ids,
+    warnings,
+  };
 }
 
 function toAmazonBusinessTransactionRow(

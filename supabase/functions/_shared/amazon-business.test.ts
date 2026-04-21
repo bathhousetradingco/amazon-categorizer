@@ -130,3 +130,26 @@ Deno.test("normalizeAmazonOrderLineItem extracts nested Reporting API fields", (
   assertEquals(normalized.item_total, 19.48);
   assertEquals(normalized.currency, "USD");
 });
+
+Deno.test("normalizeAmazonOrderLineItem builds stable fallback keys when Amazon omits line IDs", () => {
+  const raw = {
+    orderMetadata: {
+      orderDate: { date: "2026-01-02T00:00:00Z" },
+      orderId: "111-222",
+    },
+    productDetails: {
+      asin: "B000TEST",
+      title: "Packaging Tape",
+    },
+    quantity: 2,
+    charges: [
+      { type: "NET_TOTAL", amount: { currencyCode: "USD", amount: 12.34 } },
+    ],
+  };
+
+  const first = normalizeAmazonOrderLineItem(raw);
+  const second = normalizeAmazonOrderLineItem(raw);
+
+  assertEquals(first.line_item_key, second.line_item_key);
+  assertEquals(first.order_id, "111-222");
+});

@@ -1118,6 +1118,19 @@ async function syncAmazonBusiness(options = {}){
         </div>
       `
       : `<div class="small">No line-item preview returned.</div>`;
+    const audit = result.audit && typeof result.audit === "object" ? result.audit : {};
+    const auditWarnings = Array.isArray(audit.warnings) ? audit.warnings : [];
+    const auditHtml = result.audit
+      ? `
+        <div class="small" style="border-top:1px solid #e5e7eb;padding-top:8px;">
+          Capture audit: ${escapeHtml(audit.raw_line_items ?? 0)} raw line items across ${escapeHtml(audit.page_count ?? 0)} Amazon page(s);
+          ${escapeHtml(audit.unique_line_items ?? 0)} unique line keys;
+          ${escapeHtml(audit.stored_order_line_rows ?? 0)} stored rows;
+          ${escapeHtml(audit.transaction_rows ?? 0)} review rows.
+        </div>
+        ${auditWarnings.length ? `<div class="small" style="color:#92400e;">Audit warnings: ${escapeHtml(auditWarnings.join(" "))}</div>` : `<div class="small" style="color:#0f766e;">Capture audit passed.</div>`}
+      `
+      : "";
 
     if(!silent){
       modalContent.innerHTML = `
@@ -1129,6 +1142,7 @@ async function syncAmazonBusiness(options = {}){
           ${result.supersede_warning ? `<div class="small" style="color:#92400e;">Plaid hide warning: ${escapeHtml(result.supersede_warning)}</div>` : ""}
           <div class="small">Date range: ${escapeHtml(result.start_date || "")} to ${escapeHtml(result.end_date || "")}</div>
           <div class="small">Amazon line items now appear as reviewable transaction rows. Plaid Amazon bulk charges in the synced date range are hidden from normal review but remain in the database as bank audit records.</div>
+          ${auditHtml}
           ${preview}
         </div>
       `;

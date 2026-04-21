@@ -37,6 +37,13 @@ export type NormalizedAmazonOrderLineItem = {
   raw: Record<string, unknown>;
 };
 
+export type AmazonBusinessOrderLineItemsReport = {
+  items: NormalizedAmazonOrderLineItem[];
+  raw_count: number;
+  page_count: number;
+  request_ids: string[];
+};
+
 const REGION_ENDPOINTS: Record<AmazonBusinessRegion, { production: string; sandbox: string }> = {
   NA: {
     production: "https://na.business-api.amazon.com",
@@ -169,11 +176,27 @@ export async function fetchAmazonBusinessOrderLineItems(input: {
   orderEndDate: string;
   orderIds?: string[];
 }): Promise<NormalizedAmazonOrderLineItem[]> {
+  return (await fetchAmazonBusinessOrderLineItemReport(input)).items;
+}
+
+export async function fetchAmazonBusinessOrderLineItemReport(input: {
+  accessToken: string;
+  region: AmazonBusinessRegion;
+  marketplaceRegion?: string;
+  sandbox: boolean;
+  orderStartDate: string;
+  orderEndDate: string;
+  orderIds?: string[];
+}): Promise<AmazonBusinessOrderLineItemsReport> {
   const baseUrl = getAmazonBusinessEndpoint(input.region, input.sandbox);
   const items: NormalizedAmazonOrderLineItem[] = [];
+  const requestIds: string[] = [];
+  let rawCount = 0;
+  let pageCount = 0;
   let nextPageToken = "";
 
   do {
+    pageCount += 1;
     const url = new URL(`${baseUrl}/reports/2025-06-09/orderLineItemReports`);
     url.searchParams.set("orderStartDate", input.orderStartDate);
     url.searchParams.set("orderEndDate", input.orderEndDate);
@@ -193,6 +216,7 @@ export async function fetchAmazonBusinessOrderLineItems(input: {
       response.headers.get("x-amzn-request-id") ||
       response.headers.get("x-amz-request-id") ||
       "";
+    if (requestId) requestIds.push(requestId);
 
     if (!response.ok) {
       const amazonMessage = firstAmazonErrorMessage(payload);
@@ -208,11 +232,17 @@ export async function fetchAmazonBusinessOrderLineItems(input: {
     }
 
     const rawItems = Array.isArray(payload?.orderLineItemsReport) ? payload.orderLineItemsReport : [];
+    rawCount += rawItems.length;
     items.push(...rawItems.map(normalizeAmazonOrderLineItem).filter(Boolean));
     nextPageToken = String(payload?.nextPageToken || "").trim();
   } while (nextPageToken);
 
-  return items;
+  return {
+    items,
+    raw_count: rawCount,
+    page_count: pageCount,
+    request_ids: requestIds,
+  };
 }
 
 function firstAmazonErrorMessage(payload: unknown): string {
@@ -243,7 +273,6 @@ export function normalizeAmazonOrderLineItem(value: unknown): NormalizedAmazonOr
   const lineId = firstString(record, ["orderLineItemId", "lineItemId", "orderLineId", "lineItemNumber"]);
   const orderDate = firstString(record, ["orderDate", "purchaseDate", "orderedDate"]) ||
     firstString(orderMetadata, ["orderDate", "purchaseDate", "orderedDate"]);
-  const fallbackKey = [asin, title, orderDate].filter(Boolean).join(":");
   const charges = findChargeRecord(record);
   const principalCharge = findChargeAmount(record, ["principal", "item_price", "product"]);
   const taxCharge = findChargeAmount(record, ["tax"]);
@@ -258,10 +287,18 @@ export function normalizeAmazonOrderLineItem(value: unknown): NormalizedAmazonOr
     firstMoney(charges, ["total", "totalAmount"]) ??
     netTotalCharge.amount ??
     sumMoney(itemSubtotal, itemTax);
+  const fallbackKey = [
+    asin,
+    title,
+    orderDate,
+    firstString(record, ["quantity", "orderedQuantity", "quantityOrdered"]),
+    itemTotal ?? itemSubtotal ?? "",
+    stableFingerprint(record),
+  ].filter((part) => String(part || "").trim()).join(":");
 
   return {
     order_id: orderId || "unknown-order",
-    line_item_key: lineId || fallbackKey || crypto.randomUUID(),
+    line_item_key: lineId || fallbackKey || stableFingerprint(record),
     order_date: orderDate || null,
     order_status: firstString(record, ["orderStatus", "status"]),
     purchase_order_number: firstString(record, ["purchaseOrderNumber", "poNumber", "purchaseOrder"]),
@@ -430,4 +467,23 @@ function sumMoney(left: number | null, right: number | null): number | null {
 
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function stableFingerprint(value: unknown): string {
+  const text = stableJson(value);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `h${(hash >>> 0).toString(36)}`;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
 }
