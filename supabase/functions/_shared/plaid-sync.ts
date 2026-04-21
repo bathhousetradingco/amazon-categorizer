@@ -26,6 +26,9 @@ type SyncContext = {
   account: SyncAccount;
 };
 
+const AMAZON_BUSINESS_SUPERSEDE_PLAID =
+  (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID") || "").toLowerCase() === "true";
+
 function normalizeText(value: unknown): string {
   return String(value || "").trim().toLowerCase();
 }
@@ -70,6 +73,12 @@ function isExcludedPlaidTransaction(transaction: any): boolean {
   ];
 
   return excludedPatterns.some((pattern) => combined.includes(pattern));
+}
+
+function isLikelyAmazonPlaidTransaction(transaction: any): boolean {
+  const name = normalizeText(transaction?.name);
+  const merchant = normalizeText(transaction?.merchant_name);
+  return `${name} ${merchant}`.includes("amazon");
 }
 
 function toTransactionRow(transaction: any, account: SyncAccount) {
@@ -145,6 +154,7 @@ export async function syncPlaidTransactionsForAccount(context: SyncContext): Pro
 
     const rows = [...(plaidData.added ?? []), ...(plaidData.modified ?? [])]
       .filter((transaction: any) => !isExcludedPlaidTransaction(transaction))
+      .filter((transaction: any) => !(AMAZON_BUSINESS_SUPERSEDE_PLAID && isLikelyAmazonPlaidTransaction(transaction)))
       .map((transaction: any) => toTransactionRow(transaction, account))
       .filter((row: any) => !!row.user_id && !!row.plaid_transaction_id);
 

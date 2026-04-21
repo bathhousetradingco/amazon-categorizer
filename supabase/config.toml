@@ -9,6 +9,15 @@ verify_jwt = false
 [functions.analyze-receipt]
 verify_jwt = false
 
+[functions.amazon-business-auth-start]
+verify_jwt = false
+
+[functions.amazon-business-auth-callback]
+verify_jwt = false
+
+[functions.amazon-business-sync]
+verify_jwt = false
+
 [functions.create-link-token]
 verify_jwt = false
 

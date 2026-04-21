@@ -280,7 +280,9 @@ async function loadTransactions() {
 
   debugReceipt("Rows from Supabase:", rows);
 
-data = rows.map(r => ({
+data = rows
+.filter(r => !r.superseded_at)
+.map(r => ({
   id: r.id,
 
   // 🔥 FIXED MAPPING
@@ -295,6 +297,11 @@ data = rows.map(r => ({
   ReviewStatus: r.review_status || "",
   DeductionStatus: r.deduction_status || "",
   ReviewNote: r.review_note || "",
+  Source: r.source || (r.plaid_transaction_id ? "plaid" : "manual"),
+  SourcePayload: r.source_payload || {},
+  AmazonBusinessOrderId: r.amazon_business_order_id || "",
+  AmazonBusinessLineItemKey: r.amazon_business_line_item_key || "",
+  SupersededAt: r.superseded_at || "",
 
   receipt_url: r.receipt_url,
 
@@ -965,6 +972,85 @@ async function forcePlaidSync(){
   }
 
 }
+
+async function connectAmazonBusiness(){
+  try {
+    modalTitle.innerText = "Amazon Business";
+    modalContent.innerHTML = `<div class="small" style="padding:10px;">Starting Amazon Business authorization...</div>`;
+    openModal();
+
+    const { response, result } = await invokeEdgeFunction("amazon-business-auth-start", {
+      region: "NA",
+      marketplace_region: "US"
+    });
+
+    if(!response?.ok || !result?.success || !result?.authorization_url){
+      throw new Error(result?.message || result?.error?.message || "Amazon Business authorization is not configured.");
+    }
+
+    window.location.href = result.authorization_url;
+  } catch(error){
+    console.error("Amazon Business connect failed", error);
+    modalContent.innerHTML = `
+      <div style="padding:10px;display:grid;gap:10px;">
+        <div class="small">Amazon Business is not ready to connect yet.</div>
+        <div class="small">${escapeHtml(error?.message || "Authorization failed.")}</div>
+        <div class="small">Register the app in Amazon Solution Provider Portal, enable Amazon Business Reporting API access, then set the Supabase secrets for the Amazon Business client. If you are still in sandbox, use the Amazon sandbox authorization URL.</div>
+      </div>
+    `;
+    openModal();
+  }
+}
+
+async function syncAmazonBusiness(){
+  try {
+    modalTitle.innerText = "Amazon Business";
+    modalContent.innerHTML = `<div class="small" style="padding:10px;">Syncing Amazon Business order lines...</div>`;
+    openModal();
+
+    const { response, result } = await invokeEdgeFunction("amazon-business-sync", {});
+
+    if(!response?.ok || !result?.success){
+      throw new Error(result?.message || result?.error?.message || "Amazon Business sync failed.");
+    }
+
+    const preview = Array.isArray(result.preview) && result.preview.length
+      ? `
+        <div style="display:grid;gap:6px;">
+          ${result.preview.map((row) => `
+            <div class="small" style="display:grid;grid-template-columns:1fr auto;gap:8px;border-top:1px solid #e5e7eb;padding-top:6px;">
+              <span>${escapeHtml(row.title || "Amazon Business line item")}<br><span style="color:#6b7280;">${escapeHtml(row.date || "")} ${escapeHtml(row.order_id || "")}</span></span>
+              <strong>$${normalizeMoney(row.amount).toFixed(2)}</strong>
+            </div>
+          `).join("")}
+        </div>
+      `
+      : `<div class="small">No line-item preview returned.</div>`;
+
+    modalContent.innerHTML = `
+      <div style="padding:10px;display:grid;gap:10px;">
+        <div><strong>Amazon Business sync complete</strong></div>
+        <div class="small">Order line items synced: ${escapeHtml(result.line_items ?? result.upserted ?? 0)}</div>
+        <div class="small">Transaction rows created/updated: ${escapeHtml(result.transaction_rows ?? 0)}</div>
+        <div class="small">Plaid Amazon rows hidden: ${escapeHtml(result.superseded_plaid_rows ?? 0)}</div>
+        <div class="small">Date range: ${escapeHtml(result.start_date || "")} to ${escapeHtml(result.end_date || "")}</div>
+        <div class="small">Amazon line items now appear as reviewable transaction rows. Plaid Amazon rows are only hidden when the Supabase secret AMAZON_BUSINESS_SUPERSEDE_PLAID is set to true.</div>
+        ${preview}
+      </div>
+    `;
+    await loadTransactions();
+  } catch(error){
+    console.error("Amazon Business sync failed", error);
+    modalContent.innerHTML = `
+      <div style="padding:10px;display:grid;gap:10px;">
+        <div class="small">Unable to sync Amazon Business.</div>
+        <div class="small">${escapeHtml(error?.message || "Sync failed.")}</div>
+      </div>
+    `;
+    openModal();
+  }
+}
+
 function applyYearFilter(yearValue){
   activeYearFilter = yearValue || null;
   activeSearchFilter = null;
@@ -3892,6 +3978,9 @@ function buildExportRows(){
       "Review Status": item.ReviewStatus || "",
       "Deduction Status": item.DeductionStatus || "",
       "Review Note": item.ReviewNote || "",
+      Source: item.Source || "",
+      "Amazon Business Order ID": item.AmazonBusinessOrderId || "",
+      "Amazon Business Line Item Key": item.AmazonBusinessLineItemKey || "",
     };
 
     if(Array.isArray(item.Splits) && item.Splits.length){
@@ -4271,8 +4360,13 @@ function showCard(){
   // Clean title
   cardTitle.innerText = item.Title || item.Vendor || "Untitled Transaction";
 
+  const sourceLine = item.Source === "amazon_business"
+    ? `<br>Source: Amazon Business${item.AmazonBusinessOrderId ? ` - ${escapeHtml(item.AmazonBusinessOrderId)}` : ""}`
+    : item.Source
+    ? `<br>Source: ${escapeHtml(item.Source)}`
+    : "";
   cardMeta.innerHTML =
-  `<div class="transactionMeta">${item.Date ? `Date: ${escapeHtml(item.Date)}<br>` : ""}Amount: $${normalizeMoney(item.Amount).toFixed(2)}</div>`;
+  `<div class="transactionMeta">${item.Date ? `Date: ${escapeHtml(item.Date)}<br>` : ""}Amount: $${normalizeMoney(item.Amount).toFixed(2)}${sourceLine}</div>`;
 
   splitSummary.innerHTML = buildSplitSummaryHTML(item);
 
