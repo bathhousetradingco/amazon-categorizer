@@ -378,8 +378,7 @@ cursor:pointer;
 
 .aiResultGrid > div,
 .aiReasonBlock,
-.aiFollowUpPanel,
-.aiSourceBlock {
+.aiFollowUpPanel {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel-alt);
@@ -392,25 +391,27 @@ cursor:pointer;
   line-height: 1.45;
 }
 
-.aiSourceBlock ul {
-  margin: 10px 0 0;
-  padding-left: 18px;
-}
-
-.aiSourceBlock li {
-  margin-bottom: 10px;
-}
-
-.aiSourceBlock a {
-  color: #1e3a8a;
-  font-weight: 700;
-}
-
 .aiFollowUpPanel {
   display: grid;
   gap: 10px;
   background: #fffbeb;
   border-color: #fde68a;
+}
+
+.aiResearchDisclosure {
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #334155;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.aiResearchDisclosure a {
+  color: #1e40af;
+  font-weight: 700;
+  text-decoration: underline;
 }
 
 .filterBtn {

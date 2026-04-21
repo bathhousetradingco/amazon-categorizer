@@ -1,5 +1,3 @@
-import { isTaxSourceRef, type TaxSourceRef } from "./tax-sources.ts";
-
 export type AskAiCategory = {
   name: string;
   description?: string;
@@ -9,7 +7,6 @@ export type AskAiCategory = {
   deduction_treatment?: string;
   schedule_c_reference?: string;
   tax_note?: string;
-  source_refs?: TaxSourceRef[];
 };
 
 export type AskAiContext = {
@@ -29,6 +26,14 @@ export type AskAiContext = {
     amount?: number | null;
   };
 };
+
+const BATHHOUSE_BUSINESS_CONTEXT = [
+  "Bathhouse Trading Co sells small-batch handcrafted bath, body, skincare, soap, hair care, home essentials, home fragrance, cleaning, shave, solid fragrance, gifts, bundles, and accessories.",
+  "Product families include bath bombs, bath salts/soaks, shower steamers, solid shampoo, solid conditioner, beard care, scrubs, sugar scrubs, foot scrubs, face products, lotions, body butter, body oil, tallow balm, deodorant, lip care, soaps, whipped soap, shave pucks, dish soap, laundry products, room and linen sprays, dryer bags, dryer balls, simmer pots, loofahs, robes, brushes, and soap savers.",
+  "Common product inputs may include oils, butters, waxes, tallow, goat milk, honey, salts, sugar, fragrance oils, essential oils, botanicals, surfactants, clays, colorants, extracts, actives, and exfoliants.",
+  "Common product packaging may include jars, bottles, tins, tubes, labels, shrink wrap, soap boxes, refill pouches, product bags, caps, pumps, and lids.",
+  "Do not confuse product inputs or product packaging with outbound shipping supplies, general office supplies, worker refreshments, personal use, or resale accessories.",
+].join("\n");
 
 export function normalizeCategories(input: unknown): AskAiCategory[] {
   if (!Array.isArray(input)) return [];
@@ -54,7 +59,6 @@ export function normalizeCategories(input: unknown): AskAiCategory[] {
         deduction_treatment: String(value.deduction_treatment || "").trim() || undefined,
         schedule_c_reference: String(value.schedule_c_reference || "").trim() || undefined,
         tax_note: String(value.tax_note || "").trim() || undefined,
-        source_refs: normalizeSourceRefs(value.source_refs),
       };
     })
     .filter((entry): entry is AskAiCategory => Boolean(entry?.name));
@@ -70,7 +74,6 @@ export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategor
       category.deduction_treatment ? `  Deduction treatment: ${category.deduction_treatment}` : "",
       category.schedule_c_reference ? `  Schedule C: ${category.schedule_c_reference}` : "",
       category.tax_note ? `  Tax note: ${category.tax_note}` : "",
-      category.source_refs?.length ? `  Source refs:\n${formatCategorySourceRefs(category.source_refs)}` : "",
     ].filter(Boolean);
 
     return parts.join("\n");
@@ -100,10 +103,12 @@ export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategor
   return [
     "You are categorizing transactions for Bathhouse Trading Co, an LLC using this app to prepare an accountant-ready Schedule C export.",
     `Assume tax year ${context.tax_year || 2026} unless the app sends a different tax year. Mention review risk when final IRS guidance, accountant judgment, or substantiation could affect treatment.`,
+    "Business context:",
+    BATHHOUSE_BUSINESS_CONTEXT,
     "Classify the purchase based on what the item was used for in the business, not just the merchant name.",
     "Prefer the most specific category that fits the user's explanation and the category definitions below.",
     "For every request, reason through all available categories; do not limit the answer to common examples or deterministic lookup rules.",
-    "Use only the provided IRS source refs for tax-source claims. Do not invent tax citations or claim live IRS lookup occurred.",
+    "If tax treatment is materially uncertain and web search is available, use IRS-only web search to resolve the Schedule C category, limitation, or substantiation issue. Synthesize the answer; do not dump citations into the response.",
     "If facts are still insufficient or the choice depends on tax/accounting treatment, choose Needs Review.",
     "Separate the operational category from deductibility. A transaction can fit a category and still need review or be partly/non-deductible.",
     "",
@@ -123,8 +128,7 @@ export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategor
     '  "confidence": "High|Medium|Low",',
     '  "deduction_status": "Deductible|Review Required|Potentially Non-Deductible",',
     '  "tax_consideration": "...",',
-    '  "follow_up_question": "...",',
-    '  "source_refs": [{"id":"...","title":"...","url":"...","note":"...","as_of":"..."}]',
+    '  "follow_up_question": "..."',
     "}",
     "",
     "Rules:",
@@ -138,16 +142,4 @@ export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategor
     "- tax_consideration should briefly note the Schedule C issue when relevant.",
     "- follow_up_question should be empty unless one short missing fact would materially improve classification.",
   ].filter(Boolean).join("\n");
-}
-
-function normalizeSourceRefs(value: unknown): TaxSourceRef[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const refs = value.filter(isTaxSourceRef);
-  return refs.length ? refs : undefined;
-}
-
-function formatCategorySourceRefs(refs: TaxSourceRef[]): string {
-  return refs
-    .map((ref) => `    - ${ref.title}: ${ref.url}`)
-    .join("\n");
 }

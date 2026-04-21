@@ -40,7 +40,6 @@ Deno.test("lookupTaxGuidance classifies coffee for workers as meals review", () 
   assertEquals(guidance?.recommended_category, "Meals & Refreshments");
   assertEquals(guidance?.deduction_status, "Review Required");
   assertEquals(guidance?.id, "worker-refreshments");
-  assertEquals(guidance?.source_refs?.some((source) => source.id === "irs-pub-15b"), true);
 });
 
 Deno.test("applyTaxGuidance overrides generic office supply answers for worker refreshments", () => {
@@ -84,6 +83,28 @@ Deno.test("lookupTaxGuidance routes product labels to COGS packaging", () => {
   }, categories);
 
   assertEquals(guidance?.recommended_category, "COGS - Packaging");
+});
+
+Deno.test("lookupTaxGuidance understands Bathhouse product packaging terms", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "This is packaging for our shower steamers.",
+    transaction: {
+      title: "Clear shrink wrap bags",
+    },
+  }, categories);
+
+  assertEquals(guidance?.recommended_category, "COGS - Packaging");
+});
+
+Deno.test("lookupTaxGuidance understands Bathhouse product ingredient terms", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "This is an ingredient that goes in our shower steamers.",
+    receipt_item: {
+      product_name: "Menthol crystals",
+    },
+  }, categories);
+
+  assertEquals(guidance?.recommended_category, "COGS - Ingredients");
 });
 
 Deno.test("lookupTaxGuidance routes outbound postage separately from freight-in", () => {
@@ -170,5 +191,4 @@ Deno.test("buildTaxGuidancePromptBlock includes rule and source basis", () => {
 
   assertStringIncludes(block, "Tax guidance lookup:");
   assertStringIncludes(block, "IRS Pub. 15-B");
-  assertStringIncludes(block, "https://www.irs.gov/publications/p15b");
 });
