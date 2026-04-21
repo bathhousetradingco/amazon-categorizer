@@ -13,6 +13,7 @@ const DEBUG_RECEIPTS = false;
 let currentCategoryBreakdownRows = [];
 let currentCategoryBreakdownName = "";
 let amazonBusinessAutoSyncInFlight = false;
+const DEFAULT_TAX_YEAR = 2026;
 const AMAZON_BUSINESS_AUTO_SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 function debugReceipt(...args){
@@ -265,6 +266,7 @@ let activeEndDateFilter = null;
 let activeTransactionTypeFilter = "all";
 let aiContext = null;
 let aiSuggestionResult = null;
+let aiLastUserInput = "";
 // null = normal transaction
 // { type: "receipt", index: X } = receipt item mode
 /* ================= LOAD FROM SUPABASE ================= */
@@ -675,10 +677,10 @@ Does NOT include:
 `
 },
   {
-name:"Equipment",
+name:"Equipment & Fixed Assets",
 class:"expense",
 description:`
-Business equipment purchases under IRS capitalization threshold.
+Durable business equipment and fixed assets that may need expense/depreciation review.
 
 Examples:
 • Label printer
@@ -687,14 +689,14 @@ Examples:
 • Small tools
 • Washer/dryer (if expensed, not depreciated)
 
-Note: Larger capital assets may require depreciation.
+Note: Durable assets may require capitalization, depreciation, de minimis safe harbor, or Section 179 review.
 `
 },
   {
-name:"Meals",
+name:"Meals & Refreshments",
 class:"expense",
 description:`
-Business meals related to operations.
+Food, drinks, and refreshments tied to business operations.
 
 Examples:
 • Vendor meetings
@@ -711,9 +713,9 @@ class:"expense",
 description:`CPA, legal fees, consulting services.`
 },
 {
-name:"Fuel",
+name:"Vehicle / Fuel",
 class:"expense",
-description:`Gas used for markets, supply pickups, or business travel.`
+description:`Gas, parking, tolls, and vehicle costs used for markets, supply pickups, deliveries, or business travel.`
 },
 {
 name:"Taxes & Licenses",
@@ -755,7 +757,15 @@ const categoryAliases = {
   "Advertising": "Advertising & Marketing",
 
   // Gas rename
-  "Gas": "Fuel",
+  "Gas": "Vehicle / Fuel",
+  "Fuel": "Vehicle / Fuel",
+
+  // Equipment rename
+  "Equipment": "Equipment & Fixed Assets",
+
+  // Meals rename
+  "Meals": "Meals & Refreshments",
+  "Meal": "Meals & Refreshments",
 
   // Interest rename
   "Other Interest": "Interest Expense",
@@ -843,13 +853,19 @@ const categoryTaxMetadata = {
     schedule_c_reference: "Schedule C Line 18 - Office expense",
     tax_note: "Office consumables and admin supplies.",
   },
-  "Equipment": {
+  "Equipment & Fixed Assets": {
     tax_treatment: "review",
+    tax_year: DEFAULT_TAX_YEAR,
+    tax_group: "asset_or_expense_review",
+    deduction_treatment: "review",
     schedule_c_reference: "Review - current expense vs depreciation",
     tax_note: "Assets may require capitalization, depreciation, or Section 179 treatment.",
   },
-  "Meals": {
+  "Meals & Refreshments": {
     tax_treatment: "review",
+    tax_year: DEFAULT_TAX_YEAR,
+    tax_group: "operating_expense",
+    deduction_treatment: "limited_or_review",
     schedule_c_reference: "Schedule C Line 24b - Meals",
     tax_note: "Food/beverage, de minimis meal, and worker refreshment rules are sensitive; deductibility may be limited or require accountant review.",
   },
@@ -858,8 +874,11 @@ const categoryTaxMetadata = {
     schedule_c_reference: "Schedule C Line 17 - Legal and professional services",
     tax_note: "CPA, legal, and outside professional support.",
   },
-  "Fuel": {
+  "Vehicle / Fuel": {
     tax_treatment: "review",
+    tax_year: DEFAULT_TAX_YEAR,
+    tax_group: "operating_expense",
+    deduction_treatment: "review",
     schedule_c_reference: "Review - vehicle expense support required",
     tax_note: "Fuel often needs mileage/method support before it belongs on Schedule C line 9.",
   },
@@ -892,11 +911,30 @@ function normalizeCategoryName(name){
 
 function getCategoryTaxMetadata(name){
   const normalized = normalizeCategoryName(name);
-  return categoryTaxMetadata[normalized] || {
+  const meta = categoryTaxMetadata[normalized] || {
     tax_treatment: "review",
     schedule_c_reference: "Review required before export",
     tax_note: "No tax mapping has been assigned yet.",
   };
+
+  return {
+    tax_year: DEFAULT_TAX_YEAR,
+    tax_group: inferTaxGroup(meta.tax_treatment),
+    deduction_treatment: inferDeductionTreatment(meta.tax_treatment),
+    ...meta,
+  };
+}
+
+function inferTaxGroup(taxTreatment){
+  if(taxTreatment === "cogs") return "cogs";
+  if(taxTreatment === "expense") return "operating_expense";
+  return "review";
+}
+
+function inferDeductionTreatment(taxTreatment){
+  if(taxTreatment === "cogs") return "inventory_or_cogs";
+  if(taxTreatment === "expense") return "generally_deductible";
+  return "review";
 }
 /* ================= SEARCH ================= */
 
@@ -4104,6 +4142,7 @@ function buildExportRows(){
       "Receipt Attached": !!item.receipt_url ? "Yes" : "No",
       Notes: item.Notes || item.notes || "",
       "Transaction Amount": normalizeMoney(item.Amount),
+      "Tax Year": DEFAULT_TAX_YEAR,
       "Review Status": item.ReviewStatus || "",
       "Deduction Status": item.DeductionStatus || "",
       "Review Note": item.ReviewNote || "",
@@ -4128,6 +4167,8 @@ function buildExportRows(){
           "Deduction Status": split.DeductionStatus || item.DeductionStatus || "",
           "Review Note": split.ReviewNote || item.ReviewNote || "",
           "Tax Treatment": taxMeta.tax_treatment,
+          "Tax Group": taxMeta.tax_group,
+          "Deduction Treatment": taxMeta.deduction_treatment,
           "Schedule C Reference": taxMeta.schedule_c_reference,
           "Tax Note": taxMeta.tax_note,
         });
@@ -4149,6 +4190,8 @@ function buildExportRows(){
       "Deduction Status": item.DeductionStatus || "",
       "Review Note": item.ReviewNote || "",
       "Tax Treatment": taxMeta.tax_treatment,
+      "Tax Group": taxMeta.tax_group,
+      "Deduction Treatment": taxMeta.deduction_treatment,
       "Schedule C Reference": taxMeta.schedule_c_reference,
       "Tax Note": taxMeta.tax_note,
     });
@@ -4753,6 +4796,9 @@ async function askAI(){
   const resolvedProduct = aiContext?.type === "detected-receipt-item"
     ? (SplitState.detectedResolvedProducts?.[aiContext.itemNumber] || null)
     : null;
+  const rememberedInput = aiLastUserInput && !/Follow-up question:/i.test(aiLastUserInput)
+    ? aiLastUserInput
+    : "";
   const contextPrompt = aiContext?.type === "detected-receipt-item"
     ? `<div class="small" style="margin-bottom:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);">
         Line item <strong>${escapeHtml(resolvedProduct?.product_name || aiContext.itemNumber)}</strong>
@@ -4761,33 +4807,21 @@ async function askAI(){
     : "";
 
   // STEP 1: Ask user for context FIRST
-  modalTitle.innerText = "🤖 AI Categorization";
+  modalTitle.innerText = "AI Categorization";
 
   modalContent.innerHTML = `
-    <div style="padding:10px;">
+    <div class="aiRequestPanel">
       ${contextPrompt}
 
-      <div style="margin-bottom:10px;">
+      <div class="aiTaxYearPill">Tax year ${DEFAULT_TAX_YEAR}</div>
+
+      <div class="aiQuestionLabel">
         <strong>What was this purchase for?</strong>
       </div>
 
-      <textarea id="aiUserInput" placeholder="Example: we bought keys for the shop, packaging supplies, resale items..." style="
-        width:100%;
-        height:100px;
-        padding:10px;
-        border-radius:10px;
-        border:1px solid #ddd;
-        margin-bottom:12px;
-        font-size:14px;
-      "></textarea>
+      <textarea id="aiUserInput" class="aiContextTextarea" placeholder="Example: we bought coffee for volunteers while they worked, packaging supplies for products, or finished goods for resale.">${escapeHtml(rememberedInput)}</textarea>
 
-      <button onclick="submitAIRequest()" style="
-        background:#000;
-        color:white;
-        padding:12px;
-        border-radius:10px;
-        width:100%;
-      ">
+      <button class="aiPrimaryBtn touchButton" onclick="submitAIRequest()">
         Ask AI
       </button>
 
@@ -4797,19 +4831,21 @@ async function askAI(){
   openModal();
 }
 
-async function submitAIRequest(){
+async function submitAIRequest(options = {}){
 
   const item = data[currentIndex];
-  const userInput = document.getElementById("aiUserInput").value;
+  const inputEl = document.getElementById("aiUserInput");
+  const userInput = String(options.userInput ?? inputEl?.value ?? "").trim();
 
-  if(!userInput.trim()){
+  if(!userInput){
     alert("Please enter a quick description.");
     return;
   }
+  aiLastUserInput = userInput;
 
   modalContent.innerHTML = `
     <div style="padding:10px;">
-      <strong>Analyzing transaction...</strong>
+      <strong>${options.isFollowUp ? "Updating recommendation..." : "Analyzing transaction..."}</strong>
     </div>
   `;
 
@@ -4822,12 +4858,16 @@ async function submitAIRequest(){
         headers: await getAuthHeaders(),
  body: JSON.stringify({
   userInput: userInput,
+  taxYear: DEFAULT_TAX_YEAR,
   categories: categories.map(c => {
     const taxMeta = getCategoryTaxMetadata(c.name);
     return {
       name: c.name,
       description: stripHtml(c.description || ""),
       tax_treatment: taxMeta.tax_treatment,
+      tax_year: taxMeta.tax_year,
+      tax_group: taxMeta.tax_group,
+      deduction_treatment: taxMeta.deduction_treatment,
       schedule_c_reference: taxMeta.schedule_c_reference,
       tax_note: taxMeta.tax_note
     };
@@ -4869,6 +4909,8 @@ async function submitAIRequest(){
         : "Review Required",
       tax_consideration: String(result?.tax_consideration || "").trim(),
       follow_up_question: String(result?.follow_up_question || "").trim(),
+      tax_year: Number(result?.tax_year || DEFAULT_TAX_YEAR) || DEFAULT_TAX_YEAR,
+      user_input: userInput,
     };
 
     if(rawCategory && rawCategory !== safeResult.category){
@@ -4879,49 +4921,7 @@ async function submitAIRequest(){
     }
 
     aiSuggestionResult = safeResult;
-
-    modalContent.innerHTML = `
-      <div style="padding:10px;">
-
-        <div style="font-size:16px; margin-bottom:10px;">
-          <strong>Suggested Category:</strong><br>
-          <span style="color:#2e7d32; font-size:18px;">
-            ${escapeHtml(safeResult.category)}
-          </span>
-        </div>
-
-        <div style="margin-bottom:15px;">
-          <strong>Reasoning:</strong><br>
-         ${escapeHtml(safeResult.reasoning)}
-<br><br>
-Confidence: <strong>${escapeHtml(safeResult.confidence)}</strong>
-${safeResult.deduction_status ? `<br><br><strong>Deduction status:</strong><br>${escapeHtml(safeResult.deduction_status)}` : ""}
-${safeResult.tax_consideration ? `<br><br><strong>Tax consideration:</strong><br>${escapeHtml(safeResult.tax_consideration)}` : ""}
-${safeResult.follow_up_question ? `<br><br><strong>If still unsure:</strong><br>${escapeHtml(safeResult.follow_up_question)}` : ""}
-        </div>
-
-        <button onclick="applyAISuggestion(${htmlJsString(safeResult.category)})" style="
-  background:#2e7d32;
-  color:white;
-  padding:12px;
-  border-radius:10px;
-  width:100%;
-  margin-bottom:8px;
-">
-  ✅ Accept Suggestion
-</button>
-
-        <button onclick="askAI()" style="
-          background:#ccc;
-          padding:12px;
-          border-radius:10px;
-          width:100%;
-        ">
-          Try Again
-        </button>
-
-      </div>
-    `;
+    renderAISuggestionResult(safeResult);
 
   } catch(err){
     console.error(err);
@@ -4932,6 +4932,80 @@ ${safeResult.follow_up_question ? `<br><br><strong>If still unsure:</strong><br>
       </div>
     `;
   }
+}
+
+function renderAISuggestionResult(result){
+  modalContent.innerHTML = `
+    <div class="aiResultPanel">
+      <div class="aiTaxYearPill">Tax year ${escapeHtml(result.tax_year || DEFAULT_TAX_YEAR)}</div>
+
+      <div class="aiSuggestedCategory">
+        <span class="small">Suggested category</span>
+        <strong>${escapeHtml(result.category)}</strong>
+      </div>
+
+      <div class="aiResultGrid">
+        <div>
+          <span class="small">Confidence</span>
+          <strong>${escapeHtml(result.confidence)}</strong>
+        </div>
+        <div>
+          <span class="small">Deduction status</span>
+          <strong>${escapeHtml(result.deduction_status)}</strong>
+        </div>
+      </div>
+
+      <div class="aiReasonBlock">
+        <strong>Reasoning</strong>
+        <p>${escapeHtml(result.reasoning || "No reasoning returned.")}</p>
+      </div>
+
+      ${result.tax_consideration ? `
+        <div class="aiReasonBlock">
+          <strong>Tax consideration</strong>
+          <p>${escapeHtml(result.tax_consideration)}</p>
+        </div>
+      ` : ""}
+
+      ${result.follow_up_question ? `
+        <div class="aiFollowUpPanel">
+          <strong>Follow-up question</strong>
+          <p>${escapeHtml(result.follow_up_question)}</p>
+          <textarea id="aiFollowUpAnswer" class="aiContextTextarea" placeholder="Answer the missing fact here, then update the recommendation."></textarea>
+          <button class="aiSecondaryBtn touchButton" onclick="submitAIFollowUpRequest()">Update Recommendation</button>
+        </div>
+      ` : ""}
+
+      <div class="aiActionGrid">
+        <button class="aiPrimaryBtn touchButton" onclick="applyAISuggestion(${htmlJsString(result.category)})">
+          Accept ${escapeHtml(result.category)}
+        </button>
+        <button class="aiMutedBtn touchButton" onclick="askAI()">
+          Try Again
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function submitAIFollowUpRequest(){
+  const answer = String(document.getElementById("aiFollowUpAnswer")?.value || "").trim();
+  const previous = aiSuggestionResult || {};
+  const question = String(previous.follow_up_question || "").trim();
+  const originalInput = String(previous.user_input || aiLastUserInput || "").trim();
+
+  if(!answer){
+    alert("Please answer the follow-up question first.");
+    return;
+  }
+
+  const enrichedInput = [
+    originalInput,
+    question ? `Follow-up question: ${question}` : "",
+    `Follow-up answer: ${answer}`,
+  ].filter(Boolean).join("\n\n");
+
+  await submitAIRequest({ userInput: enrichedInput, isFollowUp: true });
 }
 
 async function applyAISuggestion(category){

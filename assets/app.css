@@ -303,6 +303,101 @@ cursor:pointer;
 }
 .modalItem:hover { background:#f5f5f5; }
 
+.aiRequestPanel,
+.aiResultPanel {
+  padding: 10px;
+  display: grid;
+  gap: 12px;
+}
+
+.aiTaxYearPill {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.aiQuestionLabel {
+  margin-bottom: -4px;
+}
+
+.aiContextTextarea {
+  width: 100%;
+  min-height: 110px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  font-size: 14px;
+  resize: vertical;
+}
+
+.aiPrimaryBtn {
+  background: #111827;
+  color: #fff;
+  width: 100%;
+}
+
+.aiSecondaryBtn {
+  background: #1e3a8a;
+  color: #fff;
+  width: 100%;
+}
+
+.aiMutedBtn {
+  background: #e5e7eb;
+  color: #172033;
+  width: 100%;
+}
+
+.aiSuggestedCategory {
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.aiSuggestedCategory strong {
+  color: #166534;
+  font-size: 18px;
+}
+
+.aiResultGrid,
+.aiActionGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.aiResultGrid > div,
+.aiReasonBlock,
+.aiFollowUpPanel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-alt);
+  padding: 12px;
+}
+
+.aiReasonBlock p,
+.aiFollowUpPanel p {
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+
+.aiFollowUpPanel {
+  display: grid;
+  gap: 10px;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
 .filterBtn {
 background:#ff9800;
 color:white;

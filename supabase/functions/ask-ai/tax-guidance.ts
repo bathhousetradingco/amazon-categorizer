@@ -143,7 +143,7 @@ export function lookupTaxGuidance(context: AskAiContext, categories: AskAiCatego
   if (isFoodOrBeverage(combinedText) && /\b(general public|public giveaway|free samples?|sampled to customers?|customer samples?|promo|promotion|advertis|marketing|goodwill)\b/.test(useText)) {
     return guidance(availableCategories, {
       id: "public-food-advertising",
-      categories: ["Advertising & Marketing", "Meals", "Needs Review"],
+      categories: ["Advertising & Marketing", "Meals & Refreshments", "Meals", "Needs Review"],
       deduction_status: "Review Required",
       confidence: "Medium",
       reasoning: "Food or beverages provided to the general public can be promotional rather than an employee/owner meal.",
@@ -156,11 +156,11 @@ export function lookupTaxGuidance(context: AskAiContext, categories: AskAiCatego
   if (isFoodOrBeverage(combinedText) && isWorkerRefreshmentUseCase(useText)) {
     return guidance(availableCategories, {
       id: "worker-refreshments",
-      categories: ["Meals", "Needs Review"],
+      categories: ["Meals & Refreshments", "Meals", "Needs Review"],
       deduction_status: "Review Required",
       confidence: "High",
       reasoning: "Food or beverages provided for people working are meal/de minimis fringe-benefit territory, not office supplies.",
-      tax_consideration: "IRS guidance treats coffee, doughnuts, and soft drinks as de minimis meals/fringe benefits, while Schedule C meal deductions are generally reported on line 24b and are commonly limited. Because volunteers, owners, employees, and post-2025 food/beverage rules can change deductibility, keep this in Meals and review with the accountant.",
+      tax_consideration: "IRS guidance treats coffee, doughnuts, and soft drinks as de minimis meals/fringe benefits, while Schedule C meal deductions are generally reported on line 24b and are commonly limited. Because volunteers, owners, employees, and post-2025 food/beverage rules can change deductibility, keep this in Meals & Refreshments and review with the accountant.",
       follow_up_question: "",
       source_summary: "IRS Pub. 15-B de minimis meals; Schedule C instructions line 24b business meals.",
     });
@@ -169,7 +169,7 @@ export function lookupTaxGuidance(context: AskAiContext, categories: AskAiCatego
   if (isFoodOrBeverage(combinedText) && /\b(office|supplies?|admin|operations?)\b/.test(useText)) {
     return guidance(availableCategories, {
       id: "food-beverage-not-office-supplies",
-      categories: ["Meals", "Needs Review"],
+      categories: ["Meals & Refreshments", "Meals", "Needs Review"],
       deduction_status: "Review Required",
       confidence: "Medium",
       reasoning: "The item is food or beverage, so it should not be treated as office supplies just because it supports office work.",
@@ -182,7 +182,7 @@ export function lookupTaxGuidance(context: AskAiContext, categories: AskAiCatego
   if (isFoodOrBeverage(combinedText)) {
     return guidance(availableCategories, {
       id: "food-beverage-general",
-      categories: ["Meals", "Needs Review"],
+      categories: ["Meals & Refreshments", "Meals", "Needs Review"],
       deduction_status: "Review Required",
       confidence: "Medium",
       reasoning: "Food and beverage purchases need meals/fringe-benefit review before tax export.",
@@ -269,7 +269,7 @@ export function lookupTaxGuidance(context: AskAiContext, categories: AskAiCatego
   if (/\b(label printer|printer|shelving|rack|desk|chair|table|tool|scale|equipment|machine|washer|dryer|computer|ipad|phone|laptop)\b/.test(combinedText)) {
     return guidance(availableCategories, {
       id: "equipment",
-      categories: ["Equipment", "Needs Review"],
+      categories: ["Equipment & Fixed Assets", "Equipment", "Needs Review"],
       deduction_status: "Review Required",
       confidence: "Medium",
       reasoning: "The purchase appears to be durable equipment rather than a consumable supply.",
@@ -293,7 +293,7 @@ export function lookupTaxGuidance(context: AskAiContext, categories: AskAiCatego
   if (/\b(gas|gasoline|fuel|diesel)\b/.test(combinedText) && /\b(market|pickup|supply run|delivery|business trip|miles|vehicle|car|truck)\b/.test(useText)) {
     return guidance(availableCategories, {
       id: "fuel",
-      categories: ["Fuel", "Needs Review"],
+      categories: ["Vehicle / Fuel", "Fuel", "Needs Review"],
       deduction_status: "Review Required",
       confidence: "Medium",
       reasoning: "The expense appears to be vehicle fuel for business travel or supply pickup.",

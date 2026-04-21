@@ -19,10 +19,10 @@ const categories: AskAiCategory[] = [
   { name: "Insurance" },
   { name: "Utilities" },
   { name: "Office Supplies" },
-  { name: "Equipment" },
-  { name: "Meals" },
+  { name: "Equipment & Fixed Assets" },
+  { name: "Meals & Refreshments" },
   { name: "Professional Services" },
-  { name: "Fuel" },
+  { name: "Vehicle / Fuel" },
   { name: "Taxes & Licenses" },
   { name: "Interest Expense" },
   { name: "Needs Review" },
@@ -37,7 +37,7 @@ Deno.test("lookupTaxGuidance classifies coffee for workers as meals review", () 
     },
   }, categories);
 
-  assertEquals(guidance?.recommended_category, "Meals");
+  assertEquals(guidance?.recommended_category, "Meals & Refreshments");
   assertEquals(guidance?.deduction_status, "Review Required");
   assertEquals(guidance?.id, "worker-refreshments");
 });
@@ -58,7 +58,7 @@ Deno.test("applyTaxGuidance overrides generic office supply answers for worker r
     follow_up_question: "",
   }, guidance, categories);
 
-  assertEquals(result.category, "Meals");
+  assertEquals(result.category, "Meals & Refreshments");
   assertEquals(result.deduction_status, "Review Required");
   assertStringIncludes(result.tax_consideration || "", "de minimis meals");
 });
@@ -115,7 +115,7 @@ Deno.test("lookupTaxGuidance does not treat bottled water as product packaging",
     },
   }, categories);
 
-  assertEquals(guidance?.recommended_category, "Meals");
+  assertEquals(guidance?.recommended_category, "Meals & Refreshments");
   assertEquals(guidance?.id, "worker-refreshments");
 });
 

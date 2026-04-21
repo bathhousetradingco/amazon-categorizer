@@ -2,12 +2,16 @@ export type AskAiCategory = {
   name: string;
   description?: string;
   tax_treatment?: string;
+  tax_year?: number;
+  tax_group?: string;
+  deduction_treatment?: string;
   schedule_c_reference?: string;
   tax_note?: string;
 };
 
 export type AskAiContext = {
   user_input: string;
+  tax_year?: number;
   transaction?: {
     title?: string | null;
     vendor?: string | null;
@@ -27,7 +31,7 @@ export function normalizeCategories(input: unknown): AskAiCategory[] {
   if (!Array.isArray(input)) return [];
 
   return input
-    .map((entry) => {
+    .map((entry): AskAiCategory | null => {
       if (typeof entry === "string") {
         return { name: entry.trim() };
       }
@@ -42,6 +46,9 @@ export function normalizeCategories(input: unknown): AskAiCategory[] {
         name,
         description: String(value.description || "").trim() || undefined,
         tax_treatment: String(value.tax_treatment || "").trim() || undefined,
+        tax_year: Number.isFinite(Number(value.tax_year)) ? Number(value.tax_year) : undefined,
+        tax_group: String(value.tax_group || "").trim() || undefined,
+        deduction_treatment: String(value.deduction_treatment || "").trim() || undefined,
         schedule_c_reference: String(value.schedule_c_reference || "").trim() || undefined,
         tax_note: String(value.tax_note || "").trim() || undefined,
       };
@@ -55,6 +62,8 @@ export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategor
       `- ${category.name}`,
       category.description ? `  Description: ${category.description}` : "",
       category.tax_treatment ? `  Tax treatment: ${category.tax_treatment}` : "",
+      category.tax_group ? `  Tax group: ${category.tax_group}` : "",
+      category.deduction_treatment ? `  Deduction treatment: ${category.deduction_treatment}` : "",
       category.schedule_c_reference ? `  Schedule C: ${category.schedule_c_reference}` : "",
       category.tax_note ? `  Tax note: ${category.tax_note}` : "",
     ].filter(Boolean);
@@ -85,6 +94,7 @@ export function buildAskAiPrompt(context: AskAiContext, categories: AskAiCategor
 
   return [
     "You are categorizing transactions for Bathhouse Trading Co, an LLC using this app to prepare an accountant-ready Schedule C export.",
+    `Assume tax year ${context.tax_year || 2026} unless the app sends a different tax year. Mention review risk when final IRS guidance, accountant judgment, or substantiation could affect treatment.`,
     "Classify the purchase based on what the item was used for in the business, not just the merchant name.",
     "Prefer the most specific category that fits the user's explanation and the category definitions below.",
     "For every request, reason through all available categories; do not limit the answer to common examples or deterministic lookup rules.",

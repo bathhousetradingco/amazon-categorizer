@@ -6,6 +6,7 @@ import { applyTaxGuidance, buildTaxGuidancePromptBlock, lookupTaxGuidance } from
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const DEFAULT_TAX_YEAR = 2026;
 
 /* =========================
    CORS
@@ -56,7 +57,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { userInput, categories, transactionContext, receiptItemContext } = await req.json();
+    const { userInput, categories, transactionContext, receiptItemContext, taxYear, tax_year } = await req.json();
 
     if (!userInput || !Array.isArray(categories)) {
       return new Response(JSON.stringify({ error: "Missing userInput or categories" }), {
@@ -66,8 +67,13 @@ Deno.serve(async (req) => {
     }
 
     const normalizedCategories = normalizeCategories(categories);
+    const requestedTaxYear = Number(taxYear ?? tax_year);
+    const effectiveTaxYear = Number.isInteger(requestedTaxYear) && requestedTaxYear >= 2020 && requestedTaxYear <= 2100
+      ? requestedTaxYear
+      : DEFAULT_TAX_YEAR;
     const askAiContext = {
       user_input: String(userInput),
+      tax_year: effectiveTaxYear,
       transaction: transactionContext && typeof transactionContext === "object"
         ? {
           title: String(transactionContext.title || "").trim() || null,
@@ -126,7 +132,7 @@ Deno.serve(async (req) => {
 
     const parsed = applyTaxGuidance(JSON.parse(clean), taxGuidance, normalizedCategories);
 
-    return new Response(JSON.stringify(parsed), {
+    return new Response(JSON.stringify({ ...parsed, tax_year: effectiveTaxYear }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e: any) {

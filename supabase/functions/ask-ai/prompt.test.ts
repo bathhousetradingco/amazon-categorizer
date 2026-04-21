@@ -28,6 +28,7 @@ Deno.test("buildAskAiPrompt includes transaction and receipt context", () => {
   const prompt = buildAskAiPrompt(
     {
       user_input: "We used this for product labels.",
+      tax_year: 2026,
       transaction: {
         title: "SAMS CLUB",
         vendor: "Sam's Club",
@@ -47,6 +48,7 @@ Deno.test("buildAskAiPrompt includes transaction and receipt context", () => {
   assertMatch(prompt, /deduction_status/);
   assertMatch(prompt, /paper plates, cups, napkins/);
   assertMatch(prompt, /all available categories/);
+  assertMatch(prompt, /tax year 2026/);
 });
 
 Deno.test("buildAskAiPrompt includes deterministic tax guidance block", () => {
@@ -54,10 +56,10 @@ Deno.test("buildAskAiPrompt includes deterministic tax guidance block", () => {
     {
       user_input: "Coffee for volunteers while they work.",
     },
-    [{ name: "Meals" }],
-    "Tax guidance lookup:\n- Recommended category: Meals",
+    [{ name: "Meals & Refreshments" }],
+    "Tax guidance lookup:\n- Recommended category: Meals & Refreshments",
   );
 
   assertMatch(prompt, /Tax guidance lookup/);
-  assertMatch(prompt, /Recommended category: Meals/);
+  assertMatch(prompt, /Recommended category: Meals & Refreshments/);
 });
