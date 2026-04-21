@@ -15,6 +15,7 @@ let currentCategoryBreakdownName = "";
 let amazonBusinessAutoSyncInFlight = false;
 const DEFAULT_TAX_YEAR = 2026;
 const AMAZON_BUSINESS_AUTO_SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const MAX_INFERRED_RECEIPT_TAX_RATE = 0.25;
 
 function debugReceipt(...args){
   if(DEBUG_RECEIPTS) console.log(...args);
@@ -2644,7 +2645,8 @@ function completeReceiptTotals(receiptTotals, parsedItems = []){
     receiptTotal: normalizeNullableMoney(receiptTotals?.receiptTotal)
   };
   const parsedSubtotal = sumParsedReceiptItems(parsedItems);
-  const tax = safeTotals.tax ?? 0;
+  const inferredTax = inferMissingReceiptTax(safeTotals, parsedSubtotal);
+  const tax = safeTotals.tax ?? inferredTax ?? 0;
   const subtotalFromTotal = Number.isFinite(safeTotals.receiptTotal)
     ? normalizeMoney(safeTotals.receiptTotal - tax)
     : null;
@@ -2654,14 +2656,39 @@ function completeReceiptTotals(receiptTotals, parsedItems = []){
       || (Number.isFinite(subtotalFromTotal) && subtotalFromTotal > 0)
     ));
 
-  if(!subtotalMissingOrClearlyWrong) return safeTotals;
+  if(!subtotalMissingOrClearlyWrong) {
+    return {
+      ...safeTotals,
+      tax: safeTotals.tax ?? inferredTax
+    };
+  }
 
   return {
     ...safeTotals,
+    tax: safeTotals.tax ?? inferredTax,
     subtotal: Number.isFinite(parsedSubtotal)
       ? parsedSubtotal
       : (Number.isFinite(subtotalFromTotal) ? subtotalFromTotal : safeTotals.subtotal)
   };
+}
+
+function inferMissingReceiptTax(receiptTotals, parsedSubtotal){
+  if(Number.isFinite(receiptTotals?.tax)) return null;
+
+  const receiptTotalCents = toCents(receiptTotals?.receiptTotal);
+  if(!Number.isFinite(receiptTotalCents)) return null;
+
+  const subtotalBasis = Number.isFinite(receiptTotals?.subtotal) && receiptTotals.subtotal > 0
+    ? receiptTotals.subtotal
+    : parsedSubtotal;
+  const subtotalBasisCents = toCents(subtotalBasis);
+  if(!Number.isFinite(subtotalBasisCents) || subtotalBasisCents <= 0) return null;
+
+  const inferredTaxCents = receiptTotalCents - subtotalBasisCents;
+  if(inferredTaxCents <= 0) return null;
+  if(inferredTaxCents > Math.round(subtotalBasisCents * MAX_INFERRED_RECEIPT_TAX_RATE)) return null;
+
+  return centsToAmount(inferredTaxCents);
 }
 
 function sumParsedReceiptItems(parsedItems = []){

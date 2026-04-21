@@ -95,6 +95,36 @@ Deno.test("completeReceiptTotals repairs zero subtotal when total and parsed lin
   );
 });
 
+Deno.test("completeReceiptTotals infers missing tax from subtotal and receipt total", () => {
+  assertEquals(
+    completeReceiptTotals(
+      { subtotal: 2941.95, tax: null, receiptTotal: 3280.85 },
+      [],
+    ),
+    { subtotal: 2941.95, tax: 338.9, receiptTotal: 3280.85 },
+  );
+});
+
+Deno.test("completeReceiptTotals infers missing tax from parsed items when subtotal is missing", () => {
+  assertEquals(
+    completeReceiptTotals(
+      { subtotal: null, tax: null, receiptTotal: 3280.85 },
+      [{ total_price: 2845 }, { total_price: 96.95 }],
+    ),
+    { subtotal: 2941.95, tax: 338.9, receiptTotal: 3280.85 },
+  );
+});
+
+Deno.test("completeReceiptTotals does not infer unrealistic missing tax gaps", () => {
+  assertEquals(
+    completeReceiptTotals(
+      { subtotal: 100, tax: null, receiptTotal: 180 },
+      [],
+    ),
+    { subtotal: 100, tax: null, receiptTotal: 180 },
+  );
+});
+
 Deno.test("parseReceiptInstantSavingsTotal sums Sam's instant savings lines", () => {
   const rawText = [
     "INST SV 24CT SHARPI 1.00-",

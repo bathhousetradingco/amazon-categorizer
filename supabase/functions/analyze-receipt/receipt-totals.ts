@@ -9,6 +9,8 @@ type ReceiptSubtotalItem = {
   instant_savings_discount?: number;
 };
 
+const MAX_INFERRED_TAX_RATE = 0.25;
+
 export function parseReceiptTotals(rawReceiptText: string): ReceiptTotals {
   const totals: ReceiptTotals = {
     tax: null,
@@ -64,7 +66,8 @@ export function completeReceiptTotals(
     receiptTotal: normalizeNullableAmount(totals?.receiptTotal),
   };
   const parsedSubtotal = sumParsedItems(parsedItems);
-  const tax = safeTotals.tax ?? 0;
+  const inferredTax = inferMissingReceiptTax(safeTotals, parsedSubtotal);
+  const tax = safeTotals.tax ?? inferredTax ?? 0;
   const subtotalFromTotal =
     safeTotals.receiptTotal !== null && Number.isFinite(tax)
       ? roundMoney(safeTotals.receiptTotal - tax)
@@ -75,12 +78,50 @@ export function completeReceiptTotals(
       (subtotalFromTotal !== null && subtotalFromTotal > 0)
     ));
 
-  if (!subtotalMissingOrClearlyWrong) return safeTotals;
+  if (!subtotalMissingOrClearlyWrong) {
+    return {
+      ...safeTotals,
+      tax: safeTotals.tax ?? inferredTax,
+    };
+  }
 
   return {
     ...safeTotals,
+    tax: safeTotals.tax ?? inferredTax,
     subtotal: parsedSubtotal ?? subtotalFromTotal ?? safeTotals.subtotal,
   };
+}
+
+function inferMissingReceiptTax(
+  totals: ReceiptTotals,
+  parsedSubtotal: number | null,
+): number | null {
+  if (totals.tax !== null) return null;
+
+  const receiptTotalCents = toCents(totals.receiptTotal);
+  if (!Number.isFinite(receiptTotalCents)) return null;
+
+  const subtotalBasis = totals.subtotal !== null && totals.subtotal > 0
+    ? totals.subtotal
+    : parsedSubtotal;
+  const subtotalBasisCents = toCents(subtotalBasis);
+  if (
+    !Number.isFinite(subtotalBasisCents) || (subtotalBasisCents as number) <= 0
+  ) {
+    return null;
+  }
+
+  const inferredTaxCents = (receiptTotalCents as number) -
+    (subtotalBasisCents as number);
+  if (inferredTaxCents <= 0) return null;
+  if (
+    inferredTaxCents >
+      Math.round((subtotalBasisCents as number) * MAX_INFERRED_TAX_RATE)
+  ) {
+    return null;
+  }
+
+  return centsToAmount(inferredTaxCents);
 }
 
 export function parseReceiptInstantSavingsTotal(
