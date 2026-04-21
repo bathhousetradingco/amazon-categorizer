@@ -973,32 +973,84 @@ async function forcePlaidSync(){
 
 }
 
+async function getAmazonBusinessStatus(){
+  try {
+    const { response, result } = await invokeEdgeFunction("amazon-business-status", {});
+    if(!response?.ok || !result?.success) return null;
+    return result;
+  } catch(error){
+    console.warn("Amazon Business status check failed", error);
+    return null;
+  }
+}
+
+async function startAmazonBusinessAuthorization(){
+  const { response, result } = await invokeEdgeFunction("amazon-business-auth-start", {
+    region: "NA",
+    marketplace_region: "US"
+  });
+
+  if(!response?.ok || !result?.success || !result?.authorization_url){
+    throw new Error(result?.message || result?.error?.message || "Amazon Business authorization is not configured.");
+  }
+
+  window.location.href = result.authorization_url;
+}
+
 async function connectAmazonBusiness(){
   try {
     modalTitle.innerText = "Amazon Business";
-    modalContent.innerHTML = `<div class="small" style="padding:10px;">Starting Amazon Business authorization...</div>`;
+    modalContent.innerHTML = `<div class="small" style="padding:10px;">Checking Amazon Business connection...</div>`;
     openModal();
 
-    const { response, result } = await invokeEdgeFunction("amazon-business-auth-start", {
-      region: "NA",
-      marketplace_region: "US"
-    });
-
-    if(!response?.ok || !result?.success || !result?.authorization_url){
-      throw new Error(result?.message || result?.error?.message || "Amazon Business authorization is not configured.");
+    const status = await getAmazonBusinessStatus();
+    if(status?.connected){
+      modalContent.innerHTML = `
+        <div style="padding:10px;display:grid;gap:10px;">
+          <div><strong>Amazon Business is connected</strong></div>
+          <div class="small">Region: ${escapeHtml(status.region || "NA")} / ${escapeHtml(status.marketplace_region || "US")}</div>
+          <div class="small">Connected: ${escapeHtml(status.connected_at || "Available")}</div>
+          <div class="small">Last sync: ${escapeHtml(status.last_sync_at || "Not synced yet")}</div>
+          ${status.last_error ? `<div class="small" style="color:#b91c1c;">Last error: ${escapeHtml(status.last_error)}</div>` : ""}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <button class="touchButton" style="background:#92400e;color:#fff;" onclick="syncAmazonBusiness()">Sync Now</button>
+            <button class="touchButton" style="background:#6b7280;color:#fff;" onclick="reconnectAmazonBusiness()">Reconnect</button>
+          </div>
+          <div class="small">Reconnect opens Amazon authorization management and is only needed if sync fails or you intentionally remove/regrant access.</div>
+        </div>
+      `;
+      return;
     }
 
-    window.location.href = result.authorization_url;
+    modalContent.innerHTML = `<div class="small" style="padding:10px;">Starting Amazon Business authorization...</div>`;
+    await startAmazonBusinessAuthorization();
   } catch(error){
     console.error("Amazon Business connect failed", error);
     modalContent.innerHTML = `
       <div style="padding:10px;display:grid;gap:10px;">
         <div class="small">Amazon Business is not ready to connect yet.</div>
         <div class="small">${escapeHtml(error?.message || "Authorization failed.")}</div>
-        <div class="small">Register the app in Amazon Solution Provider Portal, enable Amazon Business Reporting API access, then set the Supabase secrets for the Amazon Business client. If you are still in sandbox, use the Amazon sandbox authorization URL.</div>
+        <div class="small">Register the app in Amazon Solution Provider Portal, enable Amazon Business Reporting API access, then set the Supabase secrets for the Amazon Business client.</div>
       </div>
     `;
     openModal();
+  }
+}
+
+async function reconnectAmazonBusiness(){
+  try {
+    modalTitle.innerText = "Amazon Business";
+    modalContent.innerHTML = `<div class="small" style="padding:10px;">Starting Amazon Business reauthorization...</div>`;
+    openModal();
+    await startAmazonBusinessAuthorization();
+  } catch(error){
+    console.error("Amazon Business reconnect failed", error);
+    modalContent.innerHTML = `
+      <div style="padding:10px;display:grid;gap:10px;">
+        <div class="small">Unable to start Amazon Business reauthorization.</div>
+        <div class="small">${escapeHtml(error?.message || "Authorization failed.")}</div>
+      </div>
+    `;
   }
 }
 
@@ -1041,10 +1093,13 @@ async function syncAmazonBusiness(){
     await loadTransactions();
   } catch(error){
     console.error("Amazon Business sync failed", error);
+    const message = error?.message || "Sync failed.";
+    const needsConnection = /not connected/i.test(message);
     modalContent.innerHTML = `
       <div style="padding:10px;display:grid;gap:10px;">
         <div class="small">Unable to sync Amazon Business.</div>
-        <div class="small">${escapeHtml(error?.message || "Sync failed.")}</div>
+        <div class="small">${escapeHtml(message)}</div>
+        ${needsConnection ? `<button class="touchButton" style="background:#374151;color:#fff;" onclick="connectAmazonBusiness()">Connect Amazon Business</button>` : ""}
       </div>
     `;
     openModal();

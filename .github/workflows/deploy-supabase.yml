@@ -48,6 +48,7 @@ jobs:
           supabase functions deploy sync-plaid-transactions --use-api --project-ref xbayklklcdohewvnbglq
           supabase functions deploy amazon-business-auth-start --use-api --project-ref xbayklklcdohewvnbglq
           supabase functions deploy amazon-business-auth-callback --use-api --project-ref xbayklklcdohewvnbglq
+          supabase functions deploy amazon-business-status --use-api --project-ref xbayklklcdohewvnbglq
           supabase functions deploy amazon-business-sync --use-api --project-ref xbayklklcdohewvnbglq
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
