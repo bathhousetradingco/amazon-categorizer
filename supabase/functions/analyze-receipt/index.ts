@@ -288,7 +288,7 @@ async function extractReceiptData(
         }],
       }),
     },
-    45000,
+    90000,
   );
 
   const json = await safeJson(response);

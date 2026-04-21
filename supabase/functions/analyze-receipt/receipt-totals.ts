@@ -66,7 +66,7 @@ export function completeReceiptTotals(
     receiptTotal: normalizeNullableAmount(totals?.receiptTotal),
   };
   const parsedSubtotal = sumParsedItems(parsedItems);
-  const inferredTax = inferMissingReceiptTax(safeTotals, parsedSubtotal);
+  const inferredTax = inferMissingReceiptTax(safeTotals);
   const tax = safeTotals.tax ?? inferredTax ?? 0;
   const subtotalFromTotal =
     safeTotals.receiptTotal !== null && Number.isFinite(tax)
@@ -92,19 +92,13 @@ export function completeReceiptTotals(
   };
 }
 
-function inferMissingReceiptTax(
-  totals: ReceiptTotals,
-  parsedSubtotal: number | null,
-): number | null {
+function inferMissingReceiptTax(totals: ReceiptTotals): number | null {
   if (totals.tax !== null) return null;
 
   const receiptTotalCents = toCents(totals.receiptTotal);
   if (!Number.isFinite(receiptTotalCents)) return null;
 
-  const subtotalBasis = totals.subtotal !== null && totals.subtotal > 0
-    ? totals.subtotal
-    : parsedSubtotal;
-  const subtotalBasisCents = toCents(subtotalBasis);
+  const subtotalBasisCents = toCents(totals.subtotal);
   if (
     !Number.isFinite(subtotalBasisCents) || (subtotalBasisCents as number) <= 0
   ) {
@@ -151,10 +145,12 @@ function parseTrailingCurrencyToCents(line: string): number | null {
 function parseCurrencyAmountsToCents(line: string): number[] {
   return [
     ...String(line || "").trim().matchAll(
-      /(?:USD\s*)?\$?\s*(\d[\d,]*\.\d{2})(?:\s*USD)?/gi,
+      /(?:USD\s*)?\$\s*(\d[\d,]*(?:\.\d{1,2})?)(?:\s*USD)?|USD\s+(\d[\d,]*(?:\.\d{1,2})?)|(?:^|[^\w.])(\d[\d,]*\.\d{1,2})(?![\w.])/gi,
     ),
   ]
-    .map((match) => Number(match[1].replace(/,/g, "")))
+    .map((match) =>
+      Number(String(match[1] || match[2] || match[3] || "").replace(/,/g, ""))
+    )
     .filter((amount) => Number.isFinite(amount))
     .map((amount) => Math.round(amount * 100));
 }
@@ -188,13 +184,14 @@ function isSubtotalLine(line: string): boolean {
 }
 
 function isTaxLine(line: string): boolean {
-  return /^\s*(?:sales\s+tax|tax\s+total|tax(?:\s+\d+)?)\s*(?:[:\-]|\$|usd|\d|$)/i
+  return /^\s*(?:sales\s+tax|tax\s+total|total\s+tax|tax(?:\s+\d+)?)\s*(?:[:\-]|\$|usd|\d|$)/i
     .test(line);
 }
 
 function isReceiptTotalLine(line: string): boolean {
   if (
-    /^\s*(?:sub\s*total|tax\s+total|sales\s+tax|tax(?:\s+\d+)?)\b/i.test(line)
+    /^\s*(?:sub\s*total|tax\s+total|total\s+tax|sales\s+tax|tax(?:\s+\d+)?)\b/i
+      .test(line)
   ) return false;
   return /^\s*(?:grand\s+total|order\s+total|total)\b/i.test(line);
 }

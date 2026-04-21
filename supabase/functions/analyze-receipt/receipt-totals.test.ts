@@ -111,7 +111,7 @@ Deno.test("completeReceiptTotals infers missing tax from parsed items when subto
       { subtotal: null, tax: null, receiptTotal: 3280.85 },
       [{ total_price: 2845 }, { total_price: 96.95 }],
     ),
-    { subtotal: 2941.95, tax: 338.9, receiptTotal: 3280.85 },
+    { subtotal: 2941.95, tax: null, receiptTotal: 3280.85 },
   );
 });
 
@@ -123,6 +123,21 @@ Deno.test("completeReceiptTotals does not infer unrealistic missing tax gaps", (
     ),
     { subtotal: 100, tax: null, receiptTotal: 180 },
   );
+});
+
+Deno.test("parseReceiptTotals handles one-decimal total tax rows", () => {
+  const rawText = [
+    "Subtotal $3,051.95",
+    "Grand Total (Ex.Tax) $3,051.95",
+    "Total Tax $228.9",
+    "Grand Total (Inc.Tax) $3,280.85",
+  ].join("\n");
+
+  assertEquals(parseReceiptTotals(rawText), {
+    subtotal: 3051.95,
+    tax: 228.9,
+    receiptTotal: 3280.85,
+  });
 });
 
 Deno.test("parseReceiptInstantSavingsTotal sums Sam's instant savings lines", () => {

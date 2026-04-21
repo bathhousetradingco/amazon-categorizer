@@ -2559,8 +2559,8 @@ function parseTrailingCurrencyToCents(line){
 }
 
 function parseCurrencyAmountsToCents(line){
-  return [...String(line || "").trim().matchAll(/(?:USD\s*)?\$?\s*(\d[\d,]*\.\d{2})(?:\s*USD)?/gi)]
-    .map((match) => Number(String(match[1] || "").replace(/,/g, "")))
+  return [...String(line || "").trim().matchAll(/(?:USD\s*)?\$\s*(\d[\d,]*(?:\.\d{1,2})?)(?:\s*USD)?|USD\s+(\d[\d,]*(?:\.\d{1,2})?)|(?:^|[^\w.])(\d[\d,]*\.\d{1,2})(?![\w.])/gi)]
+    .map((match) => Number(String(match[1] || match[2] || match[3] || "").replace(/,/g, "")))
     .filter((amount) => Number.isFinite(amount))
     .map((amount) => Math.round(amount * 100));
 }
@@ -2586,11 +2586,11 @@ function isSubtotalLine(line){
 }
 
 function isTaxLine(line){
-  return /^\s*(?:sales\s+tax|tax(?:\s+\d+)?|tax\s+total)\b/i.test(line);
+  return /^\s*(?:sales\s+tax|tax(?:\s+\d+)?|tax\s+total|total\s+tax)\b/i.test(line);
 }
 
 function isReceiptTotalLine(line){
-  if(/^\s*(?:sub\s*total|tax\s+total|sales\s+tax|tax(?:\s+\d+)?)\b/i.test(line)) return false;
+  if(/^\s*(?:sub\s*total|tax\s+total|total\s+tax|sales\s+tax|tax(?:\s+\d+)?)\b/i.test(line)) return false;
   return /^\s*(?:grand\s+total|order\s+total|total)\b/i.test(line);
 }
 
@@ -2645,7 +2645,7 @@ function completeReceiptTotals(receiptTotals, parsedItems = []){
     receiptTotal: normalizeNullableMoney(receiptTotals?.receiptTotal)
   };
   const parsedSubtotal = sumParsedReceiptItems(parsedItems);
-  const inferredTax = inferMissingReceiptTax(safeTotals, parsedSubtotal);
+  const inferredTax = inferMissingReceiptTax(safeTotals);
   const tax = safeTotals.tax ?? inferredTax ?? 0;
   const subtotalFromTotal = Number.isFinite(safeTotals.receiptTotal)
     ? normalizeMoney(safeTotals.receiptTotal - tax)
@@ -2672,16 +2672,13 @@ function completeReceiptTotals(receiptTotals, parsedItems = []){
   };
 }
 
-function inferMissingReceiptTax(receiptTotals, parsedSubtotal){
+function inferMissingReceiptTax(receiptTotals){
   if(Number.isFinite(receiptTotals?.tax)) return null;
 
   const receiptTotalCents = toCents(receiptTotals?.receiptTotal);
   if(!Number.isFinite(receiptTotalCents)) return null;
 
-  const subtotalBasis = Number.isFinite(receiptTotals?.subtotal) && receiptTotals.subtotal > 0
-    ? receiptTotals.subtotal
-    : parsedSubtotal;
-  const subtotalBasisCents = toCents(subtotalBasis);
+  const subtotalBasisCents = toCents(receiptTotals?.subtotal);
   if(!Number.isFinite(subtotalBasisCents) || subtotalBasisCents <= 0) return null;
 
   const inferredTaxCents = receiptTotalCents - subtotalBasisCents;
