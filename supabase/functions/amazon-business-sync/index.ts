@@ -8,6 +8,7 @@ import {
   normalizeAmazonBusinessRegion,
   refreshAmazonBusinessAccessToken,
 } from "../_shared/amazon-business.ts";
+import { daysAgo, toAmazonBusinessReportDateTime, toIsoDate } from "../_shared/amazon-business-dates.ts";
 import { corsHeaders, HttpError, jsonResponse, parseJsonBody, toHttpError } from "../_shared/http.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -26,10 +27,13 @@ Deno.serve(async (req) => {
     const sandboxDefaults = config.sandbox && !requestedStart && !requestedEnd;
     const orderStartDate = sandboxDefaults
       ? "2025-04-01T00:00:00Z"
-      : (toAmazonDateTime(requestedStart, "start") || toAmazonDateTime(daysAgo(120), "start"));
+      : (toAmazonBusinessReportDateTime(requestedStart, "start") || toAmazonBusinessReportDateTime(daysAgo(120), "start"));
     const orderEndDate = sandboxDefaults
       ? "2025-04-30T00:00:00Z"
-      : (toAmazonDateTime(requestedEnd, "end") || toAmazonDateTime(new Date(), "end"));
+      : (toAmazonBusinessReportDateTime(requestedEnd, "end") || toAmazonBusinessReportDateTime(new Date(), "end"));
+    if (Date.parse(orderStartDate) > Date.parse(orderEndDate)) {
+      throw new HttpError(400, "Amazon Business sync start date must be before the end date");
+    }
     const requestedOrderIds = Array.isArray(body.order_ids)
       ? body.order_ids.map((id) => String(id || "").trim()).filter(Boolean)
       : [];
@@ -140,7 +144,11 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     const httpError = toHttpError(error);
-    return jsonResponse({ success: false, message: httpError.message }, httpError.status);
+    return jsonResponse({
+      success: false,
+      message: httpError.message,
+      details: sanitizeHttpErrorDetails(httpError.details),
+    }, httpError.status);
   }
 });
 
@@ -155,24 +163,6 @@ async function requireUser(req: Request) {
 
   if (error || !user) throw new HttpError(401, "Unauthorized");
   return user;
-}
-
-function toAmazonDateTime(value: string | Date, boundary: "start" | "end"): string {
-  const dateOnly = toIsoDate(value);
-  if (!dateOnly) return "";
-  return `${dateOnly}T${boundary === "start" ? "00:00:00" : "23:59:59"}Z`;
-}
-
-function toIsoDate(value: string | Date): string {
-  const date = value instanceof Date ? value : new Date(`${String(value || "").slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
-}
-
-function daysAgo(days: number): Date {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() - days);
-  return date;
 }
 
 function chunks<T>(items: T[], size: number): T[][] {
@@ -244,4 +234,14 @@ async function maybeSupersedeAmazonPlaidTransactions(supabase: any, userId: stri
 
   if (error) throw new HttpError(500, "Failed to supersede Amazon Plaid transactions", error);
   return data?.length || 0;
+}
+
+function sanitizeHttpErrorDetails(details: unknown): unknown {
+  if (!details || typeof details !== "object") return undefined;
+  const record = details as Record<string, unknown>;
+  const sanitized: Record<string, unknown> = {};
+  for (const key of ["status", "request_id", "body"]) {
+    if (record[key] !== undefined) sanitized[key] = record[key];
+  }
+  return Object.keys(sanitized).length ? sanitized : undefined;
 }

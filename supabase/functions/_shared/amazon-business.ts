@@ -189,10 +189,20 @@ export async function fetchAmazonBusinessOrderLineItems(input: {
       },
     }, 30000);
     const payload = await response.json().catch(() => null);
+    const requestId = response.headers.get("x-amzn-requestid") ||
+      response.headers.get("x-amzn-request-id") ||
+      response.headers.get("x-amz-request-id") ||
+      "";
 
     if (!response.ok) {
-      throw new HttpError(502, "Amazon Business order line item request failed", {
+      const amazonMessage = firstAmazonErrorMessage(payload);
+      throw new HttpError(502, [
+        `Amazon Business order line item request failed (${response.status})`,
+        requestId ? `request ${requestId}` : "",
+        amazonMessage,
+      ].filter(Boolean).join(": "), {
         status: response.status,
+        request_id: requestId || undefined,
         body: payload,
       });
     }
@@ -203,6 +213,20 @@ export async function fetchAmazonBusinessOrderLineItems(input: {
   } while (nextPageToken);
 
   return items;
+}
+
+function firstAmazonErrorMessage(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const record = payload as Record<string, unknown>;
+  const direct = stringFromValue(record.message ?? record.error_description ?? record.error);
+  if (direct) return direct;
+  const errors = Array.isArray(record.errors) ? record.errors : [];
+  for (const error of errors) {
+    const errorRecord = error && typeof error === "object" ? error as Record<string, unknown> : {};
+    const message = stringFromValue(errorRecord.message ?? errorRecord.detail ?? errorRecord.code);
+    if (message) return message;
+  }
+  return "";
 }
 
 export function normalizeAmazonOrderLineItem(value: unknown): NormalizedAmazonOrderLineItem {

@@ -1063,7 +1063,9 @@ async function syncAmazonBusiness(){
     const { response, result } = await invokeEdgeFunction("amazon-business-sync", {});
 
     if(!response?.ok || !result?.success){
-      throw new Error(result?.message || result?.error?.message || "Amazon Business sync failed.");
+      const detailText = formatAmazonBusinessErrorDetails(result?.details);
+      const message = result?.message || result?.error?.message || "Amazon Business sync failed.";
+      throw new Error(detailText ? `${message} ${detailText}` : message);
     }
 
     const preview = Array.isArray(result.preview) && result.preview.length
@@ -1104,6 +1106,19 @@ async function syncAmazonBusiness(){
     `;
     openModal();
   }
+}
+
+function formatAmazonBusinessErrorDetails(details){
+  if(!details || typeof details !== "object") return "";
+  const parts = [];
+  if(details.status) parts.push(`Amazon status ${details.status}`);
+  if(details.request_id) parts.push(`request ${details.request_id}`);
+  const body = details.body && typeof details.body === "object" ? details.body : null;
+  const errors = Array.isArray(body?.errors) ? body.errors : [];
+  const firstError = errors.find((error) => error && typeof error === "object");
+  const amazonMessage = body?.message || body?.error_description || body?.error || firstError?.message || firstError?.detail || firstError?.code;
+  if(amazonMessage) parts.push(String(amazonMessage));
+  return parts.length ? `(${parts.join(" - ")})` : "";
 }
 
 function applyYearFilter(yearValue){
