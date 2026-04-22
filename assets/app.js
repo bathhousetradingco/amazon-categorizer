@@ -4218,10 +4218,13 @@ function toExportFileSlug(categoryName){
     .replace(/^-+|-+$/g, "") || "category";
 }
 
-function buildExportRows(){
+function buildExportRows(indexes = getVisibleIndexes()){
   const rows = [];
 
-  data.forEach((item) => {
+  indexes.forEach((index) => {
+    const item = data[index];
+    if(!item) return;
+
     const base = {
       Date: toExcelDateValue(item.Date),
       Vendor: item.Vendor || "",
