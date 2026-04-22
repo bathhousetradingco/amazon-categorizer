@@ -232,13 +232,56 @@ function dismissModalToContext(){
 
 // API LAYER
 const Api = {
+  async getCurrentUserId(){
+    const { data: { session }, error } = await supabaseClient.auth.getSession();
+    const userId = session?.user?.id || "";
+    if(error || !userId){
+      return {
+        userId: "",
+        error: error || new Error("You must be logged in before saving changes.")
+      };
+    }
+    return { userId, error: null };
+  },
   async updateTransaction(id, payload){
     if(!id) return { error: null };
-    return supabaseClient.from("transactions").update(payload).eq("id", id);
+    const { userId, error: userError } = await Api.getCurrentUserId();
+    if(userError) return { error: userError };
+
+    const { data: updatedRows, error } = await supabaseClient
+      .from("transactions")
+      .update(payload)
+      .eq("id", id)
+      .eq("user_id", userId)
+      .select("id");
+
+    if(error) return { error };
+    if(!Array.isArray(updatedRows) || updatedRows.length !== 1){
+      return {
+        error: new Error("Transaction save did not update a database row. Refresh the app and confirm you are signed in.")
+      };
+    }
+    return { data: updatedRows[0], error: null };
   },
   async deleteTransaction(id){
     if(!id) return { error: null };
-    return supabaseClient.from("transactions").delete().eq("id", id);
+    const { userId, error: userError } = await Api.getCurrentUserId();
+    if(userError) return { error: userError };
+
+    const { data: deletedRows, error } = await supabaseClient
+      .from("transactions")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", userId)
+      .select("id");
+
+    if(error) return { error };
+    if(!Array.isArray(deletedRows) || deletedRows.length !== 1){
+      return {
+        error: new Error("Transaction delete did not remove a database row. Refresh the app and confirm you are signed in.")
+      };
+    }
+    return { data: deletedRows[0], error: null };
   }
 };
 
@@ -1839,10 +1882,7 @@ async function repairAttachedReceiptForAnalysis(item){
   }
 
   if(previousReceiptUrl !== filePath){
-    const { error: updateError } = await supabaseClient
-      .from("transactions")
-      .update({ receipt_url: filePath })
-      .eq("id", item.id);
+    const { error: updateError } = await Api.updateTransaction(item.id, { receipt_url: filePath });
 
     if(updateError){
       console.error("Receipt repair DB update failed", updateError);
@@ -1908,10 +1948,7 @@ if(uploadError){
   return;
 }
 
-const { error: updateError } = await supabaseClient
-  .from("transactions")
-  .update({ receipt_url: filePath })
-  .eq("id", item.id);
+const { error: updateError } = await Api.updateTransaction(item.id, { receipt_url: filePath });
 
 if(updateError){
   console.error("DB update error:", updateError);
@@ -2071,10 +2108,7 @@ if(storageError){
   return;
 }
 
-const { error: dbError } = await supabaseClient
-  .from("transactions")
-  .update({ receipt_url: null })
-  .eq("id", item.id);
+const { error: dbError } = await Api.updateTransaction(item.id, { receipt_url: null });
 
 if(dbError){
   console.error("DB update error:", dbError);
@@ -3701,6 +3735,8 @@ async function resetSplits(){
   if(!confirm("Reset all splits?")) return;
 
   const item = data[currentIndex];
+  const previousSplits = Array.isArray(item.Splits) ? clonePlainValue(item.Splits) : [];
+  const previousCategory = item.Category;
 
   item.Splits = [];
   item.Category = "";
@@ -3716,17 +3752,21 @@ setTimeout(() => {
 showCard();
   // Save to Supabase
   if(item.id){
-    const { error } = await supabaseClient
-      .from("transactions")
-      .update({
-        category: "",
-        splits: []
-      })
-      .eq("id", item.id);
+    const { error } = await Api.updateTransaction(item.id, {
+      category: "",
+      splits: []
+    });
 
     if(error){
+      item.Splits = previousSplits;
+      item.Category = previousCategory;
+      updateRemainingUI();
+      updateTotals();
+      updateProgress();
+      showCard();
       console.error("Reset error:", error);
       alert("Error resetting splits.");
+      return;
     }
   }
 
@@ -3902,12 +3942,13 @@ async function persistSplitItem(item){
   updateSplitProgressState();
 
   if(item.id){
-    await persistReceiptInteractions(item);
+    return await persistReceiptInteractions(item);
   }
+  return true;
 }
 
 async function persistReceiptInteractions(item){
-  if(!item?.id) return;
+  if(!item?.id) return true;
 
   const { error } = await Api.updateTransaction(item.id, {
     category: item.Splits?.length ? "SPLIT" : "",
@@ -3920,9 +3961,10 @@ async function persistReceiptInteractions(item){
   if(error){
     console.error("Receipt interaction save error:", error);
     alert("Error saving receipt updates.");
-    return;
+    return false;
   }
 
+  return true;
 }
 
 async function applySplit(category, amount, options = {}){
@@ -3968,7 +4010,24 @@ async function applySplit(category, amount, options = {}){
   item.Category = "SPLIT";
   SplitState.highlightedIndex = item.Splits.length - 1;
 
-  await persistSplitItem(item);
+  const persisted = await persistSplitItem(item);
+  if(!persisted){
+    item.Splits = previousSplits;
+    item.Category = previousCategory;
+    updateRemainingUI();
+    updateSplitSummaryUI();
+    updateTotals();
+    updateProgress();
+    updateSplitProgressState();
+    if(document.getElementById("splitItemsScroller")){
+      document.getElementById("splitItemsScroller").innerHTML = renderSplitItems(item);
+    }
+    if(document.getElementById("remainingBar")){
+      document.getElementById("remainingBar").outerHTML = renderSplitTotals(item);
+    }
+    return false;
+  }
+
   setTimeout(() => { SplitState.highlightedIndex = null; }, 420);
 
   return true;
