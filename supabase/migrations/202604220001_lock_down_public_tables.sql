@@ -117,20 +117,20 @@ begin
       on public.product_lookup
       for select
       to authenticated
-      using (true);
+      using (auth.uid() is not null);
 
     create policy product_lookup_insert_verified
       on public.product_lookup
       for insert
       to authenticated
-      with check (verified_by_user = true);
+      with check (auth.uid() is not null and verified_by_user = true);
 
     create policy product_lookup_update_verified
       on public.product_lookup
       for update
       to authenticated
-      using (true)
-      with check (verified_by_user = true);
+      using (auth.uid() is not null)
+      with check (auth.uid() is not null and verified_by_user = true);
   end if;
 
   if to_regclass('public.product_lookup_audit') is not null then
