@@ -304,7 +304,7 @@ let data=[];
 let currentIndex=0;
 let showOnlyUncategorized=false;
 let activeSearchFilter=null;
-let activeYearFilter = null;
+let activeYearFilter = getCurrentYearFilter();
 let activeStartDateFilter = null;
 let activeEndDateFilter = null;
 let activeTransactionTypeFilter = "all";
@@ -315,6 +315,10 @@ let aiLastContextKey = "";
 // null = normal transaction
 // { type: "receipt", index: X } = receipt item mode
 /* ================= LOAD FROM SUPABASE ================= */
+
+function getCurrentYearFilter(){
+  return String(new Date().getFullYear());
+}
 
 async function loadTransactions(options = {}) {
   const { data: rows, error } = await supabaseClient
