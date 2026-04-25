@@ -296,22 +296,18 @@ function toAmazonBusinessTransactionRow(
   const date = toIsoDate(item.order_date || fallbackDateTime) || toIsoDate(new Date());
   const title = item.title || item.asin || `Amazon Business order ${item.order_id}`;
 
+  // Keep category, splits, and review fields out of sync upserts so reruns preserve user-reviewed accounting state.
   return {
     user_id: userId,
     date,
     amount,
     name: title,
     merchant_name: item.seller_name || "Amazon Business",
-    category: "",
-    splits: [],
     pending: false,
     source: "amazon_business",
     source_payload: item.raw,
     amazon_business_order_id: item.order_id,
     amazon_business_line_item_key: item.line_item_key,
-    review_status: "",
-    deduction_status: "",
-    review_note: "Amazon Business order line imported from the Reporting API.",
   };
 }
 

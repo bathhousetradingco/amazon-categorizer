@@ -82,6 +82,7 @@ function isLikelyAmazonPlaidTransaction(transaction: any): boolean {
 }
 
 function toTransactionRow(transaction: any, account: SyncAccount) {
+  // Do not sync Plaid's category into the app category field; that field is user-reviewed accounting state.
   return {
     user_id: account.user_id,
     item_id: account.item_id,
@@ -91,7 +92,6 @@ function toTransactionRow(transaction: any, account: SyncAccount) {
     name: transaction.name,
     merchant_name: transaction.merchant_name,
     pending: transaction.pending,
-    category: transaction.category?.[0] ?? null,
   };
 }
 

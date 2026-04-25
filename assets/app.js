@@ -233,12 +233,26 @@ function dismissModalToContext(){
 // API LAYER
 const Api = {
   async getCurrentUserId(){
-    const { data: { session }, error } = await supabaseClient.auth.getSession();
+    let sessionError = null;
+    let session = null;
+
+    try {
+      const accessToken = await getValidAccessToken();
+      const { data: userData, error: userError } = await supabaseClient.auth.getUser(accessToken);
+      const userId = userData?.user?.id || "";
+      if(!userError && userId) return { userId, error: null };
+      sessionError = userError;
+    } catch(error) {
+      sessionError = error;
+    }
+
+    const { data, error } = await supabaseClient.auth.getSession();
+    session = data?.session || null;
     const userId = session?.user?.id || "";
-    if(error || !userId){
+    if(error || sessionError || !userId){
       return {
         userId: "",
-        error: error || new Error("You must be logged in before saving changes.")
+        error: error || sessionError || new Error("You must be logged in before saving changes.")
       };
     }
     return { userId, error: null };
@@ -248,20 +262,15 @@ const Api = {
     const { userId, error: userError } = await Api.getCurrentUserId();
     if(userError) return { error: userError };
 
-    const { data: updatedRows, error } = await supabaseClient
-      .from("transactions")
-      .update(payload)
-      .eq("id", id)
-      .eq("user_id", userId)
-      .select("id");
+    const result = await updateTransactionRow(id, userId, payload);
+    if(!result.error) return result;
 
-    if(error) return { error };
-    if(!Array.isArray(updatedRows) || updatedRows.length !== 1){
-      return {
-        error: new Error("Transaction save did not update a database row. Refresh the app and confirm you are signed in.")
-      };
+    if(shouldRetryTransactionUpdateWithoutReviewFields(result.error, payload)){
+      console.warn("Retrying transaction save without optional review fields.", result.error);
+      return await updateTransactionRow(id, userId, stripOptionalTransactionFields(payload));
     }
-    return { data: updatedRows[0], error: null };
+
+    return result;
   },
   async deleteTransaction(id){
     if(!id) return { error: null };
@@ -284,6 +293,49 @@ const Api = {
     return { data: deletedRows[0], error: null };
   }
 };
+
+const OPTIONAL_TRANSACTION_REVIEW_FIELDS = ["review_status", "deduction_status", "review_note"];
+
+async function updateTransactionRow(id, userId, payload){
+  const { data: updatedRows, error } = await supabaseClient
+      .from("transactions")
+      .update(payload)
+      .eq("id", id)
+      .eq("user_id", userId)
+      .select("id");
+
+  if(error) return { error };
+  if(!Array.isArray(updatedRows) || updatedRows.length !== 1){
+    return {
+      error: new Error("Transaction save did not update a database row. Refresh the app and confirm you are signed in.")
+    };
+  }
+  return { data: updatedRows[0], error: null };
+}
+
+function stripOptionalTransactionFields(payload){
+  const stripped = { ...(payload || {}) };
+  OPTIONAL_TRANSACTION_REVIEW_FIELDS.forEach((field) => delete stripped[field]);
+  return stripped;
+}
+
+function shouldRetryTransactionUpdateWithoutReviewFields(error, payload){
+  if(!error || !payload) return false;
+  if(!OPTIONAL_TRANSACTION_REVIEW_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(payload, field))){
+    return false;
+  }
+
+  const message = `${error.code || ""} ${error.message || ""} ${error.details || ""}`.toLowerCase();
+  return message.includes("pgrst204")
+    || message.includes("schema cache")
+    || OPTIONAL_TRANSACTION_REVIEW_FIELDS.some((field) => message.includes(field));
+}
+
+function getSaveErrorMessage(error){
+  const message = String(error?.message || "").trim();
+  if(message) return message;
+  return "refresh the app and confirm you are signed in.";
+}
 
 // UTILITIES
 const Utils = {
@@ -2455,6 +2507,7 @@ const SplitState = {
   receiptNameDrafts: {},
   selectedDetectedItem: null,
   receiptExpanded: false,
+  splitSaveInFlight: false,
   keypad: {
     value: "",
     max: Infinity,
@@ -3654,12 +3707,19 @@ async function submitManualSplit(){
   }
 }
 
-function removeSplitAtIndex(index){
+async function removeSplitAtIndex(index){
   const item = data[currentIndex];
   if(!item || !item.Splits || !item.Splits[index]) return;
+  const previousSplits = clonePlainValue(item.Splits);
+  const previousCategory = item.Category;
   item.Splits.splice(index, 1);
   if(!item.Splits.length) item.Category = "";
-  persistSplitItem(item);
+  const persisted = await persistSplitItem(item);
+  if(!persisted){
+    item.Splits = previousSplits;
+    item.Category = previousCategory;
+    refreshSplitWorkflowUI(item);
+  }
 }
 
 function editSplitAmount(index){
@@ -3681,7 +3741,13 @@ function editSplitAmount(index){
       item.Splits[index].Amount = original;
       updateRemainingUI();
     },
-    onConfirm: () => persistSplitItem(item)
+    onConfirm: async () => {
+      const persisted = await persistSplitItem(item);
+      if(!persisted){
+        item.Splits[index].Amount = original;
+        refreshSplitWorkflowUI(item);
+      }
+    }
   });
 }
 
@@ -3931,7 +3997,7 @@ function updateSplitSummaryUI(){
   el.innerHTML = buildSplitSummaryHTML(item);
 }
 
-async function persistSplitItem(item){
+function refreshSplitWorkflowUI(item){
   updateRemainingUI();
   updateSplitSummaryUI();
   updateTotals();
@@ -3944,6 +4010,10 @@ async function persistSplitItem(item){
     document.getElementById("remainingBar").outerHTML = renderSplitTotals(item);
   }
   updateSplitProgressState();
+}
+
+async function persistSplitItem(item){
+  refreshSplitWorkflowUI(item);
 
   if(item.id){
     return await persistReceiptInteractions(item);
@@ -3953,9 +4023,11 @@ async function persistSplitItem(item){
 
 async function persistReceiptInteractions(item){
   if(!item?.id) return true;
+  const category = item.Splits?.length ? "SPLIT" : "";
+  item.Category = category;
 
   const { error } = await Api.updateTransaction(item.id, {
-    category: item.Splits?.length ? "SPLIT" : "",
+    category,
     splits: item.Splits || [],
     review_status: item.ReviewStatus || "",
     deduction_status: item.DeductionStatus || "",
@@ -3964,7 +4036,7 @@ async function persistReceiptInteractions(item){
 
   if(error){
     console.error("Receipt interaction save error:", error);
-    alert("Error saving receipt updates.");
+    alert(`Error saving receipt updates: ${getSaveErrorMessage(error)}`);
     return false;
   }
 
@@ -3973,6 +4045,12 @@ async function persistReceiptInteractions(item){
 
 async function applySplit(category, amount, options = {}){
   const item = data[currentIndex];
+  if(!item) return false;
+  if(SplitState.splitSaveInFlight){
+    alert("A split save is already in progress. Wait for it to finish before assigning another line item.");
+    return false;
+  }
+
   const categoryName = getAllowedCategoryName(category);
   if (!item.Splits) item.Splits = [];
   const previousSplits = Array.isArray(item.Splits) ? clonePlainValue(item.Splits) : [];
@@ -4001,40 +4079,34 @@ async function applySplit(category, amount, options = {}){
     return false;
   }
 
-  item.Splits.push({
-    Category: categoryName,
-    Amount: parseFloat(amount.toFixed(2)),
-    ...(sourceProductNumber ? { SourceProductNumber: sourceProductNumber } : {}),
-    ...(options.sourceMerchant ? { SourceMerchant: options.sourceMerchant } : {}),
-    ...(options.sourceIdentifierType ? { SourceIdentifierType: options.sourceIdentifierType } : {}),
-    ...(options.reviewStatus ? { ReviewStatus: options.reviewStatus } : {}),
-    ...(options.deductionStatus ? { DeductionStatus: options.deductionStatus } : {}),
-    ...(options.reviewNote ? { ReviewNote: options.reviewNote } : {})
-  });
-  item.Category = "SPLIT";
-  SplitState.highlightedIndex = item.Splits.length - 1;
+  SplitState.splitSaveInFlight = true;
+  try {
+    item.Splits.push({
+      Category: categoryName,
+      Amount: parseFloat(amount.toFixed(2)),
+      ...(sourceProductNumber ? { SourceProductNumber: sourceProductNumber } : {}),
+      ...(options.sourceMerchant ? { SourceMerchant: options.sourceMerchant } : {}),
+      ...(options.sourceIdentifierType ? { SourceIdentifierType: options.sourceIdentifierType } : {}),
+      ...(options.reviewStatus ? { ReviewStatus: options.reviewStatus } : {}),
+      ...(options.deductionStatus ? { DeductionStatus: options.deductionStatus } : {}),
+      ...(options.reviewNote ? { ReviewNote: options.reviewNote } : {})
+    });
+    item.Category = "SPLIT";
+    SplitState.highlightedIndex = item.Splits.length - 1;
 
-  const persisted = await persistSplitItem(item);
-  if(!persisted){
-    item.Splits = previousSplits;
-    item.Category = previousCategory;
-    updateRemainingUI();
-    updateSplitSummaryUI();
-    updateTotals();
-    updateProgress();
-    updateSplitProgressState();
-    if(document.getElementById("splitItemsScroller")){
-      document.getElementById("splitItemsScroller").innerHTML = renderSplitItems(item);
+    const persisted = await persistSplitItem(item);
+    if(!persisted){
+      item.Splits = previousSplits;
+      item.Category = previousCategory;
+      refreshSplitWorkflowUI(item);
+      return false;
     }
-    if(document.getElementById("remainingBar")){
-      document.getElementById("remainingBar").outerHTML = renderSplitTotals(item);
-    }
-    return false;
+
+    setTimeout(() => { SplitState.highlightedIndex = null; }, 420);
+    return true;
+  } finally {
+    SplitState.splitSaveInFlight = false;
   }
-
-  setTimeout(() => { SplitState.highlightedIndex = null; }, 420);
-
-  return true;
 }
 
 function pickCategory(amount){
