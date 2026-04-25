@@ -423,10 +423,7 @@ data = rows
   populateYearFilter();
   updateTotals();
   updateProgress();
-
-  if (data.length > 0) {
-    showCard();
-  }
+  showCard();
 
   if(!options.skipAmazonAutoSync){
     maybeAutoSyncAmazonBusiness();
@@ -1426,6 +1423,15 @@ function updateDateFilterSummary(){
   if(activeYearFilter) parts.push(`Year: ${activeYearFilter}`);
   if(activeStartDateFilter) parts.push(`From: ${activeStartDateFilter}`);
   if(activeEndDateFilter) parts.push(`To: ${activeEndDateFilter}`);
+  const typeLabels = {
+    uncategorized: "Uncategorized",
+    categorized: "Categorized",
+    with_receipt: "With receipt",
+    without_receipt: "Without receipt"
+  };
+  if(activeTransactionTypeFilter && activeTransactionTypeFilter !== "all"){
+    parts.push(typeLabels[activeTransactionTypeFilter] || activeTransactionTypeFilter);
+  }
   summaryEl.innerText = parts.length ? parts.join(" • ") : "All dates";
 }
 
@@ -1462,9 +1468,17 @@ function applySearchFilter(index){
     return;
   }
 
+  const item = data[index];
+  activeSearchFilter = {
+    id: item?.id || null,
+    index
+  };
+  document.getElementById("clearSearchBtn").style.display = "block";
   currentIndex = index;
 
   closeModal();
+  updateTotals();
+  updateProgress();
   showCard();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1473,6 +1487,8 @@ function applySearchFilter(index){
 function clearSearchFilter(){
 activeSearchFilter=null;
 document.getElementById("clearSearchBtn").style.display="none";
+updateTotals();
+updateProgress();
 showCard();
 }
 
@@ -1591,9 +1607,12 @@ showCard();
 
 async function deleteTransaction(){
 
+const item = data[currentIndex];
+if(!item) return;
 if(!confirm("Are you sure you want to delete this transaction?")) return;
 
-const id = data[currentIndex].id;
+const id = item?.id;
+const receiptUrl = item?.receipt_url;
 
 if (id) {
   const { error } = await Api.deleteTransaction(id);
@@ -1602,6 +1621,11 @@ if (id) {
     alert("Error deleting transaction.");
     return;
   }
+}
+
+if(receiptUrl){
+  const { error: storageError } = await supabaseClient.storage.from("receipts").remove([receiptUrl]);
+  if(storageError) console.warn("Unable to remove deleted transaction receipt file", storageError);
 }
 
 data.splice(currentIndex,1);
@@ -2152,17 +2176,7 @@ async function removeReceipt(){
 
 const item = data[currentIndex];
 if(!item.id || !item.receipt_url) return;
-
-const { error: storageError } = await supabaseClient
-  .storage
-  .from("receipts")
-  .remove([item.receipt_url]);
-
-if(storageError){
-  console.error("Storage delete error:", storageError);
-  alert("Error deleting file from storage.");
-  return;
-}
+const previousReceiptUrl = item.receipt_url;
 
 const { error: dbError } = await Api.updateTransaction(item.id, { receipt_url: null });
 
@@ -2174,6 +2188,18 @@ if(dbError){
 
 item.receipt_url = null;
 clearReceiptAnalysisCacheForTransaction(item.id);
+
+const { error: storageError } = await supabaseClient
+  .storage
+  .from("receipts")
+  .remove([previousReceiptUrl]);
+
+if(storageError){
+  console.warn("Receipt detached, but storage cleanup failed:", storageError);
+  showCard();
+  alert("Receipt removed from the transaction, but the stored file cleanup failed.");
+  return;
+}
 
 showCard();
 alert("Receipt removed successfully.");
@@ -2246,6 +2272,14 @@ if(!activeSearchFilter) return filtered;
 
 return filtered.filter(i=>{
 const d=data[i];
+
+if(activeSearchFilter.id != null){
+return String(d.id || "") === String(activeSearchFilter.id);
+}
+
+if(activeSearchFilter.index != null){
+return i === activeSearchFilter.index;
+}
 
 const vendorMatch =
 activeSearchFilter.vendor &&
