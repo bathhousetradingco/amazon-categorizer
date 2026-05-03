@@ -822,8 +822,29 @@ margin-top:8px;
 }
 
 .taxCrosswalkNote {
+  display: grid;
+  gap: 6px;
   color: var(--text-soft);
   line-height: 1.35;
+}
+
+.taxCrosswalkReviewReason {
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  color: #7c2d12;
+}
+
+.categoryTaxInfo {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 @media (max-width: 760px) {

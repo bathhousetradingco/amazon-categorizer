@@ -1035,12 +1035,23 @@ function inferDeductionTreatment(taxTreatment){
   return "review";
 }
 
+const taxCrosswalkReviewReasons = {
+  "COGS - Production Supplies": "Could be COGS if directly tied to production, or supplies expense if more general/indirect.",
+  "Shipping Supplies": "Customer-order shipping materials may be reported as supplies or as another operating expense.",
+  "Equipment & Fixed Assets": "Durable assets may need current expense, de minimis safe harbor, Section 179, or depreciation treatment.",
+  "Meals & Refreshments": "Food and beverage deductions can be limited or nondeductible and need business purpose support.",
+  "Vehicle / Fuel": "Vehicle costs need business-use support and a method choice, such as mileage vs actual expenses.",
+  "Sales Tax Paid": "Sales tax usually follows the underlying purchase instead of standing as its own final category.",
+  "Needs Review": "Temporary holding bucket; final category and Schedule C treatment have not been determined.",
+};
+
 function openTaxCrosswalkModal(){
   modalTitle.innerText = "Tax Crosswalk";
 
   const rows = categories.map((category) => {
     const taxMeta = getCategoryTaxMetadata(category.name);
     const status = getTaxCrosswalkStatus(category.name, taxMeta);
+    const reviewReason = getTaxCrosswalkReviewReason(category.name, taxMeta, status);
     return `
       <div class="taxCrosswalkRow">
         <div class="taxCrosswalkCategory">
@@ -1048,7 +1059,10 @@ function openTaxCrosswalkModal(){
           <span class="taxCrosswalkTreatment ${escapeHtml(status.className)}">${escapeHtml(status.label)}</span>
         </div>
         <div class="taxCrosswalkMapping">${escapeHtml(taxMeta.schedule_c_reference)}</div>
-        <div class="taxCrosswalkNote">${escapeHtml(taxMeta.tax_note)}</div>
+        <div class="taxCrosswalkNote">
+          <div>${escapeHtml(taxMeta.tax_note)}</div>
+          ${reviewReason ? `<div class="taxCrosswalkReviewReason"><strong>Review reason:</strong> ${escapeHtml(reviewReason)}</div>` : ""}
+        </div>
       </div>
     `;
   }).join("");
@@ -1081,6 +1095,17 @@ function getTaxCrosswalkStatus(categoryName, taxMeta){
   if(treatment === "cogs") return { label: "COGS", className: "cogs" };
   if(treatment === "review" || reviewText.includes("review")) return { label: "Review", className: "review" };
   return { label: "Expense", className: "expense" };
+}
+
+function getTaxCrosswalkReviewReason(categoryName, taxMeta, status){
+  const normalized = normalizeCategoryName(categoryName);
+  if(taxCrosswalkReviewReasons[normalized]) return taxCrosswalkReviewReasons[normalized];
+  if(status?.label !== "Review") return "";
+
+  const scheduleRef = String(taxMeta?.schedule_c_reference || "").toLowerCase();
+  if(scheduleRef.includes("cogs")) return "Accountant should confirm whether this belongs in inventory/COGS or a current expense line.";
+  if(scheduleRef.includes("depreciation")) return "Accountant should confirm whether this is currently deductible or should be capitalized/depreciated.";
+  return "Accountant should confirm the final Schedule C line and documentation needed before filing.";
 }
 /* ================= SEARCH ================= */
 
@@ -2481,6 +2506,9 @@ function showCategoryInfo(name){
 
   const category = categories.find(c => c.name === name);
   if(!category) return;
+  const taxMeta = getCategoryTaxMetadata(category.name);
+  const taxStatus = getTaxCrosswalkStatus(category.name, taxMeta);
+  const reviewReason = getTaxCrosswalkReviewReason(category.name, taxMeta, taxStatus);
 
   const modal = document.createElement("div");
 
@@ -2520,6 +2548,13 @@ function showCategoryInfo(name){
 
       <div style="font-size:14px; line-height:1.5;">
         ${category.description || "No description available."}
+      </div>
+
+      <div class="categoryTaxInfo">
+        <div><strong>Schedule C mapping:</strong> ${escapeHtml(taxMeta.schedule_c_reference)}</div>
+        <div><strong>Treatment:</strong> ${escapeHtml(taxStatus.label)}</div>
+        <div><strong>Tax note:</strong> ${escapeHtml(taxMeta.tax_note)}</div>
+        ${reviewReason ? `<div><strong>Review reason:</strong> ${escapeHtml(reviewReason)}</div>` : ""}
       </div>
 
     </div>
