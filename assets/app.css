@@ -740,6 +740,102 @@ margin-top:8px;
   color: var(--text-soft);
 }
 
+.taxCrosswalkPanel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.taxCrosswalkIntro {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.taxCrosswalkIntro p {
+  margin: 0;
+}
+
+.taxCrosswalkHeader,
+.taxCrosswalkRow {
+  display: grid;
+  grid-template-columns: minmax(140px, .9fr) minmax(160px, 1fr) minmax(180px, 1.2fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.taxCrosswalkHeader {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.taxCrosswalkRow {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.taxCrosswalkCategory {
+  display: grid;
+  gap: 6px;
+}
+
+.taxCrosswalkTreatment {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.taxCrosswalkTreatment.cogs {
+  background: #2e7d32;
+}
+
+.taxCrosswalkTreatment.expense {
+  background: #1565c0;
+}
+
+.taxCrosswalkTreatment.review {
+  background: #92400e;
+}
+
+.taxCrosswalkMapping {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.taxCrosswalkNote {
+  color: var(--text-soft);
+  line-height: 1.35;
+}
+
+@media (max-width: 760px) {
+  .taxCrosswalkHeader {
+    display: none;
+  }
+
+  .taxCrosswalkRow {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (min-width: 700px) {
   .filterGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

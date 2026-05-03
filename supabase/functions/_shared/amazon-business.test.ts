@@ -1,10 +1,13 @@
 import { assertEquals } from "jsr:@std/assert";
 import {
+  amazonBusinessLineItemAmount,
+  amazonBusinessLineItemSupersedeReason,
   buildAmazonBusinessAuthorizeUrl,
   getAmazonBusinessEndpoint,
   normalizeAmazonBusinessMarketplaceRegion,
   normalizeAmazonBusinessRegion,
   normalizeAmazonOrderLineItem,
+  type NormalizedAmazonOrderLineItem,
 } from "./amazon-business.ts";
 
 Deno.test("normalizeAmazonBusinessRegion accepts supported regions", () => {
@@ -14,8 +17,14 @@ Deno.test("normalizeAmazonBusinessRegion accepts supported regions", () => {
 });
 
 Deno.test("getAmazonBusinessEndpoint returns production and sandbox endpoints", () => {
-  assertEquals(getAmazonBusinessEndpoint("NA", false), "https://na.business-api.amazon.com");
-  assertEquals(getAmazonBusinessEndpoint("NA", true), "https://sandbox.na.business-api.amazon.com");
+  assertEquals(
+    getAmazonBusinessEndpoint("NA", false),
+    "https://na.business-api.amazon.com",
+  );
+  assertEquals(
+    getAmazonBusinessEndpoint("NA", true),
+    "https://sandbox.na.business-api.amazon.com",
+  );
 });
 
 Deno.test("normalizeAmazonBusinessMarketplaceRegion defaults to US order region", () => {
@@ -30,7 +39,10 @@ Deno.test("buildAmazonBusinessAuthorizeUrl adds redirect and state", () => {
     state: "state-123",
   });
 
-  assertEquals(url, "https://www.amazon.com/b2b/abws/oauth?redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&state=state-123");
+  assertEquals(
+    url,
+    "https://www.amazon.com/b2b/abws/oauth?redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&state=state-123",
+  );
 });
 
 Deno.test("buildAmazonBusinessAuthorizeUrl can build from app id", () => {
@@ -153,3 +165,73 @@ Deno.test("normalizeAmazonOrderLineItem builds stable fallback keys when Amazon 
   assertEquals(first.line_item_key, second.line_item_key);
   assertEquals(first.order_id, "111-222");
 });
+
+Deno.test("amazonBusinessLineItemSupersedeReason detects canceled order lines", () => {
+  assertEquals(
+    amazonBusinessLineItemSupersedeReason(
+      lineItem({ order_status: "Cancelled" }),
+    ),
+    "canceled",
+  );
+  assertEquals(
+    amazonBusinessLineItemSupersedeReason(lineItem({ order_status: "VOIDED" })),
+    "canceled",
+  );
+});
+
+Deno.test("amazonBusinessLineItemSupersedeReason detects zero-dollar order lines", () => {
+  assertEquals(
+    amazonBusinessLineItemSupersedeReason(lineItem({ item_total: 0 })),
+    "zero_amount",
+  );
+  assertEquals(
+    amazonBusinessLineItemSupersedeReason(
+      lineItem({ item_total: null, item_subtotal: 0, item_tax: 0 }),
+    ),
+    "zero_amount",
+  );
+});
+
+Deno.test("amazonBusinessLineItemSupersedeReason leaves active positive lines visible", () => {
+  assertEquals(
+    amazonBusinessLineItemSupersedeReason(
+      lineItem({ order_status: "SHIPPED", item_total: 13.57 }),
+    ),
+    null,
+  );
+});
+
+Deno.test("amazonBusinessLineItemAmount returns absolute rounded line amount", () => {
+  assertEquals(
+    amazonBusinessLineItemAmount(lineItem({ item_total: -13.574 })),
+    13.57,
+  );
+  assertEquals(
+    amazonBusinessLineItemAmount(
+      lineItem({ item_total: null, item_subtotal: 12.34, item_tax: 1.23 }),
+    ),
+    13.57,
+  );
+});
+
+function lineItem(
+  overrides: Partial<NormalizedAmazonOrderLineItem> = {},
+): NormalizedAmazonOrderLineItem {
+  return {
+    order_id: "111-222",
+    line_item_key: "line-1",
+    order_date: "2026-01-02T00:00:00Z",
+    order_status: null,
+    purchase_order_number: null,
+    asin: "B000TEST",
+    title: "Packaging Tape",
+    seller_name: "Amazon.com",
+    quantity: 1,
+    item_subtotal: null,
+    item_tax: null,
+    item_total: 13.57,
+    currency: "USD",
+    raw: {},
+    ...overrides,
+  };
+}

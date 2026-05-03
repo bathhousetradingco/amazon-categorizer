@@ -44,7 +44,12 @@ export type AmazonBusinessOrderLineItemsReport = {
   request_ids: string[];
 };
 
-const REGION_ENDPOINTS: Record<AmazonBusinessRegion, { production: string; sandbox: string }> = {
+export type AmazonBusinessLineItemSupersedeReason = "canceled" | "zero_amount";
+
+const REGION_ENDPOINTS: Record<
+  AmazonBusinessRegion,
+  { production: string; sandbox: string }
+> = {
   NA: {
     production: "https://na.business-api.amazon.com",
     sandbox: "https://sandbox.na.business-api.amazon.com",
@@ -59,19 +64,29 @@ const REGION_ENDPOINTS: Record<AmazonBusinessRegion, { production: string; sandb
   },
 };
 
-export function normalizeAmazonBusinessRegion(value: unknown): AmazonBusinessRegion {
+export function normalizeAmazonBusinessRegion(
+  value: unknown,
+): AmazonBusinessRegion {
   const normalized = String(value || "NA").trim().toUpperCase();
   if (normalized === "EU") return "EU";
   if (normalized === "FE" || normalized === "JP") return "FE";
   return "NA";
 }
 
-export function normalizeAmazonBusinessMarketplaceRegion(value: unknown): string {
-  const normalized = String(value || "US").trim().toUpperCase().replace(/[^A-Z]/g, "");
+export function normalizeAmazonBusinessMarketplaceRegion(
+  value: unknown,
+): string {
+  const normalized = String(value || "US").trim().toUpperCase().replace(
+    /[^A-Z]/g,
+    "",
+  );
   return normalized || "US";
 }
 
-export function getAmazonBusinessEndpoint(region: AmazonBusinessRegion, sandbox: boolean): string {
+export function getAmazonBusinessEndpoint(
+  region: AmazonBusinessRegion,
+  sandbox: boolean,
+): string {
   const endpoints = REGION_ENDPOINTS[region] || REGION_ENDPOINTS.NA;
   return sandbox ? endpoints.sandbox : endpoints.production;
 }
@@ -82,9 +97,12 @@ export function getAmazonBusinessConfig(): AmazonBusinessConfig {
     clientSecret: Deno.env.get("AMAZON_BUSINESS_CLIENT_SECRET") || "",
     redirectUri: Deno.env.get("AMAZON_BUSINESS_REDIRECT_URI") || "",
     authorizationUrl: Deno.env.get("AMAZON_BUSINESS_AUTHORIZATION_URL") || "",
-    applicationId: Deno.env.get("AMAZON_BUSINESS_APPLICATION_ID") || Deno.env.get("AMAZON_BUSINESS_APP_ID") || "",
-    marketplaceUrl: Deno.env.get("AMAZON_BUSINESS_MARKETPLACE_URL") || "https://www.amazon.com",
-    sandbox: (Deno.env.get("AMAZON_BUSINESS_SANDBOX") || "").toLowerCase() === "true",
+    applicationId: Deno.env.get("AMAZON_BUSINESS_APPLICATION_ID") ||
+      Deno.env.get("AMAZON_BUSINESS_APP_ID") || "",
+    marketplaceUrl: Deno.env.get("AMAZON_BUSINESS_MARKETPLACE_URL") ||
+      "https://www.amazon.com",
+    sandbox:
+      (Deno.env.get("AMAZON_BUSINESS_SANDBOX") || "").toLowerCase() === "true",
   };
 }
 
@@ -96,7 +114,10 @@ export function assertAmazonBusinessConfig(config: AmazonBusinessConfig): void {
   ].filter(([, value]) => !value).map(([name]) => name);
 
   if (missing.length) {
-    throw new HttpError(500, `Missing Amazon Business configuration: ${missing.join(", ")}`);
+    throw new HttpError(
+      500,
+      `Missing Amazon Business configuration: ${missing.join(", ")}`,
+    );
   }
 }
 
@@ -117,9 +138,10 @@ export function buildAmazonBusinessAuthorizeUrl(input: {
     );
   }
 
-  const url = rawAuthorizationUrl
-    ? new URL(rawAuthorizationUrl)
-    : new URL("/b2b/abws/oauth", normalizeAmazonBusinessMarketplaceUrl(input.marketplaceUrl));
+  const url = rawAuthorizationUrl ? new URL(rawAuthorizationUrl) : new URL(
+    "/b2b/abws/oauth",
+    normalizeAmazonBusinessMarketplaceUrl(input.marketplaceUrl),
+  );
   if (rawApplicationId && !url.searchParams.get("applicationId")) {
     url.searchParams.set("applicationId", rawApplicationId);
   }
@@ -129,7 +151,10 @@ export function buildAmazonBusinessAuthorizeUrl(input: {
 }
 
 function normalizeAmazonBusinessMarketplaceUrl(value: unknown): string {
-  const raw = String(value || "https://www.amazon.com").trim().replace(/\/+$/, "");
+  const raw = String(value || "https://www.amazon.com").trim().replace(
+    /\/+$/,
+    "",
+  );
   if (!raw) return "https://www.amazon.com";
   return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 }
@@ -200,9 +225,14 @@ export async function fetchAmazonBusinessOrderLineItemReport(input: {
     const url = new URL(`${baseUrl}/reports/2025-06-09/orderLineItemReports`);
     url.searchParams.set("orderStartDate", input.orderStartDate);
     url.searchParams.set("orderEndDate", input.orderEndDate);
-    url.searchParams.set("region", normalizeAmazonBusinessMarketplaceRegion(input.marketplaceRegion));
+    url.searchParams.set(
+      "region",
+      normalizeAmazonBusinessMarketplaceRegion(input.marketplaceRegion),
+    );
     if (nextPageToken) url.searchParams.set("nextPageToken", nextPageToken);
-    if (input.orderIds?.length) url.searchParams.set("orderIds", input.orderIds.join(","));
+    if (input.orderIds?.length) {
+      url.searchParams.set("orderIds", input.orderIds.join(","));
+    }
 
     const response = await fetchWithTimeout(url, {
       method: "GET",
@@ -220,18 +250,24 @@ export async function fetchAmazonBusinessOrderLineItemReport(input: {
 
     if (!response.ok) {
       const amazonMessage = firstAmazonErrorMessage(payload);
-      throw new HttpError(502, [
-        `Amazon Business order line item request failed (${response.status})`,
-        requestId ? `request ${requestId}` : "",
-        amazonMessage,
-      ].filter(Boolean).join(": "), {
-        status: response.status,
-        request_id: requestId || undefined,
-        body: payload,
-      });
+      throw new HttpError(
+        502,
+        [
+          `Amazon Business order line item request failed (${response.status})`,
+          requestId ? `request ${requestId}` : "",
+          amazonMessage,
+        ].filter(Boolean).join(": "),
+        {
+          status: response.status,
+          request_id: requestId || undefined,
+          body: payload,
+        },
+      );
     }
 
-    const rawItems = Array.isArray(payload?.orderLineItemsReport) ? payload.orderLineItemsReport : [];
+    const rawItems = Array.isArray(payload?.orderLineItemsReport)
+      ? payload.orderLineItemsReport
+      : [];
     rawCount += rawItems.length;
     items.push(...rawItems.map(normalizeAmazonOrderLineItem).filter(Boolean));
     nextPageToken = String(payload?.nextPageToken || "").trim();
@@ -248,42 +284,93 @@ export async function fetchAmazonBusinessOrderLineItemReport(input: {
 function firstAmazonErrorMessage(payload: unknown): string {
   if (!payload || typeof payload !== "object") return "";
   const record = payload as Record<string, unknown>;
-  const direct = stringFromValue(record.message ?? record.error_description ?? record.error);
+  const direct = stringFromValue(
+    record.message ?? record.error_description ?? record.error,
+  );
   if (direct) return direct;
   const errors = Array.isArray(record.errors) ? record.errors : [];
   for (const error of errors) {
-    const errorRecord = error && typeof error === "object" ? error as Record<string, unknown> : {};
-    const message = stringFromValue(errorRecord.message ?? errorRecord.detail ?? errorRecord.code);
+    const errorRecord = error && typeof error === "object"
+      ? error as Record<string, unknown>
+      : {};
+    const message = stringFromValue(
+      errorRecord.message ?? errorRecord.detail ?? errorRecord.code,
+    );
     if (message) return message;
   }
   return "";
 }
 
-export function normalizeAmazonOrderLineItem(value: unknown): NormalizedAmazonOrderLineItem {
-  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+export function normalizeAmazonOrderLineItem(
+  value: unknown,
+): NormalizedAmazonOrderLineItem {
+  const record = value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : {};
   const orderMetadata = objectValue(record.orderMetadata);
   const productDetails = objectValue(record.productDetails);
   const seller = objectValue(record.seller);
-  const orderId = firstString(record, ["orderId", "amazonOrderId", "orderIdentifier", "orderNumber"]) ||
-    firstString(orderMetadata, ["orderId", "amazonOrderId", "orderIdentifier", "orderNumber"]);
+  const orderId = firstString(record, [
+    "orderId",
+    "amazonOrderId",
+    "orderIdentifier",
+    "orderNumber",
+  ]) ||
+    firstString(orderMetadata, [
+      "orderId",
+      "amazonOrderId",
+      "orderIdentifier",
+      "orderNumber",
+    ]);
   const asin = firstString(record, ["asin", "ASIN", "productAsin"]) ||
     firstString(productDetails, ["asin", "ASIN", "productAsin"]);
-  const title = firstString(record, ["title", "productTitle", "productName", "itemTitle"]) ||
-    firstString(productDetails, ["title", "productTitle", "productName", "itemTitle"]);
-  const lineId = firstString(record, ["orderLineItemId", "lineItemId", "orderLineId", "lineItemNumber"]);
-  const orderDate = firstString(record, ["orderDate", "purchaseDate", "orderedDate"]) ||
+  const title = firstString(record, [
+    "title",
+    "productTitle",
+    "productName",
+    "itemTitle",
+  ]) ||
+    firstString(productDetails, [
+      "title",
+      "productTitle",
+      "productName",
+      "itemTitle",
+    ]);
+  const lineId = firstString(record, [
+    "orderLineItemId",
+    "lineItemId",
+    "orderLineId",
+    "lineItemNumber",
+  ]);
+  const orderDate =
+    firstString(record, ["orderDate", "purchaseDate", "orderedDate"]) ||
     firstString(orderMetadata, ["orderDate", "purchaseDate", "orderedDate"]);
   const charges = findChargeRecord(record);
-  const principalCharge = findChargeAmount(record, ["principal", "item_price", "product"]);
+  const principalCharge = findChargeAmount(record, [
+    "principal",
+    "item_price",
+    "product",
+  ]);
   const taxCharge = findChargeAmount(record, ["tax"]);
   const netTotalCharge = findChargeAmount(record, ["net_total", "total"]);
-  const itemSubtotal = firstMoney(record, ["itemSubtotal", "subtotal", "principalAmount", "lineItemSubtotal"]) ??
+  const itemSubtotal = firstMoney(record, [
+    "itemSubtotal",
+    "subtotal",
+    "principalAmount",
+    "lineItemSubtotal",
+  ]) ??
     firstMoney(charges, ["subtotal", "principal", "itemSubtotal"]) ??
     principalCharge.amount;
-  const itemTax = firstMoney(record, ["itemTax", "tax", "taxAmount", "lineItemTax"]) ??
-    firstMoney(charges, ["tax", "taxAmount"]) ??
-    taxCharge.amount;
-  const itemTotal = firstMoney(record, ["itemTotal", "total", "totalAmount", "lineItemTotal"]) ??
+  const itemTax =
+    firstMoney(record, ["itemTax", "tax", "taxAmount", "lineItemTax"]) ??
+      firstMoney(charges, ["tax", "taxAmount"]) ??
+      taxCharge.amount;
+  const itemTotal = firstMoney(record, [
+    "itemTotal",
+    "total",
+    "totalAmount",
+    "lineItemTotal",
+  ]) ??
     firstMoney(charges, ["total", "totalAmount"]) ??
     netTotalCharge.amount ??
     sumMoney(itemSubtotal, itemTax);
@@ -300,28 +387,91 @@ export function normalizeAmazonOrderLineItem(value: unknown): NormalizedAmazonOr
     order_id: orderId || "unknown-order",
     line_item_key: lineId || fallbackKey || stableFingerprint(record),
     order_date: orderDate || null,
-    order_status: firstString(record, ["orderStatus", "status"]),
-    purchase_order_number: firstString(record, ["purchaseOrderNumber", "poNumber", "purchaseOrder"]),
+    order_status: firstString(record, [
+      "orderStatus",
+      "status",
+      "lineItemStatus",
+      "orderLineStatus",
+      "orderLineItemStatus",
+    ]) ||
+      firstString(orderMetadata, [
+        "orderStatus",
+        "status",
+        "lineItemStatus",
+        "orderLineStatus",
+        "orderLineItemStatus",
+      ]),
+    purchase_order_number: firstString(record, [
+      "purchaseOrderNumber",
+      "poNumber",
+      "purchaseOrder",
+    ]),
     asin: asin || null,
     title: title || null,
-    seller_name: firstString(record, ["sellerName", "seller", "merchantName"]) ||
+    seller_name:
+      firstString(record, ["sellerName", "seller", "merchantName"]) ||
       firstString(seller, ["name", "sellerName"]) ||
       null,
-    quantity: firstNumber(record, ["quantity", "orderedQuantity", "quantityOrdered"]),
+    quantity: firstNumber(record, [
+      "quantity",
+      "orderedQuantity",
+      "quantityOrdered",
+    ]),
     item_subtotal: itemSubtotal,
     item_tax: itemTax,
     item_total: itemTotal,
-    currency: firstCurrency(record) || firstCurrency(charges) || principalCharge.currency || taxCharge.currency || netTotalCharge.currency || null,
+    currency: firstCurrency(record) || firstCurrency(charges) ||
+      principalCharge.currency || taxCharge.currency ||
+      netTotalCharge.currency || null,
     raw: record,
   };
 }
 
-async function exchangeAmazonToken(body: URLSearchParams): Promise<AmazonBusinessTokenResponse> {
-  const response = await fetchWithTimeout("https://api.amazon.com/auth/O2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  }, 30000);
+export function amazonBusinessLineItemAmount(
+  item: NormalizedAmazonOrderLineItem,
+): number | null {
+  const amount = amazonBusinessLineItemNetAmount(item);
+  if (!Number.isFinite(Number(amount))) return null;
+  return roundMoney(Math.abs(Number(amount)));
+}
+
+export function amazonBusinessLineItemSupersedeReason(
+  item: NormalizedAmazonOrderLineItem,
+): AmazonBusinessLineItemSupersedeReason | null {
+  if (isAmazonBusinessCanceledStatus(item.order_status)) return "canceled";
+
+  const amount = amazonBusinessLineItemNetAmount(item);
+  if (amount !== null && Math.round(Math.abs(amount) * 100) === 0) {
+    return "zero_amount";
+  }
+
+  return null;
+}
+
+function amazonBusinessLineItemNetAmount(
+  item: NormalizedAmazonOrderLineItem,
+): number | null {
+  return item.item_total ?? sumMoney(item.item_subtotal, item.item_tax) ??
+    item.item_subtotal;
+}
+
+function isAmazonBusinessCanceledStatus(value: unknown): boolean {
+  const status = String(value || "").trim().toLowerCase();
+  return status.includes("cancel") || status.includes("void");
+}
+
+async function exchangeAmazonToken(
+  body: URLSearchParams,
+): Promise<AmazonBusinessTokenResponse> {
+  const response = await fetchWithTimeout(
+    "https://api.amazon.com/auth/O2/token",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    },
+    30000,
+  );
   const payload = await response.json().catch(() => null);
 
   if (!response.ok) {
@@ -333,14 +483,20 @@ async function exchangeAmazonToken(body: URLSearchParams): Promise<AmazonBusines
 
   const accessToken = String(payload?.access_token || "").trim();
   if (!accessToken) {
-    throw new HttpError(502, "Amazon token exchange did not return an access token", payload);
+    throw new HttpError(
+      502,
+      "Amazon token exchange did not return an access token",
+      payload,
+    );
   }
 
   return {
     access_token: accessToken,
     refresh_token: String(payload?.refresh_token || "").trim() || undefined,
     token_type: String(payload?.token_type || "").trim() || undefined,
-    expires_in: Number.isFinite(Number(payload?.expires_in)) ? Number(payload.expires_in) : undefined,
+    expires_in: Number.isFinite(Number(payload?.expires_in))
+      ? Number(payload.expires_in)
+      : undefined,
   };
 }
 
@@ -362,7 +518,10 @@ function stringFromValue(value: unknown): string {
   return "";
 }
 
-function firstNumber(record: Record<string, unknown>, keys: string[]): number | null {
+function firstNumber(
+  record: Record<string, unknown>,
+  keys: string[],
+): number | null {
   for (const key of keys) {
     const value = Number(record?.[key]);
     if (Number.isFinite(value)) return value;
@@ -370,7 +529,10 @@ function firstNumber(record: Record<string, unknown>, keys: string[]): number | 
   return null;
 }
 
-function firstMoney(record: Record<string, unknown> | null, keys: string[]): number | null {
+function firstMoney(
+  record: Record<string, unknown> | null,
+  keys: string[],
+): number | null {
   if (!record) return null;
 
   for (const key of keys) {
@@ -382,19 +544,25 @@ function firstMoney(record: Record<string, unknown> | null, keys: string[]): num
 }
 
 function normalizeMoneyValue(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return roundMoney(value);
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return roundMoney(value);
+  }
   if (typeof value === "string") {
     const amount = Number(value.replace(/[$,\s]/g, ""));
     return Number.isFinite(amount) ? roundMoney(amount) : null;
   }
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    return normalizeMoneyValue(record.amount ?? record.value ?? record.amountValue);
+    return normalizeMoneyValue(
+      record.amount ?? record.value ?? record.amountValue,
+    );
   }
   return null;
 }
 
-function findChargeRecord(record: Record<string, unknown>): Record<string, unknown> | null {
+function findChargeRecord(
+  record: Record<string, unknown>,
+): Record<string, unknown> | null {
   const candidates = [
     record.charges,
     record.charge,
@@ -403,10 +571,15 @@ function findChargeRecord(record: Record<string, unknown>): Record<string, unkno
   ];
 
   for (const candidate of candidates) {
-    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    if (
+      candidate && typeof candidate === "object" && !Array.isArray(candidate)
+    ) {
       return candidate as Record<string, unknown>;
     }
-    if (Array.isArray(candidate) && candidate[0] && typeof candidate[0] === "object") {
+    if (
+      Array.isArray(candidate) && candidate[0] &&
+      typeof candidate[0] === "object"
+    ) {
       return candidate[0] as Record<string, unknown>;
     }
   }
@@ -427,7 +600,8 @@ function findChargeAmount(
     for (const charge of chargeList) {
       if (!charge || typeof charge !== "object") continue;
       const chargeRecord = charge as Record<string, unknown>;
-      const type = String(chargeRecord.type || chargeRecord.chargeType || "").toLowerCase();
+      const type = String(chargeRecord.type || chargeRecord.chargeType || "")
+        .toLowerCase();
       if (!typeNeedles.some((needle) => type.includes(needle))) continue;
 
       return {
@@ -453,7 +627,10 @@ function firstCurrency(record: Record<string, unknown> | null): string {
 
   for (const value of Object.values(record)) {
     if (value && typeof value === "object" && !Array.isArray(value)) {
-      const nested = firstString(value as Record<string, unknown>, ["currency", "currencyCode"]);
+      const nested = firstString(value as Record<string, unknown>, [
+        "currency",
+        "currencyCode",
+      ]);
       if (nested) return nested;
     }
   }
@@ -485,5 +662,9 @@ function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
 
   const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  return `{${
+    Object.keys(record).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableJson(record[key])}`
+    ).join(",")
+  }}`;
 }

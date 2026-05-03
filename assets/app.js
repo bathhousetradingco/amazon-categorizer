@@ -1034,6 +1034,54 @@ function inferDeductionTreatment(taxTreatment){
   if(taxTreatment === "expense") return "generally_deductible";
   return "review";
 }
+
+function openTaxCrosswalkModal(){
+  modalTitle.innerText = "Tax Crosswalk";
+
+  const rows = categories.map((category) => {
+    const taxMeta = getCategoryTaxMetadata(category.name);
+    const status = getTaxCrosswalkStatus(category.name, taxMeta);
+    return `
+      <div class="taxCrosswalkRow">
+        <div class="taxCrosswalkCategory">
+          <strong>${escapeHtml(category.name)}</strong>
+          <span class="taxCrosswalkTreatment ${escapeHtml(status.className)}">${escapeHtml(status.label)}</span>
+        </div>
+        <div class="taxCrosswalkMapping">${escapeHtml(taxMeta.schedule_c_reference)}</div>
+        <div class="taxCrosswalkNote">${escapeHtml(taxMeta.tax_note)}</div>
+      </div>
+    `;
+  }).join("");
+
+  modalContent.innerHTML = `
+    <div class="taxCrosswalkPanel">
+      <div class="taxCrosswalkIntro">
+        <p>This crosswalk shows how each app category generally maps to Schedule C reporting buckets. It is a planning guide, not a final tax determination.</p>
+        <p>Categories marked <strong>Expense</strong> or <strong>COGS</strong> usually have a clear Schedule C destination. Categories marked <strong>Review</strong> mean the money is accounted for, but the accountant should confirm final treatment before filing.</p>
+        <p>Review items may need special handling, such as expense vs depreciation, COGS vs supplies, partial deductibility, vehicle or mileage support, meals documentation, sales tax treatment, or items temporarily parked in Needs Review.</p>
+        <p>For the accountant: please confirm whether these category mappings are appropriate, identify categories that should be split or renamed, and tell us what documentation is needed for review items.</p>
+      </div>
+
+      <div class="taxCrosswalkHeader">
+        <span>App Category</span>
+        <span>Schedule C Mapping</span>
+        <span>Notes</span>
+      </div>
+      ${rows}
+    </div>
+  `;
+
+  openModal();
+}
+
+function getTaxCrosswalkStatus(categoryName, taxMeta){
+  const treatment = String(taxMeta?.tax_treatment || "review").toLowerCase();
+  const reviewText = `${categoryName || ""} ${taxMeta?.schedule_c_reference || ""} ${taxMeta?.tax_note || ""}`.toLowerCase();
+
+  if(treatment === "cogs") return { label: "COGS", className: "cogs" };
+  if(treatment === "review" || reviewText.includes("review")) return { label: "Review", className: "review" };
+  return { label: "Expense", className: "expense" };
+}
 /* ================= SEARCH ================= */
 
 function openSearchModal(){
@@ -1274,6 +1322,8 @@ async function syncAmazonBusiness(options = {}){
           <div><strong>Amazon Business sync complete</strong></div>
           <div class="small">Order line items synced: ${escapeHtml(result.line_items ?? result.upserted ?? 0)}</div>
           <div class="small">Transaction rows created/updated: ${escapeHtml(result.transaction_rows ?? 0)}</div>
+          <div class="small">Canceled/zero-dollar Amazon rows hidden: ${escapeHtml(result.superseded_amazon_line_item_rows ?? 0)}</div>
+          ${Number(result.restored_amazon_line_item_rows || 0) ? `<div class="small">Previously hidden Amazon rows restored: ${escapeHtml(result.restored_amazon_line_item_rows)}</div>` : ""}
           <div class="small">Plaid Amazon rows hidden: ${escapeHtml(result.superseded_plaid_rows ?? 0)}</div>
           ${result.supersede_warning ? `<div class="small" style="color:#92400e;">Plaid hide warning: ${escapeHtml(result.supersede_warning)}</div>` : ""}
           <div class="small">Date range: ${escapeHtml(result.start_date || "")} to ${escapeHtml(result.end_date || "")}</div>

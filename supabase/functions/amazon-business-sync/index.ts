@@ -1,24 +1,42 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
+  amazonBusinessLineItemAmount,
+  type AmazonBusinessLineItemSupersedeReason,
+  amazonBusinessLineItemSupersedeReason,
+  type AmazonBusinessOrderLineItemsReport,
   fetchAmazonBusinessOrderLineItemReport,
   getAmazonBusinessConfig,
-  type AmazonBusinessOrderLineItemsReport,
-  type NormalizedAmazonOrderLineItem,
   normalizeAmazonBusinessMarketplaceRegion,
   normalizeAmazonBusinessRegion,
+  type NormalizedAmazonOrderLineItem,
   refreshAmazonBusinessAccessToken,
 } from "../_shared/amazon-business.ts";
-import { daysAgo, toAmazonBusinessReportDateTime, toIsoDate } from "../_shared/amazon-business-dates.ts";
+import {
+  daysAgo,
+  toAmazonBusinessReportDateTime,
+  toIsoDate,
+} from "../_shared/amazon-business-dates.ts";
 import { findAmazonPlaidSupersedeMatches } from "../_shared/amazon-business-supersede.ts";
-import { corsHeaders, HttpError, jsonResponse, parseJsonBody, toHttpError } from "../_shared/http.ts";
+import {
+  corsHeaders,
+  HttpError,
+  jsonResponse,
+  parseJsonBody,
+  toHttpError,
+} from "../_shared/http.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const AMAZON_BUSINESS_LINE_ITEM_SUPERSEDED_SOURCE = "amazon_business_line_item";
+const AMAZON_BUSINESS_LINE_ITEM_SUPERSEDED_STATUS =
+  "Superseded by Amazon Business line item";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
 
   try {
     const user = await requireUser(req);
@@ -29,12 +47,17 @@ Deno.serve(async (req) => {
     const sandboxDefaults = config.sandbox && !requestedStart && !requestedEnd;
     const orderStartDate = sandboxDefaults
       ? "2025-04-01T00:00:00Z"
-      : (toAmazonBusinessReportDateTime(requestedStart, "start") || toAmazonBusinessReportDateTime(daysAgo(120), "start"));
+      : (toAmazonBusinessReportDateTime(requestedStart, "start") ||
+        toAmazonBusinessReportDateTime(daysAgo(120), "start"));
     const orderEndDate = sandboxDefaults
       ? "2025-04-30T00:00:00Z"
-      : (toAmazonBusinessReportDateTime(requestedEnd, "end") || toAmazonBusinessReportDateTime(new Date(), "end"));
+      : (toAmazonBusinessReportDateTime(requestedEnd, "end") ||
+        toAmazonBusinessReportDateTime(new Date(), "end"));
     if (Date.parse(orderStartDate) > Date.parse(orderEndDate)) {
-      throw new HttpError(400, "Amazon Business sync start date must be before the end date");
+      throw new HttpError(
+        400,
+        "Amazon Business sync start date must be before the end date",
+      );
     }
     const requestedOrderIds = Array.isArray(body.order_ids)
       ? body.order_ids.map((id) => String(id || "").trim()).filter(Boolean)
@@ -52,11 +75,21 @@ Deno.serve(async (req) => {
       .eq("user_id", user.id)
       .maybeSingle();
 
-    if (connectionError) throw new HttpError(500, "Failed to load Amazon Business connection", connectionError);
-    if (!connection?.refresh_token) throw new HttpError(400, "Amazon Business is not connected");
+    if (connectionError) {
+      throw new HttpError(
+        500,
+        "Failed to load Amazon Business connection",
+        connectionError,
+      );
+    }
+    if (!connection?.refresh_token) {
+      throw new HttpError(400, "Amazon Business is not connected");
+    }
 
     const region = normalizeAmazonBusinessRegion(connection.region);
-    const marketplaceRegion = normalizeAmazonBusinessMarketplaceRegion(connection.marketplace_region);
+    const marketplaceRegion = normalizeAmazonBusinessMarketplaceRegion(
+      connection.marketplace_region,
+    );
     const token = await refreshAmazonBusinessAccessToken({
       refreshToken: connection.refresh_token,
       config,
@@ -71,6 +104,7 @@ Deno.serve(async (req) => {
       orderIds,
     });
     const lineItems = lineItemReport.items;
+    const syncedAt = new Date().toISOString();
 
     const rows = lineItems.map((item) => ({
       user_id: user.id,
@@ -88,8 +122,8 @@ Deno.serve(async (req) => {
       item_total: item.item_total,
       currency: item.currency,
       raw: item.raw,
-      synced_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      synced_at: syncedAt,
+      updated_at: syncedAt,
     }));
 
     let upserted = 0;
@@ -98,30 +132,61 @@ Deno.serve(async (req) => {
         .from("amazon_business_order_line_items")
         .upsert(chunk, { onConflict: "user_id,order_id,line_item_key" });
 
-      if (error) throw new HttpError(500, "Failed to store Amazon Business order lines", error);
+      if (error) {
+        throw new HttpError(
+          500,
+          "Failed to store Amazon Business order lines",
+          error,
+        );
+      }
       upserted += chunk.length;
     }
 
     const transactionRows = lineItems
-      .map((item) => toAmazonBusinessTransactionRow(user.id, item, orderEndDate))
+      .map((item) =>
+        toAmazonBusinessTransactionRow(user.id, item, orderEndDate, syncedAt)
+      )
       .filter((row): row is Record<string, unknown> => !!row);
     let transactionRowsUpserted = 0;
 
     for (const chunk of chunks(transactionRows, 500)) {
       const { error } = await supabase
         .from("transactions")
-        .upsert(chunk, { onConflict: "user_id,amazon_business_order_id,amazon_business_line_item_key" });
+        .upsert(chunk, {
+          onConflict:
+            "user_id,amazon_business_order_id,amazon_business_line_item_key",
+        });
 
-      if (error) throw new HttpError(500, "Failed to store Amazon Business transaction rows", error);
+      if (error) {
+        throw new HttpError(
+          500,
+          "Failed to store Amazon Business transaction rows",
+          error,
+        );
+      }
       transactionRowsUpserted += chunk.length;
     }
 
-    const storedOrderLineRows = await countStoredAmazonOrderLineRows(supabase, user.id, lineItems);
+    const lineItemVisibilityResult =
+      await reconcileAmazonBusinessLineItemVisibility(
+        supabase,
+        user.id,
+        lineItems,
+        syncedAt,
+      );
+    const storedOrderLineRows = await countStoredAmazonOrderLineRows(
+      supabase,
+      user.id,
+      lineItems,
+    );
     const audit = buildAmazonBusinessSyncAudit({
       report: lineItemReport,
       lineItems,
       transactionRows,
       storedOrderLineRows,
+      hiddenLineItemCount: lineItemVisibilityResult.hiddenLineItems,
+      supersededAmazonLineItemRows: lineItemVisibilityResult.supersededRows,
+      restoredAmazonLineItemRows: lineItemVisibilityResult.restoredRows,
     });
 
     const supersedeResult = await attemptSupersedeAmazonPlaidTransactions(
@@ -150,6 +215,9 @@ Deno.serve(async (req) => {
       line_items: lineItems.length,
       upserted,
       transaction_rows: transactionRowsUpserted,
+      hidden_amazon_line_items: lineItemVisibilityResult.hiddenLineItems,
+      superseded_amazon_line_item_rows: lineItemVisibilityResult.supersededRows,
+      restored_amazon_line_item_rows: lineItemVisibilityResult.restoredRows,
       superseded_plaid_rows: supersedeResult.count,
       superseded_plaid_matches: supersedeResult.matches.slice(0, 10),
       supersede_warning: supersedeResult.warning,
@@ -191,9 +259,17 @@ async function attemptSupersedeAmazonPlaidTransactions(
   lineItems: NormalizedAmazonOrderLineItem[],
   orderStartDate: string,
   orderEndDate: string,
-): Promise<{ count: number; matches: Array<Record<string, unknown>>; warning?: string }> {
+): Promise<
+  { count: number; matches: Array<Record<string, unknown>>; warning?: string }
+> {
   try {
-    return await maybeSupersedeAmazonPlaidTransactions(supabase, userId, lineItems, orderStartDate, orderEndDate);
+    return await maybeSupersedeAmazonPlaidTransactions(
+      supabase,
+      userId,
+      lineItems,
+      orderStartDate,
+      orderEndDate,
+    );
   } catch (error) {
     const httpError = toHttpError(error);
     console.error("Amazon Plaid supersede failed", {
@@ -217,9 +293,13 @@ async function countStoredAmazonOrderLineRows(
   userId: string,
   lineItems: NormalizedAmazonOrderLineItem[],
 ): Promise<number> {
-  const orderIds = Array.from(new Set(
-    lineItems.map((item) => String(item.order_id || "").trim()).filter(Boolean),
-  ));
+  const orderIds = Array.from(
+    new Set(
+      lineItems.map((item) => String(item.order_id || "").trim()).filter(
+        Boolean,
+      ),
+    ),
+  );
   let count = 0;
 
   for (const orderIdChunk of chunks(orderIds, 200)) {
@@ -229,7 +309,13 @@ async function countStoredAmazonOrderLineRows(
       .eq("user_id", userId)
       .in("order_id", orderIdChunk);
 
-    if (error) throw new HttpError(500, "Failed to audit stored Amazon Business order lines", error);
+    if (error) {
+      throw new HttpError(
+        500,
+        "Failed to audit stored Amazon Business order lines",
+        error,
+      );
+    }
     count += chunkCount || 0;
   }
 
@@ -241,31 +327,54 @@ function buildAmazonBusinessSyncAudit(input: {
   lineItems: NormalizedAmazonOrderLineItem[];
   transactionRows: Record<string, unknown>[];
   storedOrderLineRows: number;
+  hiddenLineItemCount: number;
+  supersededAmazonLineItemRows: number;
+  restoredAmazonLineItemRows: number;
 }): Record<string, unknown> {
-  const uniqueKeys = new Set(input.lineItems.map((item) => `${item.order_id}::${item.line_item_key}`));
-  const missingOrderIdCount = input.lineItems.filter((item) => item.order_id === "unknown-order").length;
-  const missingTitleCount = input.lineItems.filter((item) => !item.title).length;
-  const missingAmountCount = input.lineItems.filter((item) => moneyAmount(item) === null).length;
-  const duplicateKeyCount = Math.max(0, input.lineItems.length - uniqueKeys.size);
+  const uniqueKeys = new Set(
+    input.lineItems.map((item) => `${item.order_id}::${item.line_item_key}`),
+  );
+  const missingOrderIdCount =
+    input.lineItems.filter((item) => item.order_id === "unknown-order").length;
+  const missingTitleCount =
+    input.lineItems.filter((item) => !item.title).length;
+  const missingAmountCount =
+    input.lineItems.filter((item) => moneyAmount(item) === null).length;
+  const duplicateKeyCount = Math.max(
+    0,
+    input.lineItems.length - uniqueKeys.size,
+  );
   const warnings: string[] = [];
 
   if (input.report.raw_count !== input.lineItems.length) {
-    warnings.push("Amazon raw line item count did not match normalized line item count.");
+    warnings.push(
+      "Amazon raw line item count did not match normalized line item count.",
+    );
   }
   if (duplicateKeyCount > 0) {
-    warnings.push(`${duplicateKeyCount} duplicate Amazon order/line keys were returned.`);
+    warnings.push(
+      `${duplicateKeyCount} duplicate Amazon order/line keys were returned.`,
+    );
   }
   if (input.storedOrderLineRows < uniqueKeys.size) {
-    warnings.push("Stored Amazon line item row count is lower than fetched unique line items.");
+    warnings.push(
+      "Stored Amazon line item row count is lower than fetched unique line items.",
+    );
   }
   if (missingOrderIdCount > 0) {
-    warnings.push(`${missingOrderIdCount} Amazon line items were missing order IDs.`);
+    warnings.push(
+      `${missingOrderIdCount} Amazon line items were missing order IDs.`,
+    );
   }
   if (missingAmountCount > 0) {
-    warnings.push(`${missingAmountCount} Amazon line items had no usable amount and were not converted to review transactions.`);
+    warnings.push(
+      `${missingAmountCount} Amazon line items had no usable amount and were not converted to review transactions.`,
+    );
   }
   if (missingTitleCount > 0) {
-    warnings.push(`${missingTitleCount} Amazon line items were missing product titles.`);
+    warnings.push(
+      `${missingTitleCount} Amazon line items were missing product titles.`,
+    );
   }
 
   return {
@@ -277,6 +386,9 @@ function buildAmazonBusinessSyncAudit(input: {
     duplicate_key_count: duplicateKeyCount,
     stored_order_line_rows: input.storedOrderLineRows,
     transaction_rows: input.transactionRows.length,
+    hidden_line_items: input.hiddenLineItemCount,
+    superseded_amazon_line_item_rows: input.supersededAmazonLineItemRows,
+    restored_amazon_line_item_rows: input.restoredAmazonLineItemRows,
     missing_order_id_count: missingOrderIdCount,
     missing_title_count: missingTitleCount,
     missing_amount_count: missingAmountCount,
@@ -289,15 +401,20 @@ function toAmazonBusinessTransactionRow(
   userId: string,
   item: NormalizedAmazonOrderLineItem,
   fallbackDateTime: string,
+  syncedAt: string,
 ): Record<string, unknown> | null {
   const amount = moneyAmount(item);
   if (amount === null) return null;
 
-  const date = toIsoDate(item.order_date || fallbackDateTime) || toIsoDate(new Date());
-  const title = item.title || item.asin || `Amazon Business order ${item.order_id}`;
+  const date = toIsoDate(item.order_date || fallbackDateTime) ||
+    toIsoDate(new Date());
+  const title = item.title || item.asin ||
+    `Amazon Business order ${item.order_id}`;
+  const supersedeReason = amazonBusinessLineItemSupersedeReason(item);
 
-  // Keep category, splits, and review fields out of sync upserts so reruns preserve user-reviewed accounting state.
-  return {
+  // Keep category and split fields out of sync upserts so reruns preserve user-reviewed accounting state.
+  // Canceled/zero-dollar Amazon lines are the exception: they intentionally supersede review fields below.
+  const row: Record<string, unknown> = {
     user_id: userId,
     date,
     amount,
@@ -309,17 +426,100 @@ function toAmazonBusinessTransactionRow(
     amazon_business_order_id: item.order_id,
     amazon_business_line_item_key: item.line_item_key,
   };
+
+  if (supersedeReason) {
+    Object.assign(
+      row,
+      amazonBusinessLineItemSupersedePatch(supersedeReason, syncedAt),
+    );
+  }
+
+  return row;
 }
 
 function moneyAmount(item: NormalizedAmazonOrderLineItem): number | null {
-  const amount = item.item_total ?? sumMoney(item.item_subtotal, item.item_tax) ?? item.item_subtotal;
-  if (!Number.isFinite(Number(amount))) return null;
-  return Math.round(Math.abs(Number(amount)) * 100) / 100;
+  return amazonBusinessLineItemAmount(item);
 }
 
-function sumMoney(left: number | null, right: number | null): number | null {
-  if (left === null && right === null) return null;
-  return Math.round(((left || 0) + (right || 0)) * 100) / 100;
+function amazonBusinessLineItemSupersedePatch(
+  reason: AmazonBusinessLineItemSupersedeReason,
+  syncedAt: string,
+): Record<string, unknown> {
+  return {
+    superseded_by_source: AMAZON_BUSINESS_LINE_ITEM_SUPERSEDED_SOURCE,
+    superseded_at: syncedAt,
+    review_status: AMAZON_BUSINESS_LINE_ITEM_SUPERSEDED_STATUS,
+    review_note: reason === "canceled"
+      ? "Hidden from normal review because Amazon Business reported this order line as canceled."
+      : "Hidden from normal review because Amazon Business reported this order line with a zero-dollar amount.",
+  };
+}
+
+async function reconcileAmazonBusinessLineItemVisibility(
+  supabase: any,
+  userId: string,
+  lineItems: NormalizedAmazonOrderLineItem[],
+  syncedAt: string,
+): Promise<
+  { hiddenLineItems: number; supersededRows: number; restoredRows: number }
+> {
+  let hiddenLineItems = 0;
+  let supersededRows = 0;
+  let restoredRows = 0;
+
+  for (const item of lineItems) {
+    const supersedeReason = amazonBusinessLineItemSupersedeReason(item);
+    if (!supersedeReason) continue;
+    hiddenLineItems += 1;
+
+    const { data, error } = await supabase
+      .from("transactions")
+      .update(amazonBusinessLineItemSupersedePatch(supersedeReason, syncedAt))
+      .eq("user_id", userId)
+      .eq("source", "amazon_business")
+      .eq("amazon_business_order_id", item.order_id)
+      .eq("amazon_business_line_item_key", item.line_item_key)
+      .select("id");
+
+    if (error) {
+      throw new HttpError(
+        500,
+        "Failed to hide canceled or zero-dollar Amazon Business transaction rows",
+        error,
+      );
+    }
+    supersededRows += data?.length || 0;
+  }
+
+  for (const item of lineItems) {
+    if (amazonBusinessLineItemSupersedeReason(item)) continue;
+
+    const { data, error } = await supabase
+      .from("transactions")
+      .update({
+        superseded_by_source: null,
+        superseded_at: null,
+        review_status: null,
+        review_note: null,
+      })
+      .eq("user_id", userId)
+      .eq("source", "amazon_business")
+      .eq("amazon_business_order_id", item.order_id)
+      .eq("amazon_business_line_item_key", item.line_item_key)
+      .eq("superseded_by_source", AMAZON_BUSINESS_LINE_ITEM_SUPERSEDED_SOURCE)
+      .select("id");
+
+    if (error) {
+      throw new HttpError(
+        500,
+        "Failed to restore active Amazon Business transaction rows",
+        error,
+      );
+    }
+    restoredRows += data?.length || 0;
+  }
+
+  return { hiddenLineItems, supersededRows, restoredRows };
 }
 
 async function maybeSupersedeAmazonPlaidTransactions(
@@ -331,11 +531,19 @@ async function maybeSupersedeAmazonPlaidTransactions(
 ): Promise<{ count: number; matches: Array<Record<string, unknown>> }> {
   if (!lineItems.length) return { count: 0, matches: [] };
 
-  const mode = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID_MODE") || "all").toLowerCase();
-  const legacyBroadEnabled = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID") || "").toLowerCase() === "true";
+  const mode = (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID_MODE") || "all")
+    .toLowerCase();
+  const legacyBroadEnabled =
+    (Deno.env.get("AMAZON_BUSINESS_SUPERSEDE_PLAID") || "").toLowerCase() ===
+      "true";
   if (mode === "off") return { count: 0, matches: [] };
   if (legacyBroadEnabled || mode === "all") {
-    return broadSupersedeAmazonPlaidTransactions(supabase, userId, orderStartDate, orderEndDate);
+    return broadSupersedeAmazonPlaidTransactions(
+      supabase,
+      userId,
+      orderStartDate,
+      orderEndDate,
+    );
   }
 
   const { data: candidates, error: candidateError } = await supabase
@@ -346,13 +554,22 @@ async function maybeSupersedeAmazonPlaidTransactions(
     .is("superseded_at", null)
     .or("merchant_name.ilike.%amazon%,name.ilike.%amazon%");
 
-  if (candidateError) throw new HttpError(500, "Failed to load Amazon Plaid match candidates", candidateError);
+  if (candidateError) {
+    throw new HttpError(
+      500,
+      "Failed to load Amazon Plaid match candidates",
+      candidateError,
+    );
+  }
 
-  const matches = findAmazonPlaidSupersedeMatches(candidates || [], lineItems.map((item) => ({
-    order_id: item.order_id,
-    order_date: item.order_date,
-    amount: moneyAmount(item),
-  })));
+  const matches = findAmazonPlaidSupersedeMatches(
+    candidates || [],
+    lineItems.map((item) => ({
+      order_id: item.order_id,
+      order_date: item.order_date,
+      amount: moneyAmount(item),
+    })),
+  );
   if (!matches.length) return { count: 0, matches: [] };
 
   const { data, error } = await supabase
@@ -361,13 +578,20 @@ async function maybeSupersedeAmazonPlaidTransactions(
       superseded_by_source: "amazon_business",
       superseded_at: new Date().toISOString(),
       review_status: "Superseded by Amazon Business",
-      review_note: "Hidden from normal review because Amazon Business order line items matched this Plaid Amazon charge by date and amount.",
+      review_note:
+        "Hidden from normal review because Amazon Business order line items matched this Plaid Amazon charge by date and amount.",
     })
     .eq("user_id", userId)
     .in("id", matches.map((match) => match.transaction_id))
     .select("id");
 
-  if (error) throw new HttpError(500, "Failed to supersede matched Amazon Plaid transactions", error);
+  if (error) {
+    throw new HttpError(
+      500,
+      "Failed to supersede matched Amazon Plaid transactions",
+      error,
+    );
+  }
   return { count: data?.length || 0, matches };
 }
 
@@ -390,7 +614,13 @@ async function broadSupersedeAmazonPlaidTransactions(
     .lte("date", endDate)
     .or("merchant_name.ilike.%amazon%,name.ilike.%amazon%");
 
-  if (candidateError) throw new HttpError(500, "Failed to load Amazon Plaid transactions to hide", candidateError);
+  if (candidateError) {
+    throw new HttpError(
+      500,
+      "Failed to load Amazon Plaid transactions to hide",
+      candidateError,
+    );
+  }
 
   const ids = (candidates || [])
     .map((row: Record<string, unknown>) => String(row.id || "").trim())
@@ -405,13 +635,20 @@ async function broadSupersedeAmazonPlaidTransactions(
         superseded_by_source: "amazon_business",
         superseded_at: new Date().toISOString(),
         review_status: "Superseded by Amazon Business",
-        review_note: "Hidden from normal review because Amazon Business line-item rows are now the source of record.",
+        review_note:
+          "Hidden from normal review because Amazon Business line-item rows are now the source of record.",
       })
       .eq("user_id", userId)
       .in("id", idChunk)
       .select("id");
 
-    if (error) throw new HttpError(500, "Failed to mark Amazon Plaid transactions hidden", error);
+    if (error) {
+      throw new HttpError(
+        500,
+        "Failed to mark Amazon Plaid transactions hidden",
+        error,
+      );
+    }
     count += data?.length || 0;
   }
 
@@ -422,7 +659,17 @@ function sanitizeHttpErrorDetails(details: unknown): unknown {
   if (!details || typeof details !== "object") return undefined;
   const record = details as Record<string, unknown>;
   const sanitized: Record<string, unknown> = {};
-  for (const key of ["status", "request_id", "body", "code", "message", "details", "hint"]) {
+  for (
+    const key of [
+      "status",
+      "request_id",
+      "body",
+      "code",
+      "message",
+      "details",
+      "hint",
+    ]
+  ) {
     if (record[key] !== undefined) sanitized[key] = record[key];
   }
   return Object.keys(sanitized).length ? sanitized : undefined;
