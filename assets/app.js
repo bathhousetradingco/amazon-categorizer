@@ -588,11 +588,11 @@ window.addEventListener("DOMContentLoaded", () => {
 
 const categories=[
 {
-name:"COGS - Ingredients",
-class:"cogs",
+name:"Inventory - Raw Materials",
+class:"inventory",
 description:`
 <strong>Definition:</strong><br>
-Raw materials that physically become part of a finished Bathhouse product.<br><br>
+Raw materials purchased for inventory that physically become part of a finished Bathhouse product.<br><br>
 
 <strong>Examples:</strong><br>
 • Olive oil, coconut oil, shea butter<br>
@@ -608,15 +608,17 @@ Raw materials that physically become part of a finished Bathhouse product.<br><b
 • Soap nuts for cleaning<br>
 • Store hand soap<br><br>
 
-Ask yourself: Does this physically go inside the product being sold?
+Ask yourself: Does this physically go inside the product being sold?<br><br>
+
+Note: These purchases feed inventory. Shopify or period-end inventory records calculate COGS when units are sold.
 `
 },
 {
-name:"COGS - Packaging",
-class:"cogs",
+name:"Inventory - Packaging",
+class:"inventory",
 description:`
 <strong>Definition:</strong><br>
-Packaging that becomes part of the product at time of sale.<br><br>
+Packaging purchased for inventory that becomes part of the product at time of sale.<br><br>
 
 <strong>Examples:</strong><br>
 • Soap boxes<br>
@@ -634,26 +636,30 @@ Packaging that becomes part of the product at time of sale.<br><br>
 • Packing tape<br>
 • Shipping labels<br><br>
 
-Rule: If it stays attached to the product itself → Packaging.
+Rule: If it stays attached to the product itself → Packaging.<br><br>
+
+Note: These purchases feed inventory. Shopify or period-end inventory records calculate COGS when units are sold.
 `
 },
 {
-name:"COGS - Resale Inventory",
-class:"cogs",
+name:"Inventory - Resale",
+class:"inventory",
 description:`
-Items purchased finished and resold without modification.<br><br>
+Finished items purchased into inventory and resold without modification.<br><br>
 
 Examples:<br>
 • Pumice stones sold as-is<br>
 • Sleep masks<br>
-• Wholesale accessories<br>
+• Wholesale accessories<br><br>
+
+Note: These purchases feed inventory. Shopify or period-end inventory records calculate COGS when units are sold.
 `
 },
 {
-name:"COGS - Production Supplies",
-class:"cogs",
+name:"Production Supplies",
+class:"expense",
 description:`
-Consumables used during production but not in final product.<br><br>
+Operating/overhead supplies used during production but not sold as part of the final product.<br><br>
 
 Examples:<br>
 • Gloves<br>
@@ -661,18 +667,12 @@ Examples:<br>
 • Alcohol for sanitizing<br>
 • Paper towels used in production<br>
 • Mold liners<br>
-`
-},
-{
-name:"COGS - Shipping from Suppliers",
-class:"cogs",
-description:`
-Freight-in paid to receive ingredients or inventory.<br><br>
+• Small production buckets or containers used as supplies<br><br>
 
-Examples:<br>
-• Shipping from Wholesale Supplies Plus<br>
-• Freight charges on jars<br>
-• UPS cost from ingredient vendors<br>
+Does NOT include:<br>
+• Raw materials that go into products<br>
+• Product packaging that stays with products<br>
+• Durable equipment or fixed assets
 `
 },
 {
@@ -848,6 +848,13 @@ description:`If unsure, temporarily park the transaction here.`
 ];
 const categoryAliases = {
 
+  // Inventory rename
+  "COGS - Ingredients": "Inventory - Raw Materials",
+  "COGS - Packaging": "Inventory - Packaging",
+  "COGS - Resale Inventory": "Inventory - Resale",
+  "COGS - Resell Inventory": "Inventory - Resale",
+  "COGS - Production Supplies": "Production Supplies",
+
   // Software rename
   "Software": "Software & Subscriptions",
 
@@ -871,9 +878,6 @@ const categoryAliases = {
   // Office rename (choose correct destination)
   "Office / Admin": "Office Supplies",
 
-  // Old spelling
-  "COGS - Resell Inventory": "COGS - Resale Inventory",
-
   // Explicit no category
   "NO CATEGORY": "Needs Review",
 
@@ -885,31 +889,39 @@ const categoryAliases = {
 
 };
 
+const deprecatedCategoryNames = new Set([
+  "COGS - Shipping from Suppliers",
+]);
+
+function isDeprecatedCategoryName(name){
+  return deprecatedCategoryNames.has(String(name || "").trim());
+}
+
 const categoryTaxMetadata = {
-  "COGS - Ingredients": {
-    tax_treatment: "cogs",
-    schedule_c_reference: "Schedule C Part III - Cost of Goods Sold",
-    tax_note: "Direct materials that become part of inventory.",
+  "Inventory - Raw Materials": {
+    tax_treatment: "inventory",
+    schedule_c_reference: "Inventory asset - feeds Shopify/period-end COGS calculation",
+    tax_note: "Direct materials tracked as inventory until sold/consumed in calculated COGS.",
   },
-  "COGS - Packaging": {
-    tax_treatment: "cogs",
-    schedule_c_reference: "Schedule C Part III - Cost of Goods Sold",
-    tax_note: "Packaging that stays with inventory at sale.",
+  "Inventory - Packaging": {
+    tax_treatment: "inventory",
+    schedule_c_reference: "Inventory asset - feeds Shopify/period-end COGS calculation",
+    tax_note: "Product packaging tracked as inventory until sold/consumed in calculated COGS.",
   },
-  "COGS - Resale Inventory": {
-    tax_treatment: "cogs",
-    schedule_c_reference: "Schedule C Part III - Cost of Goods Sold",
-    tax_note: "Finished goods purchased for resale.",
+  "Inventory - Resale": {
+    tax_treatment: "inventory",
+    schedule_c_reference: "Inventory asset - feeds Shopify/period-end COGS calculation",
+    tax_note: "Finished goods purchased for resale and tracked as inventory until sold.",
   },
-  "COGS - Production Supplies": {
-    tax_treatment: "review",
-    schedule_c_reference: "Review - COGS vs Line 22 Supplies",
-    tax_note: "Indirect production consumables may need accountant review before filing.",
+  "Production Supplies": {
+    tax_treatment: "expense",
+    schedule_c_reference: "Schedule C Line 22 - Supplies",
+    tax_note: "Operating production supplies and overhead consumables that do not become inventory.",
   },
   "COGS - Shipping from Suppliers": {
-    tax_treatment: "cogs",
-    schedule_c_reference: "Schedule C Part III - Cost of Goods Sold",
-    tax_note: "Freight-in commonly attaches to inventory cost.",
+    tax_treatment: "review",
+    schedule_c_reference: "Deprecated - review and fold into related inventory cost",
+    tax_note: "Legacy supplier-freight category. Do not use for customer shipping; review any remaining rows and attach to the related inventory bucket if needed.",
   },
   "Shipping Supplies": {
     tax_treatment: "expense",
@@ -1024,19 +1036,21 @@ function getCategoryTaxMetadata(name){
 }
 
 function inferTaxGroup(taxTreatment){
+  if(taxTreatment === "inventory") return "inventory";
   if(taxTreatment === "cogs") return "cogs";
   if(taxTreatment === "expense") return "operating_expense";
   return "review";
 }
 
 function inferDeductionTreatment(taxTreatment){
+  if(taxTreatment === "inventory") return "inventory_asset_until_sold";
   if(taxTreatment === "cogs") return "inventory_or_cogs";
   if(taxTreatment === "expense") return "generally_deductible";
   return "review";
 }
 
 const taxCrosswalkReviewReasons = {
-  "COGS - Production Supplies": "Could be COGS if directly tied to production, or supplies expense if more general/indirect.",
+  "COGS - Shipping from Suppliers": "Deprecated legacy category. Review any remaining rows and fold them into the related inventory cost if they are separate supplier freight.",
   "Shipping Supplies": "Customer-order shipping materials may be reported as supplies or as another operating expense.",
   "Equipment & Fixed Assets": "Durable assets may need current expense, de minimis safe harbor, Section 179, or depreciation treatment.",
   "Meals & Refreshments": "Food and beverage deductions can be limited or nondeductible and need business purpose support.",
@@ -1071,8 +1085,9 @@ function openTaxCrosswalkModal(){
     <div class="taxCrosswalkPanel">
       <div class="taxCrosswalkIntro">
         <p>This crosswalk shows how each app category generally maps to Schedule C reporting buckets. It is a planning guide, not a final tax determination.</p>
-        <p>Categories marked <strong>Expense</strong> or <strong>COGS</strong> usually have a clear Schedule C destination. Categories marked <strong>Review</strong> mean the money is accounted for, but the accountant should confirm final treatment before filing.</p>
-        <p>Review items may need special handling, such as expense vs depreciation, COGS vs supplies, partial deductibility, vehicle or mileage support, meals documentation, sales tax treatment, or items temporarily parked in Needs Review.</p>
+        <p>Categories marked <strong>Inventory</strong> track purchases that feed Shopify or period-end COGS calculations. They are not manually treated as units-sold COGS in this app.</p>
+        <p>Categories marked <strong>Expense</strong> usually have a clear Schedule C destination. Categories marked <strong>Review</strong> mean the money is accounted for, but the accountant should confirm final treatment before filing.</p>
+        <p>Review items may need special handling, such as expense vs depreciation, partial deductibility, vehicle or mileage support, meals documentation, sales tax treatment, legacy supplier freight, or items temporarily parked in Needs Review.</p>
         <p>For the accountant: please confirm whether these category mappings are appropriate, identify categories that should be split or renamed, and tell us what documentation is needed for review items.</p>
       </div>
 
@@ -1092,6 +1107,7 @@ function getTaxCrosswalkStatus(categoryName, taxMeta){
   const treatment = String(taxMeta?.tax_treatment || "review").toLowerCase();
   const reviewText = `${categoryName || ""} ${taxMeta?.schedule_c_reference || ""} ${taxMeta?.tax_note || ""}`.toLowerCase();
 
+  if(treatment === "inventory") return { label: "Inventory", className: "inventory" };
   if(treatment === "cogs") return { label: "COGS", className: "cogs" };
   if(treatment === "review" || reviewText.includes("review")) return { label: "Review", className: "review" };
   return { label: "Expense", className: "expense" };
@@ -4087,7 +4103,7 @@ function buildSplitSummaryHTML(item){
   const bucketTotals = {};
 
   item.Splits.forEach(s => {
-    const category = s.Category || "Uncategorized";
+    const category = normalizeCategoryName(s.Category || "Uncategorized");
     const cents = Math.round(parseFloat(s.Amount || 0) * 100);
     bucketTotals[category] = (bucketTotals[category] || 0) + cents;
   });
@@ -4325,10 +4341,7 @@ function showCategoryBreakdown(categoryName){
     const d = data[i];
 
     // Normalize main category
-    let normalizedCategory = d.Category;
-    if(categoryAliases[normalizedCategory]){
-      normalizedCategory = categoryAliases[normalizedCategory];
-    }
+    let normalizedCategory = normalizeCategoryName(d.Category);
 
     if(normalizedCategory === categoryName){
       currentCategoryBreakdownRows.push({
@@ -4352,10 +4365,7 @@ function showCategoryBreakdown(categoryName){
     if(d.Splits && d.Splits.length){
       d.Splits.forEach(s => {
 
-        let splitCategory = s.Category;
-        if(categoryAliases[splitCategory]){
-          splitCategory = categoryAliases[splitCategory];
-        }
+        let splitCategory = normalizeCategoryName(s.Category);
 
         if(splitCategory === categoryName){
           currentCategoryBreakdownRows.push({
@@ -4435,11 +4445,14 @@ function buildExportRows(indexes = getVisibleIndexes()){
 
     if(Array.isArray(item.Splits) && item.Splits.length){
       item.Splits.forEach((split) => {
-        const categoryName = normalizeCategoryName(split.Category || "Needs Review");
+        const rawCategoryName = String(split.Category || "Needs Review").trim() || "Needs Review";
+        const categoryName = normalizeCategoryName(rawCategoryName);
         const taxMeta = getCategoryTaxMetadata(categoryName);
         rows.push({
           ...base,
           Category: categoryName,
+          "Original Category": rawCategoryName === categoryName ? "" : rawCategoryName,
+          "Category Status": isDeprecatedCategoryName(rawCategoryName) ? "Deprecated - review required" : "Active",
           Amount: normalizeMoney(split.Amount),
           "Split Transaction": "Yes",
           "Source Product Number": split.SourceProductNumber || "",
@@ -4458,11 +4471,14 @@ function buildExportRows(indexes = getVisibleIndexes()){
       return;
     }
 
-    const categoryName = normalizeCategoryName(item.Category || "Needs Review");
+    const rawCategoryName = String(item.Category || "Needs Review").trim() || "Needs Review";
+    const categoryName = normalizeCategoryName(rawCategoryName);
     const taxMeta = getCategoryTaxMetadata(categoryName);
     rows.push({
       ...base,
       Category: categoryName,
+      "Original Category": rawCategoryName === categoryName ? "" : rawCategoryName,
+      "Category Status": isDeprecatedCategoryName(rawCategoryName) ? "Deprecated - review required" : "Active",
       Amount: normalizeMoney(item.Amount),
       "Split Transaction": "No",
       "Source Product Number": "",
@@ -4513,6 +4529,8 @@ function buildReviewRows(rows){
       Vendor: row.Vendor,
       Description: row.Description,
       Category: row.Category,
+      "Original Category": row["Original Category"],
+      "Category Status": row["Category Status"],
       Amount: row.Amount,
       "Transaction Amount": row["Transaction Amount"],
       "Split Transaction": row["Split Transaction"],
@@ -4544,6 +4562,22 @@ function formatWorksheetNumbers(ws, amountColumnIndexes = []){
       }
     });
   }
+}
+
+function getWorksheetColumnIndexes(ws, headers){
+  const wanted = new Set((headers || []).map((header) => String(header || "")));
+  const range = XLSX.utils.decode_range(ws["!ref"] || "A1:A1");
+  const indexes = [];
+
+  for(let c = range.s.c; c <= range.e.c; c++){
+    const address = XLSX.utils.encode_cell({ r: range.s.r, c });
+    const cell = ws[address];
+    if(cell && wanted.has(String(cell.v || ""))){
+      indexes.push(c);
+    }
+  }
+
+  return indexes;
 }
 
 function exportCurrentCategoryBreakdown(){
@@ -4826,7 +4860,7 @@ function showCard(){
 
   const categoryLabel = item.Splits && item.Splits.length
     ? "Split transaction"
-    : (item.Category || "Uncategorized");
+    : normalizeCategoryName(item.Category || "Uncategorized");
 
   currentCategory.innerHTML = `<div class="currentCategoryRow"><span class="currentCategoryBadge">Current Category: ${escapeHtml(categoryLabel)}</span></div>`;
   renderCategories();
@@ -4852,11 +4886,13 @@ function updateTotals(){
         return; // skip uncategorized entirely
       }
 
-      if(categoryAliases[cat]){
-        cat = categoryAliases[cat];
-      }
+      cat = normalizeCategoryName(cat);
 
       const cents = Math.round(normalizeMoney(amount) * 100);
+
+      if(totalsObj[cat] == null && isDeprecatedCategoryName(cat)){
+        totalsObj[cat] = 0;
+      }
 
       if(totalsObj[cat] != null){
         totalsObj[cat] += cents;
@@ -4908,17 +4944,17 @@ progressText.innerText=`${done} of ${total} categorized (${percent}%)`;
 function exportExcel(){
 const exportRows = buildExportRows();
 const detailWs = XLSX.utils.json_to_sheet(exportRows);
-formatWorksheetNumbers(detailWs, [6, 8]);
+formatWorksheetNumbers(detailWs, getWorksheetColumnIndexes(detailWs, ["Transaction Amount", "Amount"]));
 
 const summaryByCategoryWs = XLSX.utils.json_to_sheet(buildSummaryRows(exportRows, "Category"));
-formatWorksheetNumbers(summaryByCategoryWs, [1]);
+formatWorksheetNumbers(summaryByCategoryWs, getWorksheetColumnIndexes(summaryByCategoryWs, ["Amount"]));
 
 const summaryByTaxWs = XLSX.utils.json_to_sheet(buildSummaryRows(exportRows, "Schedule C Reference"));
-formatWorksheetNumbers(summaryByTaxWs, [1]);
+formatWorksheetNumbers(summaryByTaxWs, getWorksheetColumnIndexes(summaryByTaxWs, ["Amount"]));
 
 const reviewRows = buildReviewRows(exportRows);
 const reviewWs = XLSX.utils.json_to_sheet(reviewRows.length ? reviewRows : [{ Note: "No review items." }]);
-if(reviewRows.length) formatWorksheetNumbers(reviewWs, [4, 5]);
+if(reviewRows.length) formatWorksheetNumbers(reviewWs, getWorksheetColumnIndexes(reviewWs, ["Amount", "Transaction Amount"]));
 
 const wb = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb, detailWs, "Detail");
@@ -4941,6 +4977,10 @@ function buildQaReviewRows(){
       issues.push("Uncategorized transaction");
     }
 
+    if((!item.Splits || !item.Splits.length) && isDeprecatedCategoryName(item.Category)){
+      issues.push("Deprecated category: supplier freight needs review");
+    }
+
     if(item.ReviewStatus && item.ReviewStatus !== "Deductible"){
       issues.push(item.ReviewStatus);
     }
@@ -4950,10 +4990,13 @@ function buildQaReviewRows(){
     }
 
     (item.Splits || []).forEach((split) => {
+      const rawSplitCategory = String(split.Category || "").trim();
       const splitCategory = normalizeCategoryName(split.Category || "Needs Review");
       const splitTaxMeta = getCategoryTaxMetadata(splitCategory);
       const splitReviewStatus = String(split.ReviewStatus || "").trim();
-      if(splitReviewStatus && splitReviewStatus !== "Deductible"){
+      if(isDeprecatedCategoryName(rawSplitCategory)){
+        issues.push(`Split: deprecated supplier freight category (${splitCategory})`);
+      } else if(splitReviewStatus && splitReviewStatus !== "Deductible"){
         issues.push(`Split: ${splitReviewStatus} (${splitCategory})`);
       } else if(splitTaxMeta.tax_treatment === "review"){
         issues.push(`Split: review-tax category (${splitCategory})`);

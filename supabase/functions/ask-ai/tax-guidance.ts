@@ -84,14 +84,35 @@ export function lookupTaxGuidance(
   ) {
     return guidance(availableCategories, {
       id: "resale-inventory",
-      categories: ["COGS - Resale Inventory", "Needs Review"],
+      categories: [
+        "Inventory - Resale",
+        "COGS - Resale Inventory",
+        "Needs Review",
+      ],
       deduction_status: "Deductible",
       confidence: "High",
       reasoning:
         "The item is bought for resale without becoming an operating supply.",
       tax_consideration:
-        "Inventory bought for resale normally belongs in COGS/inventory tracking rather than office or supplies expense.",
+        "Inventory bought for resale belongs in inventory tracking rather than office or supplies expense. Final COGS should come from units sold or period-end inventory records.",
       source_summary: "Schedule C Part III COGS/inventory treatment.",
+    });
+  }
+
+  if (
+    /\b(freight in|inbound shipping|shipping from supplier|supplier shipping|shipping for ingredients|shipping for jars|freight charge)\b/
+      .test(combinedText)
+  ) {
+    return guidance(availableCategories, {
+      id: "freight-in",
+      categories: ["Needs Review"],
+      deduction_status: "Review Required",
+      confidence: "High",
+      reasoning:
+        "Shipping paid to receive inventory, ingredients, or product packaging is supplier freight, not customer shipping.",
+      tax_consideration:
+        "The old supplier-shipping category is deprecated. Review the receipt and fold this amount into the related inventory bucket if it was separately stated.",
+      source_summary: "Schedule C inventory/freight-in treatment.",
     });
   }
 
@@ -102,13 +123,13 @@ export function lookupTaxGuidance(
   ) {
     return guidance(availableCategories, {
       id: "product-packaging",
-      categories: ["COGS - Packaging", "Needs Review"],
+      categories: ["Inventory - Packaging", "COGS - Packaging", "Needs Review"],
       deduction_status: "Deductible",
       confidence: "High",
       reasoning:
-        "Packaging or labels that stay with the product at sale belong with product cost rather than office supplies.",
+        "Packaging or labels that stay with the product at sale belong with inventory/product cost rather than office supplies.",
       tax_consideration:
-        "Keep product packaging separate from shipping materials and general office consumables.",
+        "Keep product packaging separate from shipping materials and general office consumables. Final COGS should come from units sold or period-end inventory records.",
       source_summary: "Schedule C Part III COGS/inventory support.",
     });
   }
@@ -116,32 +137,19 @@ export function lookupTaxGuidance(
   if (isProductInputUseCase(useText)) {
     return guidance(availableCategories, {
       id: "product-input",
-      categories: ["COGS - Ingredients", "Needs Review"],
+      categories: [
+        "Inventory - Raw Materials",
+        "COGS - Ingredients",
+        "Needs Review",
+      ],
       deduction_status: "Deductible",
       confidence: "Medium",
       reasoning:
-        "The explanation says the item is used as a product input, so the business-use category should follow inventory/COGS rather than a general expense bucket.",
+        "The explanation says the item is used as a product input, so the business-use category should follow raw-material inventory rather than a general expense bucket.",
       tax_consideration:
-        "Confirm the item physically becomes part of products sold before treating it as COGS.",
+        "Confirm the item physically becomes part of products sold before treating it as inventory. Final COGS should come from units sold or period-end inventory records.",
       source_summary:
         "Schedule C distinguishes inventory/COGS from ordinary expense categories.",
-    });
-  }
-
-  if (
-    /\b(freight in|inbound shipping|shipping from supplier|supplier shipping|shipping for ingredients|shipping for jars|freight charge)\b/
-      .test(combinedText)
-  ) {
-    return guidance(availableCategories, {
-      id: "freight-in",
-      categories: ["COGS - Shipping from Suppliers", "Needs Review"],
-      deduction_status: "Deductible",
-      confidence: "High",
-      reasoning:
-        "Shipping paid to receive inventory, ingredients, or product packaging is freight-in.",
-      tax_consideration:
-        "Freight-in commonly attaches to inventory/product cost rather than customer-delivery expense.",
-      source_summary: "Schedule C COGS freight-in treatment.",
     });
   }
 

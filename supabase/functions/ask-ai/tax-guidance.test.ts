@@ -7,10 +7,10 @@ import {
 import type { AskAiCategory } from "./prompt.ts";
 
 const categories: AskAiCategory[] = [
-  { name: "COGS - Ingredients" },
-  { name: "COGS - Packaging" },
-  { name: "COGS - Resale Inventory" },
-  { name: "COGS - Shipping from Suppliers" },
+  { name: "Inventory - Raw Materials" },
+  { name: "Inventory - Packaging" },
+  { name: "Inventory - Resale" },
+  { name: "Production Supplies" },
   { name: "Shipping Supplies" },
   { name: "Shipping to Customers" },
   { name: "Advertising & Marketing" },
@@ -126,7 +126,7 @@ Deno.test("lookupTaxGuidance routes product inputs to COGS ingredients", () => {
     },
   }, categories);
 
-  assertEquals(guidance?.recommended_category, "COGS - Ingredients");
+  assertEquals(guidance?.recommended_category, "Inventory - Raw Materials");
 });
 
 Deno.test("lookupTaxGuidance routes product labels to COGS packaging", () => {
@@ -137,7 +137,7 @@ Deno.test("lookupTaxGuidance routes product labels to COGS packaging", () => {
     },
   }, categories);
 
-  assertEquals(guidance?.recommended_category, "COGS - Packaging");
+  assertEquals(guidance?.recommended_category, "Inventory - Packaging");
 });
 
 Deno.test("lookupTaxGuidance understands Bathhouse product packaging terms", () => {
@@ -148,7 +148,7 @@ Deno.test("lookupTaxGuidance understands Bathhouse product packaging terms", () 
     },
   }, categories);
 
-  assertEquals(guidance?.recommended_category, "COGS - Packaging");
+  assertEquals(guidance?.recommended_category, "Inventory - Packaging");
 });
 
 Deno.test("lookupTaxGuidance understands Bathhouse product ingredient terms", () => {
@@ -159,7 +159,7 @@ Deno.test("lookupTaxGuidance understands Bathhouse product ingredient terms", ()
     },
   }, categories);
 
-  assertEquals(guidance?.recommended_category, "COGS - Ingredients");
+  assertEquals(guidance?.recommended_category, "Inventory - Raw Materials");
 });
 
 Deno.test("lookupTaxGuidance routes outbound postage separately from freight-in", () => {
@@ -181,7 +181,20 @@ Deno.test("lookupTaxGuidance routes resale inventory before product ingredients"
     },
   }, categories);
 
-  assertEquals(guidance?.recommended_category, "COGS - Resale Inventory");
+  assertEquals(guidance?.recommended_category, "Inventory - Resale");
+});
+
+Deno.test("lookupTaxGuidance sends supplier freight to review instead of a deprecated category", () => {
+  const guidance = lookupTaxGuidance({
+    user_input: "Shipping from supplier for jars used in product packaging.",
+    transaction: {
+      title: "Supplier freight charge",
+    },
+  }, categories);
+
+  assertEquals(guidance?.recommended_category, "Needs Review");
+  assertEquals(guidance?.deduction_status, "Review Required");
+  assertEquals(guidance?.id, "freight-in");
 });
 
 Deno.test("lookupTaxGuidance does not treat bottled water as product packaging", () => {

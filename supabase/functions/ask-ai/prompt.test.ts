@@ -40,14 +40,14 @@ Deno.test("buildAskAiPrompt includes transaction and receipt context", () => {
       },
     },
     [{
-      name: "COGS - Packaging",
+      name: "Inventory - Packaging",
       description: "Packaging attached to product.",
     }],
   );
 
   assertMatch(prompt, /Bathhouse Trading Co/);
   assertMatch(prompt, /Item number: 990008301/);
-  assertMatch(prompt, /COGS - Packaging/);
+  assertMatch(prompt, /Inventory - Packaging/);
   assertMatch(prompt, /deduction_status/);
   assertMatch(prompt, /paper plates, cups, napkins/);
   assertMatch(prompt, /all available categories/);

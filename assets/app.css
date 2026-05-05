@@ -63,6 +63,7 @@ font-size:16px;
 
 .navBtn { width:48%; background:#444; color:white;}
 .category-btn { width:100%; margin-bottom:6px; color:white;}
+.inventory{background:#0f766e;}
 .cogs{background:#2e7d32;}
 .expense{background:#1565c0;}
 .special{background:#8e24aa;}
@@ -806,6 +807,10 @@ margin-top:8px;
 
 .taxCrosswalkTreatment.cogs {
   background: #2e7d32;
+}
+
+.taxCrosswalkTreatment.inventory {
+  background: #0f766e;
 }
 
 .taxCrosswalkTreatment.expense {
